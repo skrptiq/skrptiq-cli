@@ -108,6 +108,49 @@ func BuildCommands(app *eng.App) []components.Command {
 		return results
 	}
 
+	statusLabel := func(s string) string {
+		switch s {
+		case "completed":
+			return "✓"
+		case "failed":
+			return "✗"
+		case "running":
+			return "◌"
+		case "paused":
+			return "⏸"
+		default:
+			return "○"
+		}
+	}
+
+	runCompleter := func(a *eng.App) func(string) []components.Completion {
+		return func(partial string) []components.Completion {
+			if a == nil {
+				return nil
+			}
+			runs, err := a.ListExecutions(20)
+			if err != nil {
+				return nil
+			}
+			partial = strings.ToLower(partial)
+			var results []components.Completion
+			for _, r := range runs {
+				shortID := r.ID
+				if len(shortID) > 8 {
+					shortID = shortID[:8]
+				}
+				label := shortID + " " + r.WorkflowTitle
+				if partial == "" || strings.Contains(strings.ToLower(label), partial) {
+					results = append(results, components.Completion{
+						Value:       shortID,
+						Description: statusLabel(r.Status) + " " + r.WorkflowTitle + " " + r.StartedAt,
+					})
+				}
+			}
+			return results
+		}
+	}
+
 	return []components.Command{
 		// Session.
 		{Name: "/help", Description: "List all available commands"},
@@ -121,7 +164,8 @@ func BuildCommands(app *eng.App) []components.Command {
 		// Runs.
 		{Name: "/runs", Description: "Execution history", Subcommands: []components.Subcommand{
 			{Name: "list", Description: "List recent executions"},
-			{Name: "status", Description: "Show current execution status"},
+			{Name: "status", Description: "Show active executions"},
+			{Name: "show", Description: "Show run details", ArgProvider: runCompleter(app)},
 		}},
 
 		// Browse.
@@ -145,22 +189,12 @@ func BuildCommands(app *eng.App) []components.Command {
 			{Name: "controls", Description: "Show quality control settings"},
 		}},
 
-		// MCP & Services.
+		// MCP.
 		{Name: "/mcp", Description: "MCP servers", Subcommands: []components.Subcommand{
 			{Name: "list", Description: "List server connections"},
 			{Name: "tools", Description: "List available tools"},
 			{Name: "connect", Description: "Connect to a server"},
 			{Name: "disconnect", Description: "Disconnect a server"},
-		}},
-		{Name: "/providers", Description: "AI providers", Subcommands: []components.Subcommand{
-			{Name: "list", Description: "List configured providers"},
-			{Name: "add", Description: "Configure a new provider"},
-		}},
-
-		// Workspace.
-		{Name: "/workspace", Description: "Workspace context", Subcommands: []components.Subcommand{
-			{Name: "show", Description: "Show current context"},
-			{Name: "set", Description: "Change workspace directory"},
 		}},
 
 		// Tags.
@@ -170,9 +204,18 @@ func BuildCommands(app *eng.App) []components.Command {
 		{Name: "/tag", Description: "Apply a tag to a node", ArgProvider: tagCompleter},
 		{Name: "/untag", Description: "Remove a tag from a node", ArgProvider: tagCompleter},
 
-		// Config.
-		{Name: "/config", Description: "Configuration", Subcommands: []components.Subcommand{
-			{Name: "show", Description: "Show current configuration"},
+		// Workspace.
+		{Name: "/workspace", Description: "Workspace context", Subcommands: []components.Subcommand{
+			{Name: "show", Description: "Show current context"},
+			{Name: "set", Description: "Change workspace directory"},
+		}},
+
+		// Settings.
+		{Name: "/settings", Description: "App settings", Subcommands: []components.Subcommand{
+			{Name: "about", Description: "Version and system info"},
+			{Name: "providers", Description: "AI provider configuration"},
+			{Name: "connections", Description: "All connections (providers, MCP, services)"},
+			{Name: "config", Description: "Show configuration values"},
 			{Name: "set", Description: "Update a configuration value"},
 		}},
 

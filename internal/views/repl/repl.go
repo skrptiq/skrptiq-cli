@@ -99,7 +99,7 @@ func New() Model {
 // NewWithPrompt creates a new REPL view model with a custom prompt and commands.
 func NewWithPrompt(cfg PromptConfig, commands []components.Command) Model {
 	ti := textinput.New()
-	ti.Placeholder = "Type a command or ask a question..."
+	ti.Placeholder = "Ask a question or type / for commands..."
 	ti.Prompt = cfg.Style.Render(cfg.Symbol)
 	ti.Focus()
 	ti.CharLimit = 500
@@ -434,8 +434,8 @@ func (m Model) renderHistory() string {
 	if len(m.history) == 0 {
 		welcome := lipgloss.NewStyle().
 			Foreground(theme.Muted).
-			Render(fmt.Sprintf("Welcome to skrptiq. Type %s for available commands.",
-				theme.ActionKey.Render("/help")))
+			Render(fmt.Sprintf("Welcome to skrptiq. Type naturally to chat, or %s for commands.",
+				theme.ActionKey.Render("/")))
 		return welcome
 	}
 	return strings.Join(m.history, "\n")

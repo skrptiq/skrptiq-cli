@@ -44,7 +44,7 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		return handleHub(m, sub, subArgs)
 
 	case "runs":
-		return handleRuns(m, sub)
+		return handleRuns(m, sub, subArgs)
 
 	case "profile":
 		return handleProfile(m, sub, subArgs)
@@ -71,6 +71,9 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 
 	case "config":
 		return handleConfigCmd(m, sub, subArgs)
+
+	case "settings":
+		return handleSettings(m, sub, subArgs)
 	}
 
 	return *m, nil, false
@@ -336,7 +339,7 @@ func handleHub(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 
 // --- /runs ---
 
-func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
+func handleRuns(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 	if m.engine == nil {
 		m.repl.AddOutput(noEngineMsg())
 		return *m, nil, true
@@ -356,8 +359,14 @@ func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
 		var b strings.Builder
 		b.WriteString(theme.Title.Render("Recent Runs") + "\n")
 		for _, r := range runs {
-			b.WriteString(fmt.Sprintf("  %s  %s  %s",
+			// Show short ID for use with /runs show.
+			shortID := r.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			b.WriteString(fmt.Sprintf("  %s  %s  %s  %s",
 				statusIcon(r.Status),
+				theme.Faint.Render(shortID),
 				r.WorkflowTitle,
 				theme.Faint.Render(r.StartedAt),
 			))
@@ -365,19 +374,18 @@ func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
 				b.WriteString(theme.Faint.Render(fmt.Sprintf("  %d tokens", r.TotalTokens)))
 			}
 			if r.Error != nil && *r.Error != "" {
-				b.WriteString("\n    " + theme.ErrorText.Render(*r.Error))
+				b.WriteString("\n         " + theme.ErrorText.Render(*r.Error))
 			}
 			b.WriteString("\n")
 		}
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	case "status":
-		runs, err := m.engine.ListExecutions(5)
+		runs, err := m.engine.ListExecutions(10)
 		if err != nil {
 			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
 			return *m, nil, true
 		}
-		// Filter to active (running/paused).
 		var active []string
 		for _, r := range runs {
 			if r.Status == "running" || r.Status == "paused" {
@@ -391,13 +399,121 @@ func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
 			m.repl.AddOutput(theme.Title.Render("Active Runs") + "\n" + strings.Join(active, "\n"))
 		}
 
+	case "show":
+		handleRunShow(m, args)
+
 	default:
 		m.repl.AddOutput(usageBlock("/runs", []string{
-			"list    — List recent executions",
-			"status  — Show active executions",
+			"list         — List recent executions",
+			"status       — Show active executions",
+			"show <id>    — Show run details and step outputs",
 		}))
 	}
 	return *m, nil, true
+}
+
+func handleRunShow(m *Model, args string) {
+	idArg, stepArg := splitFirst(args)
+	if idArg == "" {
+		m.repl.AddOutput(theme.Faint.Render("Usage: /runs show <id> [step <n>]"))
+		return
+	}
+
+	// Support short IDs by prefix match.
+	fullID, err := m.engine.FindRunByPrefix(idArg)
+	if err != nil || fullID == nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Run not found: " + idArg))
+		return
+	}
+
+	run, err := m.engine.GetRunDetail(*fullID)
+	if err != nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+		return
+	}
+
+	// If a step number was requested, show that step's output.
+	if stepArg != "" {
+		stepKey, _ := splitFirst(stepArg)
+		if stepKey == "step" {
+			_, stepNum := splitFirst(stepArg)
+			if stepNum == "" {
+				m.repl.AddOutput(theme.Faint.Render("Usage: /runs show <id> step <number>"))
+				return
+			}
+			n := 0
+			fmt.Sscanf(stepNum, "%d", &n)
+			for _, s := range run.Steps {
+				if s.Position == n {
+					var b strings.Builder
+					b.WriteString(theme.Title.Render(s.NodeTitle) + " — step " + fmt.Sprintf("%d", s.Position) + "\n")
+					b.WriteString(theme.Faint.Render("Status: ") + statusIcon(s.Status) + " " + s.Status + "\n")
+					if s.Provider != "" {
+						b.WriteString(theme.Faint.Render("Provider: ") + s.Provider)
+						if s.Model != "" {
+							b.WriteString(" / " + s.Model)
+						}
+						b.WriteString("\n")
+					}
+					if s.Duration != "" {
+						b.WriteString(theme.Faint.Render("Duration: ") + s.Duration + "\n")
+					}
+					if s.Error != "" {
+						b.WriteString(theme.ErrorText.Render("Error: ") + s.Error + "\n")
+					}
+					if s.Output != "" {
+						b.WriteString("\n" + s.Output)
+					} else {
+						b.WriteString(theme.Faint.Render("\n(no output)"))
+					}
+					m.repl.AddOutput(b.String())
+					return
+				}
+			}
+			m.repl.AddOutput(theme.ErrorText.Render(fmt.Sprintf("Step %d not found in this run.", n)))
+			return
+		}
+	}
+
+	// Show full run summary.
+	var b strings.Builder
+	b.WriteString(theme.Title.Render(run.WorkflowTitle) + "\n")
+	b.WriteString(theme.Faint.Render("ID: ") + run.ID + "\n")
+	b.WriteString(theme.Faint.Render("Status: ") + statusIcon(run.Status) + " " + run.Status + "\n")
+	b.WriteString(theme.Faint.Render("Started: ") + run.StartedAt + "\n")
+	if run.CompletedAt != nil {
+		b.WriteString(theme.Faint.Render("Completed: ") + *run.CompletedAt + "\n")
+	}
+	if run.TotalTokens > 0 {
+		b.WriteString(theme.Faint.Render("Tokens: ") + fmt.Sprintf("%d", run.TotalTokens) + "\n")
+	}
+	if run.Error != nil && *run.Error != "" {
+		b.WriteString(theme.ErrorText.Render("Error: ") + *run.Error + "\n")
+	}
+
+	if len(run.Steps) > 0 {
+		b.WriteString("\n" + theme.Bold.Render("Steps") + "\n")
+		for _, s := range run.Steps {
+			b.WriteString(fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, s.NodeTitle))
+			if s.Provider != "" {
+				b.WriteString(theme.Faint.Render(" (" + s.Provider + ")"))
+			}
+			if s.Duration != "" {
+				b.WriteString(theme.Faint.Render(" " + s.Duration))
+			}
+			outLen := len(s.Output)
+			if outLen > 0 {
+				b.WriteString(theme.Faint.Render(fmt.Sprintf(" %d chars", outLen)))
+			}
+			b.WriteString("\n")
+			if s.Error != "" {
+				b.WriteString("    " + theme.ErrorText.Render(s.Error) + "\n")
+			}
+		}
+		b.WriteString(theme.Faint.Render("\nUse /runs show " + run.ID[:8] + " step <n> to view step output."))
+	}
+
+	m.repl.AddOutput(b.String())
 }
 
 func statusIcon(status string) string {
@@ -894,6 +1010,78 @@ func handleConfigCmd(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 		m.repl.AddOutput(usageBlock("/config", []string{
 			"show    — Show current configuration",
 			"set     — Update a configuration value",
+		}))
+	}
+	return *m, nil, true
+}
+
+// --- /settings ---
+
+func handleSettings(m *Model, sub, args string) (Model, tea.Cmd, bool) {
+	switch sub {
+	case "about":
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("skrptiq") + " v0.1.0-prototype\n")
+		b.WriteString(theme.Faint.Render("Interactive terminal for personalised AI agents\n"))
+		b.WriteString(theme.Faint.Render("Engine: "))
+		if m.engine != nil {
+			b.WriteString(m.engine.DB.Path())
+		} else {
+			b.WriteString("not connected")
+		}
+		b.WriteString("\n")
+		cwd, _ := os.Getwd()
+		b.WriteString(theme.Faint.Render("Working directory: ") + cwd + "\n")
+		b.WriteString(theme.Faint.Render("Platform: ") + "darwin/arm64")
+		m.repl.AddOutput(b.String())
+
+	case "providers":
+		// Delegate to existing providers handler.
+		return handleProvidersCmd(m, "list")
+
+	case "connections":
+		if m.engine == nil {
+			m.repl.AddOutput(noEngineMsg())
+			return *m, nil, true
+		}
+		conns, err := m.engine.Connections()
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(conns) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No connections configured."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Connections") + "\n")
+		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(16)
+		for _, c := range conns {
+			indicator := theme.ErrorText.Render("●")
+			if c.Status == "connected" {
+				indicator = theme.SuccessText.Render("●")
+			}
+			b.WriteString(fmt.Sprintf("  %s %s %s", indicator, typeStyle.Render(c.Type), c.Name))
+			if c.Provider != "" {
+				b.WriteString(theme.Faint.Render(" (" + c.Provider + ")"))
+			}
+			b.WriteString("\n")
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
+	case "config":
+		return handleConfigCmd(m, "show", "")
+
+	case "set":
+		return handleConfigCmd(m, "set", args)
+
+	default:
+		m.repl.AddOutput(usageBlock("/settings", []string{
+			"about        — Version and system info",
+			"providers    — AI provider configuration",
+			"connections  — All connections (providers, MCP, services)",
+			"config       — Show configuration values",
+			"set          — Update a configuration value",
 		}))
 	}
 	return *m, nil, true

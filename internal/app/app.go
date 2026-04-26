@@ -321,63 +321,78 @@ func (m Model) View() string {
 
 func handleCommand(m Model, input string) (Model, tea.Cmd) {
 	raw := strings.TrimSpace(input)
-	// Strip leading "/" if present.
-	stripped := strings.TrimPrefix(raw, "/")
 
-	// Split into command and arguments.
-	cmd := strings.ToLower(stripped)
-	args := ""
-	if idx := strings.Index(stripped, " "); idx > 0 {
-		cmd = strings.ToLower(stripped[:idx])
-		args = strings.TrimSpace(stripped[idx+1:])
-	}
+	// Slash commands — starts with "/".
+	if strings.HasPrefix(raw, "/") {
+		stripped := raw[1:]
+		cmd := strings.ToLower(stripped)
+		args := ""
+		if idx := strings.Index(stripped, " "); idx > 0 {
+			cmd = strings.ToLower(stripped[:idx])
+			args = strings.TrimSpace(stripped[idx+1:])
+		}
 
-	// Try slash command handlers first.
-	if result, teaCmd, handled := handleSlashCommand(&m, cmd, args); handled {
-		return result, teaCmd
-	}
+		// Try slash command handlers.
+		if result, teaCmd, handled := handleSlashCommand(&m, cmd, args); handled {
+			return result, teaCmd
+		}
 
-	// Prototype demo views.
-	switch cmd {
-	case "demo":
-		m.progress = progress.New([]string{
-			"Drafting Agent",
-			"Review Agent (GPT-4)",
-			"Revision Agent",
-			"Voice Agent",
-			"Polish Agent",
-		})
-		m.activeView = viewProgress
-		resizeView(&m)
-		return m, m.progress.Init()
+		// Prototype demo views.
+		switch cmd {
+		case "demo":
+			m.progress = progress.New([]string{
+				"Drafting Agent",
+				"Review Agent (GPT-4)",
+				"Revision Agent",
+				"Voice Agent",
+				"Polish Agent",
+			})
+			m.activeView = viewProgress
+			resizeView(&m)
+			return m, m.progress.Init()
 
-	case "tree":
-		m.tree = tree.New("Blog Post Pipeline", mockTree())
-		m.activeView = viewTree
-		resizeView(&m)
-		return m, m.tree.Init()
+		case "tree":
+			m.tree = tree.New("Blog Post Pipeline", mockTree())
+			m.activeView = viewTree
+			resizeView(&m)
+			return m, m.tree.Init()
 
-	case "gate":
-		m.gate = gate.New("Review draft before continuing", mockGateContent())
-		m.activeView = viewGate
-		resizeView(&m)
-		return m, m.gate.Init()
+		case "gate":
+			m.gate = gate.New("Review draft before continuing", mockGateContent())
+			m.activeView = viewGate
+			resizeView(&m)
+			return m, m.gate.Init()
 
-	case "diff":
-		m.diff = diff.New("README.md", mockDiffHunks())
-		m.activeView = viewDiff
-		resizeView(&m)
-		return m, m.diff.Init()
-	}
+		case "diff":
+			m.diff = diff.New("README.md", mockDiffHunks())
+			m.activeView = viewDiff
+			resizeView(&m)
+			return m, m.diff.Init()
+		}
 
-	// Deferred commands (require engine execution runtime).
-	switch cmd {
-	case "run", "resume", "stop":
-		m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
+		// Deferred commands (require engine execution runtime).
+		switch cmd {
+		case "run", "resume", "stop":
+			m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
+			return m, nil
+		}
+
+		m.repl.AddOutput(theme.ErrorText.Render("Unknown command: /" + cmd) + " — type /help for available commands.")
 		return m, nil
 	}
 
-	m.repl.AddOutput("Unknown command: " + raw + ". Type /help for available commands.")
+	// Bare text — chat mode. Send to LLM when wired.
+	return handleChat(m, raw)
+}
+
+// handleChat processes natural language input.
+// This is the default mode — bare text without "/" prefix.
+func handleChat(m Model, input string) (Model, tea.Cmd) {
+	// TODO: Wire to engine LLM when execution is connected.
+	// For now, show a placeholder that acknowledges the input.
+	m.repl.AddOutput(theme.Faint.Render("Chat mode is not yet connected to an LLM provider.\n") +
+		theme.Faint.Render("Use /settings providers to check your configuration.\n") +
+		theme.Faint.Render("Use / commands for now — type /help to see what's available."))
 	return m, nil
 }
 
@@ -411,14 +426,18 @@ func helpText() string {
   Infrastructure
   /mcp list              List MCP server connections
   /mcp tools             List available MCP tools
-  /providers list        List configured AI providers
   /workspace show        Show workspace context
   /workspace set <path>  Change workspace directory
   /tags list             List all tags
   /tag <node> <tag>      Apply a tag to a node
   /untag <node> <tag>    Remove a tag from a node
-  /config show           Show configuration
-  /config set <k> <v>    Update a configuration value
+
+  Settings
+  /settings about        Version and system info
+  /settings providers    AI provider configuration
+  /settings connections  All connections
+  /settings config       Show configuration values
+  /settings set <k> <v>  Update a configuration value
 
   Session
   /clear                 Clear session history

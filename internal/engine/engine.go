@@ -4,9 +4,11 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/skrptiq/engine/hubapi"
 	"github.com/skrptiq/engine/storage"
@@ -224,9 +226,130 @@ func (a *App) ListExecutions(limit int) ([]ExecutionSummary, error) {
 	return results, nil
 }
 
-// GetExecution returns a single execution by ID.
-func (a *App) GetExecution(id string) (*storage.Execution, error) {
-	return a.DB.GetExecution(id)
+// RunDetail is a full execution record with resolved titles.
+type RunDetail struct {
+	ID            string
+	WorkflowTitle string
+	Status        string
+	TotalTokens   int
+	StartedAt     string
+	CompletedAt   *string
+	Error         *string
+	Steps         []StepDetail
+}
+
+// StepDetail is a step with its node title resolved.
+type StepDetail struct {
+	Position  int
+	NodeTitle string
+	Status    string
+	Provider  string
+	Model     string
+	Output    string
+	Error     string
+	StartedAt string
+	Duration  string
+}
+
+// GetRunDetail returns a full execution with resolved node titles and steps.
+func (a *App) GetRunDetail(id string) (*RunDetail, error) {
+	exec, err := a.DB.GetExecution(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve workflow title.
+	wfTitle := exec.WorkflowNodeID
+	if node, err := a.DB.GetNode(exec.WorkflowNodeID); err == nil && node != nil {
+		wfTitle = node.Title
+	}
+
+	steps, err := a.DB.GetStepsByExecution(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build node title cache.
+	nodeCache := make(map[string]string)
+	for _, s := range steps {
+		if _, ok := nodeCache[s.NodeID]; !ok {
+			if node, err := a.DB.GetNode(s.NodeID); err == nil && node != nil {
+				nodeCache[s.NodeID] = node.Title
+			} else {
+				nodeCache[s.NodeID] = s.NodeID
+			}
+		}
+	}
+
+	var details []StepDetail
+	for _, s := range steps {
+		d := StepDetail{
+			Position:  s.Position,
+			NodeTitle: nodeCache[s.NodeID],
+			Status:    s.Status,
+		}
+		if s.Provider != nil {
+			d.Provider = *s.Provider
+		}
+		if s.Model != nil {
+			d.Model = *s.Model
+		}
+		if s.Output != nil {
+			d.Output = *s.Output
+		}
+		if s.Error != nil {
+			d.Error = *s.Error
+		}
+		if s.StartedAt != nil {
+			d.StartedAt = *s.StartedAt
+		}
+		if s.StartedAt != nil && s.CompletedAt != nil {
+			d.Duration = formatDuration(*s.StartedAt, *s.CompletedAt)
+		}
+		details = append(details, d)
+	}
+
+	return &RunDetail{
+		ID:            exec.ID,
+		WorkflowTitle: wfTitle,
+		Status:        exec.Status,
+		TotalTokens:   exec.TotalTokens,
+		StartedAt:     exec.StartedAt,
+		CompletedAt:   exec.CompletedAt,
+		Error:         exec.Error,
+		Steps:         details,
+	}, nil
+}
+
+// FindRunByPrefix finds a run whose ID starts with the given prefix.
+func (a *App) FindRunByPrefix(prefix string) (*string, error) {
+	rows, err := a.DB.Query(
+		`SELECT id FROM executions WHERE id LIKE ? ORDER BY started_at DESC LIMIT 1`,
+		prefix+"%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var id string
+		rows.Scan(&id)
+		return &id, nil
+	}
+	return nil, nil
+}
+
+func formatDuration(start, end string) string {
+	t1, err1 := time.Parse(time.RFC3339, start)
+	t2, err2 := time.Parse(time.RFC3339, end)
+	if err1 != nil || err2 != nil {
+		return ""
+	}
+	d := t2.Sub(t1)
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
 // GetSteps returns all steps for an execution.

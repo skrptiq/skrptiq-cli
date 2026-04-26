@@ -46,7 +46,7 @@ func TestHelpCommand(t *testing.T) {
 func TestDemoCommand(t *testing.T) {
 	m := setupModel()
 	var cmd tea.Cmd
-	m, cmd = handleCommand(m, "demo")
+	m, cmd = handleCommand(m, "/demo")
 	if m.activeView != viewProgress {
 		t.Errorf("expected progress view, got %d", m.activeView)
 	}
@@ -57,7 +57,7 @@ func TestDemoCommand(t *testing.T) {
 
 func TestTreeCommand(t *testing.T) {
 	m := setupModel()
-	m, _ = handleCommand(m, "tree")
+	m, _ = handleCommand(m, "/tree")
 	if m.activeView != viewTree {
 		t.Errorf("expected tree view, got %d", m.activeView)
 	}
@@ -65,7 +65,7 @@ func TestTreeCommand(t *testing.T) {
 
 func TestGateCommand(t *testing.T) {
 	m := setupModel()
-	m, _ = handleCommand(m, "gate")
+	m, _ = handleCommand(m, "/gate")
 	if m.activeView != viewGate {
 		t.Errorf("expected gate view, got %d", m.activeView)
 	}
@@ -73,7 +73,7 @@ func TestGateCommand(t *testing.T) {
 
 func TestDiffCommand(t *testing.T) {
 	m := setupModel()
-	m, _ = handleCommand(m, "diff")
+	m, _ = handleCommand(m, "/diff")
 	if m.activeView != viewDiff {
 		t.Errorf("expected diff view, got %d", m.activeView)
 	}
@@ -81,7 +81,7 @@ func TestDiffCommand(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	m := setupModel()
-	m, _ = handleCommand(m, "foobar")
+	m, _ = handleCommand(m, "/foobar")
 	if m.activeView != viewREPL {
 		t.Errorf("expected REPL view after unknown command, got %d", m.activeView)
 	}
@@ -193,10 +193,23 @@ func TestExitHintClears(t *testing.T) {
 
 func TestREPLSubmitRouting(t *testing.T) {
 	m := setupModel()
-	updated, _ := m.Update(repl.SubmitMsg{Input: "tree"})
+	updated, _ := m.Update(repl.SubmitMsg{Input: "/tree"})
 	m = updated.(Model)
 	if m.activeView != viewTree {
 		t.Errorf("expected tree view from REPL submit, got %d", m.activeView)
+	}
+}
+
+func TestBareTextGoesToChat(t *testing.T) {
+	m := setupModel()
+	m, _ = handleCommand(m, "polish this README for me")
+	// Should stay on REPL (chat mode, not switch views).
+	if m.activeView != viewREPL {
+		t.Errorf("expected REPL view for chat input, got %d", m.activeView)
+	}
+	// Should have output (chat placeholder message).
+	if len(m.repl.History()) == 0 {
+		t.Error("expected chat response output")
 	}
 }
 

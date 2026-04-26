@@ -1,27 +1,34 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Comprehensive cleanup — all non-execution slash commands now wired to real data:
 
-**Reorganised:**
-- `/dials` removed as standalone → merged into `/profile controls` (renamed from "dials" to "quality controls" to match app UI)
-- `/status` removed as standalone → merged into `/runs status`
+**1. /runs show with step detail (GH#436 MVP item)**
+- `/runs show <id>` — full run detail: workflow name, status, timestamps, tokens, all steps with position/provider/duration/output size
+- `/runs show <id> step <n>` — view individual step output, provider, model, duration
+- `/runs list` now shows short IDs for use with `/runs show`
+- Short ID prefix matching — type first 4-8 chars of an ID
+- Autocomplete for run IDs — `/runs show` tab shows recent runs with status and workflow name
 
-**Newly wired:**
-- `/runs status` — shows active (running/paused) executions
-- `/workspace set <path>` — changes working directory, updates status bar
-- `/config set <key> <value>` — writes settings to DB
-- `/mcp tools` — lists MCP tool capabilities from connection config
-- `/hub import <slug>` — looks up skrpt on Hub API (download not yet wired)
-- `/hub update` — checks each imported skrpt for newer versions on Hub
-- `/tag <node> <tag>` — assigns tag to node in DB
-- `/untag <node> <tag>` — removes tag from node in DB
+**2. /settings consolidation**
+- `/settings about` — version, engine path, working directory
+- `/settings providers` — AI provider list
+- `/settings connections` — all connections (providers + MCP + cloud services)
+- `/settings config` — show config values
+- `/settings set <key> <value>` — update config
 
-**Only execution-dependent items remain:**
-- `/run`, `/resume`, `/stop` — need engine runner
-- `/mcp connect|disconnect` — need MCP client runtime
-- `/providers add` — needs interactive setup flow
+**3. Chat-first default mode (GH#436 direction)**
+- Bare text (no `/` prefix) goes to chat handler
+- Currently shows placeholder — LLM wiring needed
+- Welcome message updated: "Type naturally to chat, or / for commands"
+- Input placeholder: "Ask a question or type / for commands..."
+- `/` commands are the escape hatch, not the default
 
 ### Tests
 - `go test ./...` — all passing
 - `go vet ./...` — clean
+- New tests: bare text goes to chat, slash prefix routing
+
+### What's next (requires engine execution)
+1. Wire chat mode to LLM provider
+2. Wire /run to engine.RunWorkflow with progress callbacks
+3. Wire gate approval flow to real engine gates
