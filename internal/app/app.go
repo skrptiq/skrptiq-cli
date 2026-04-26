@@ -100,8 +100,8 @@ type Model struct {
 	executionID  string        // active execution ID (for gate resume)
 	cancelStream context.CancelFunc // cancels the active stream/execution
 
-	// Program reference for Println (terminal scrollback output).
-	program    *tea.Program
+	// Printer for terminal scrollback output.
+	printer    *Printer
 	startupMsg string // printed once when program starts
 
 	// Double Ctrl+D exit state.
@@ -188,18 +188,33 @@ func buildStatusBar(engine *eng.App) components.StatusBar {
 	return sb
 }
 
-// SetProgram stores the tea.Program reference for Println output.
-func (m *Model) SetProgram(p *tea.Program) {
-	m.program = p
-	m.repl.SetPrinter(func(text string) {
-		p.Println(text)
-	})
+// Printer is a shared reference to the tea.Program for scrollback output.
+// It's a pointer so it can be wired after program creation but before Run.
+type Printer struct {
+	Program *tea.Program
 }
 
-// PrintOutput prints a line to the terminal scrollback (persists above the TUI).
+// Println prints to terminal scrollback.
+func (p *Printer) Println(text string) {
+	if p != nil && p.Program != nil {
+		p.Program.Println(text)
+	}
+}
+
+// NewWithPrinter creates a new app model with a shared printer.
+func NewWithPrinter(printer *Printer) Model {
+	m := New()
+	m.printer = printer
+	m.repl.SetPrinter(func(text string) {
+		printer.Println(text)
+	})
+	return m
+}
+
+// PrintOutput prints a line to the terminal scrollback.
 func (m *Model) PrintOutput(text string) {
-	if m.program != nil {
-		m.program.Println(text)
+	if m.printer != nil {
+		m.printer.Println(text)
 	}
 }
 
@@ -299,6 +314,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Ctrl+C always quits — safety net.
+		if key.Matches(msg, m.keys.ForceQuit) {
+			return m, tea.Quit
+		}
 		if key.Matches(msg, m.keys.Exit) {
 			now := time.Now()
 			if m.exitHint && now.Sub(m.lastExitPress) < exitGracePeriod {

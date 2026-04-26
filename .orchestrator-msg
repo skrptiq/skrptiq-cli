@@ -1,4 +1,6 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Fixed "Initialising..." hang — when using terminal scrollback (no viewport), SetSize now marks ready immediately without creating a viewport.
+- Fixed Initialising hang — printer is now wired via shared pointer before program starts
+- Ctrl+C always quits (safety net) — no more stuck terminals
+- Shared Printer type avoids bubbletea value-receiver copy issues
