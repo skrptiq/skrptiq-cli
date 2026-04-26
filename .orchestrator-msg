@@ -1,8 +1,15 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- Workflow name tab completion in run mode — type part of a workflow name, tab to complete
-- /run without a name enters run mode where bare text is treated as workflow name
-- Tab-completing a workflow name auto-submits and starts execution
-- Bare text completer system — reusable pattern for mode-specific completions
-- Refactored execution start into shared handleEnterRunExec function
+Workflow input collection before execution. When a workflow has required input variables (e.g. content, topic), the CLI now:
+
+1. Shows the plan steps
+2. Lists required inputs with labels, descriptions, and examples from the plan metadata
+3. Prompts for each input sequentially — user types the value and presses enter
+4. Once all inputs collected, starts execution with the full input map
+
+If no inputs are required, execution starts immediately.
+
+### Tests
+- `go test ./...` — all passing
+- `go vet ./...` — clean

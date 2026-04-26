@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	exec "github.com/skrptiq/engine/execution"
 	"github.com/skrptiq/engine/storage"
 	"github.com/skrptiq/skrptiq-cli/internal/components"
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
@@ -1192,6 +1190,7 @@ func handleEnterRunExec(engine *eng.App, m *Model, node *storage.Node) tea.Cmd {
 
 	m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + plan.WorkflowTitle)
 
+	// Show plan steps.
 	var b strings.Builder
 	for _, pg := range plan.PositionGroups {
 		for _, step := range pg.Steps {
@@ -1204,36 +1203,30 @@ func handleEnterRunExec(engine *eng.App, m *Model, node *storage.Node) tea.Cmd {
 	}
 	m.repl.AddOutput(b.String())
 
+	// If inputs are required, collect them before starting.
 	if len(plan.InputVariables) > 0 {
-		m.repl.AddOutput(theme.Faint.Render("Required inputs: ") + strings.Join(plan.InputVariables, ", "))
-		m.repl.AddOutput(theme.Faint.Render("Input collection not yet implemented. Starting with empty inputs."))
+		m.pendingInputs = plan.InputVariables
+		m.collectedInputs = make(map[string]string)
+		m.pendingNode = node
+
+		// Build input metadata from the plan.
+		m.inputMeta = make(map[string]inputMetaInfo)
+		for varName, meta := range plan.InputMeta {
+			m.inputMeta[varName] = inputMetaInfo{
+				Label:       meta.Label,
+				Description: meta.Description,
+				Example:     meta.Example,
+			}
+		}
+
+		m.repl.AddOutput(theme.Faint.Render(fmt.Sprintf(
+			"%d input(s) required. Enter each value and press enter.", len(plan.InputVariables))))
+		promptForInput(m)
+		return nil
 	}
 
-	m.repl.SetActivity("Starting workflow...")
-	m.streamBuf = ""
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancelStream = cancel
-
-	ch := make(chan tea.Msg, 64)
-	m.streamCh = ch
-
-	workflowID := node.ID
-
-	go func() {
-		defer close(ch)
-		onProgress := func(evt exec.ProgressEvent) {
-			ch <- ProgressEventMsg{evt}
-		}
-		_, err := engine.RunWorkflow(ctx, workflowID, map[string]string{}, onProgress)
-		if err != nil {
-			ch <- ExecutionDoneMsg{Status: "failed", Error: err.Error()}
-			return
-		}
-		ch <- ExecutionDoneMsg{Status: "completed"}
-	}()
-
-	return readStream(ch)
+	// No inputs required — start immediately.
+	return startExecution(engine, m, node, map[string]string{})
 }
 
 // --- /chat ---

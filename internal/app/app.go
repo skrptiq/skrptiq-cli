@@ -14,6 +14,7 @@ import (
 
 	exec "github.com/skrptiq/engine/execution"
 	"github.com/skrptiq/engine/llm"
+	"github.com/skrptiq/engine/storage"
 
 	"github.com/skrptiq/skrptiq-cli/internal/components"
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
@@ -63,6 +64,13 @@ func (m AppMode) ModeLabel() string {
 	}
 }
 
+// inputMetaInfo holds display metadata for a workflow input variable.
+type inputMetaInfo struct {
+	Label       string
+	Description string
+	Example     string
+}
+
 // Model is the root bubbletea model.
 type Model struct {
 	keys       KeyMap
@@ -79,6 +87,12 @@ type Model struct {
 	// Mode state.
 	chatProvider string // active LLM provider name in chat mode
 	runWorkflow  string // active workflow name in run mode
+
+	// Input collection state (for workflow variables before execution).
+	pendingInputs []string            // remaining input variable names to collect
+	collectedInputs map[string]string // collected so far
+	inputMeta     map[string]inputMetaInfo // label/description/example per variable
+	pendingNode   *storage.Node       // workflow node waiting for inputs
 
 	// Streaming state.
 	streamCh     streamChannel // active stream channel (chat or execution)
@@ -524,10 +538,9 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 		return handleChatInput(m, raw)
 	case ModeRun:
 		if m.runWorkflow == "" {
-			// No workflow selected yet — treat input as workflow name.
+			// No workflow selected — treat input as workflow name.
 			m.runWorkflow = raw
-			enterMode(&m, ModeRun) // update prompt with workflow name
-			// Try to start execution.
+			enterMode(&m, ModeRun)
 			if m.engine != nil {
 				node, err := m.engine.FindNodeByTitle(raw)
 				if err != nil || node == nil || node.Type != "workflow" {
@@ -536,12 +549,26 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 					enterMode(&m, ModeRun)
 					return m, nil
 				}
-				// Re-enter run mode with the workflow name to trigger execution.
-				var cmd tea.Cmd
-				cmd = handleEnterRunExec(m.engine, &m, node)
+				cmd := handleEnterRunExec(m.engine, &m, node)
 				return m, cmd
 			}
 			return m, nil
+		}
+		if len(m.pendingInputs) > 0 {
+			// Collecting workflow inputs — store value and prompt for next.
+			currentVar := m.pendingInputs[0]
+			m.collectedInputs[currentVar] = raw
+			m.pendingInputs = m.pendingInputs[1:]
+
+			if len(m.pendingInputs) > 0 {
+				promptForInput(&m)
+				return m, nil
+			}
+			// All inputs collected — start execution.
+			m.repl.AddOutput(theme.Faint.Render("All inputs collected. Starting execution..."))
+			cmd := startExecution(m.engine, &m, m.pendingNode, m.collectedInputs)
+			m.pendingNode = nil
+			return m, cmd
 		}
 		return handleRunInput(m, raw)
 	default:
@@ -602,6 +629,62 @@ func handleChatInput(m Model, input string) (Model, tea.Cmd) {
 
 	// Start reading from the channel.
 	return m, readStream(ch)
+}
+
+// promptForInput shows the prompt for the next required input variable.
+func promptForInput(m *Model) {
+	if len(m.pendingInputs) == 0 {
+		return
+	}
+	varName := m.pendingInputs[0]
+	label := varName
+	desc := ""
+	example := ""
+	if meta, ok := m.inputMeta[varName]; ok {
+		if meta.Label != "" {
+			label = meta.Label
+		}
+		desc = meta.Description
+		example = meta.Example
+	}
+
+	prompt := theme.Bold.Render(label) + ":"
+	if desc != "" {
+		prompt += " " + theme.Faint.Render(desc)
+	}
+	if example != "" {
+		prompt += "\n  " + theme.Faint.Render("Example: "+example)
+	}
+	m.repl.AddOutput(prompt)
+}
+
+// startExecution kicks off workflow execution with collected inputs.
+func startExecution(engine *eng.App, m *Model, node *storage.Node, inputs map[string]string) tea.Cmd {
+	m.repl.SetActivity("Starting workflow...")
+	m.streamBuf = ""
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+
+	ch := make(chan tea.Msg, 64)
+	m.streamCh = ch
+
+	workflowID := node.ID
+
+	go func() {
+		defer close(ch)
+		onProgress := func(evt exec.ProgressEvent) {
+			ch <- ProgressEventMsg{evt}
+		}
+		_, err := engine.RunWorkflow(ctx, workflowID, inputs, onProgress)
+		if err != nil {
+			ch <- ExecutionDoneMsg{Status: "failed", Error: err.Error()}
+			return
+		}
+		ch <- ExecutionDoneMsg{Status: "completed"}
+	}()
+
+	return readStream(ch)
 }
 
 // handleRunInput processes input during an active workflow run (gate responses).
