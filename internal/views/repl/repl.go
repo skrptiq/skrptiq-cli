@@ -191,24 +191,33 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// If autocomplete is visible, let it handle navigation keys.
-		// But enter/tab on a slash command submits directly — autocomplete
-		// is a convenience, not a gate.
+		// Enter always submits — autocomplete never blocks it.
+		if key.Matches(msg, m.keys.Submit) && m.input.Value() != "" {
+			input := m.input.Value()
+			m.cmdHistory = append(m.cmdHistory, input)
+			m.cmdHistIdx = -1
+			m.savedInput = ""
+			m.history = append(m.history, m.prompt.Style.Render(m.prompt.Symbol)+input)
+			m.input.SetValue("")
+			m.prevInput = ""
+			m.autocomplete.Hide()
+			if m.ready {
+				m.viewport.SetContent(m.renderHistory())
+				m.viewport.GotoBottom()
+			}
+			return m, func() tea.Msg { return SubmitMsg{Input: input} }
+		}
+
+		// Autocomplete handles navigation keys (up/down/tab/esc).
 		if m.autocomplete.Visible() {
-			// Enter submits the current input as-is if it's a slash command.
-			if key.Matches(msg, m.keys.Submit) && strings.HasPrefix(m.input.Value(), "/") {
-				m.autocomplete.Hide()
-				// Fall through to submit handler below.
-			} else {
-				var cmd tea.Cmd
-				var consumed bool
-				m.autocomplete, cmd, consumed = m.autocomplete.Update(msg)
-				if cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-				if consumed {
-					return m, tea.Batch(cmds...)
-				}
+			var cmd tea.Cmd
+			var consumed bool
+			m.autocomplete, cmd, consumed = m.autocomplete.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if consumed {
+				return m, tea.Batch(cmds...)
 			}
 		}
 
@@ -244,23 +253,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		}
-
-		// Submit command.
-		if key.Matches(msg, m.keys.Submit) && m.input.Value() != "" {
-			input := m.input.Value()
-			m.cmdHistory = append(m.cmdHistory, input)
-			m.cmdHistIdx = -1
-			m.savedInput = ""
-			m.history = append(m.history, m.prompt.Style.Render(m.prompt.Symbol)+input)
-			m.input.SetValue("")
-			m.prevInput = ""
-			m.autocomplete.Hide()
-			if m.ready {
-				m.viewport.SetContent(m.renderHistory())
-				m.viewport.GotoBottom()
-			}
-			return m, func() tea.Msg { return SubmitMsg{Input: input} }
 		}
 
 	case components.AutocompleteSelectMsg:

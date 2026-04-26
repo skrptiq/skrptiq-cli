@@ -122,7 +122,7 @@ func TestSelectTopLevelWithSubs(t *testing.T) {
 	a.Show("/hu")
 
 	var cmd tea.Cmd
-	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if cmd == nil {
 		t.Fatal("expected command from select")
 	}
@@ -146,7 +146,7 @@ func TestSelectTopLevelWithArgs(t *testing.T) {
 
 	// First item should be /run.
 	var cmd tea.Cmd
-	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if cmd == nil {
 		t.Fatal("expected command from select")
 	}
@@ -166,7 +166,7 @@ func TestSelectTopLevelNoMore(t *testing.T) {
 	a.Show("/he")
 
 	var cmd tea.Cmd
-	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	msg := cmd()
 	sel := msg.(AutocompleteSelectMsg)
 	if sel.NeedsMore {
@@ -183,7 +183,7 @@ func TestSelectSubcommand(t *testing.T) {
 
 	// Select "list".
 	var teaCmd tea.Cmd
-	a, teaCmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a, teaCmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if teaCmd == nil {
 		t.Fatal("expected command from subcommand select")
 	}
@@ -208,7 +208,7 @@ func TestSelectSubcommandWithArgs(t *testing.T) {
 	a, _, _ = a.Update(tea.KeyMsg{Type: tea.KeyDown})
 
 	var teaCmd tea.Cmd
-	a, teaCmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a, teaCmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	msg := teaCmd()
 	sel := msg.(AutocompleteSelectMsg)
 	if sel.FullText != "/profile use" {
@@ -259,7 +259,7 @@ func TestArgSelection(t *testing.T) {
 	a.ShowArgs(cmd, nil, "")
 
 	var teaCmd tea.Cmd
-	a, teaCmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a, teaCmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	msg := teaCmd()
 	sel := msg.(AutocompleteSelectMsg)
 	if sel.FullText != "/run Blog Post Pipeline" {

@@ -1,6 +1,7 @@
 package components
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -71,7 +72,7 @@ func DefaultAutocompleteKeyMap() AutocompleteKeyMap {
 			key.WithKeys("down"),
 		),
 		Select: key.NewBinding(
-			key.WithKeys("enter", "tab"),
+			key.WithKeys("tab"),
 		),
 		Dismiss: key.NewBinding(
 			key.WithKeys("esc"),
@@ -372,7 +373,6 @@ func (a Autocomplete) View() string {
 func (a *Autocomplete) applyFilter() {
 	switch a.stage {
 	case stageCommand:
-		// Filter top-level commands only.
 		a.items = nil
 		query := strings.ToLower(strings.TrimPrefix(a.filter, "/"))
 		for _, cmd := range a.commands {
@@ -386,7 +386,6 @@ func (a *Autocomplete) applyFilter() {
 		}
 
 	case stageSub:
-		// Filter subcommands of the active command.
 		a.items = nil
 		query := strings.ToLower(a.filter)
 		if a.activeCmd != nil {
@@ -411,4 +410,9 @@ func (a *Autocomplete) applyFilter() {
 			a.items = provider(a.filter)
 		}
 	}
+
+	// Sort all results alphabetically.
+	sort.Slice(a.items, func(i, j int) bool {
+		return strings.ToLower(a.items[i].Value) < strings.ToLower(a.items[j].Value)
+	})
 }

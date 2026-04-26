@@ -1,6 +1,5 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- `/command` now returns to command mode from chat or run (alongside `/exit`)
-- `/run` moved into handleSlashCommand — works reliably from any mode, with or without a workflow name
-- All mode commands (/chat, /run, /command, /exit) are in the autocomplete registry
+- **Single enter to submit** — enter always submits immediately, never blocked by autocomplete. Tab selects from autocomplete, enter submits the input as typed.
+- **Alphabetically sorted autocomplete** — all completion lists (commands, subcommands, arguments) are sorted alphabetically for easier scanning.
