@@ -370,10 +370,10 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 		return m, m.diff.Init()
 	}
 
-	// Deferred commands.
+	// Deferred commands (require engine execution runtime).
 	switch cmd {
-	case "run", "resume", "stop", "status", "repos", "tag", "untag":
-		m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — coming soon."))
+	case "run", "resume", "stop":
+		m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
 		return m, nil
 	}
 
@@ -383,30 +383,46 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 
 func helpText() string {
 	return `Available commands:
-  /run <name>         Execute a workflow
-  /runs list          List recent executions
-  /list [type]        List nodes (workflows, skills, prompts...)
-  /search <query>     Search nodes by title
-  /show <name>        Show node content and metadata
-  /hub list           List imported skrpts
-  /hub search         Search community skrpts
-  /profile list       List all profiles
-  /profile show       Show active profile details
-  /profile use <name> Switch active profile
-  /dials show         Show persona dial settings
-  /mcp list           List MCP server connections
-  /providers list     List configured AI providers
-  /workspace show     Show workspace context
-  /tags list          List all tags
-  /config show        Show configuration
-  /clear              Clear session history
-  /help               This message
 
-  Prototype demos:
-  /demo               Streaming step progress
-  /tree               Expandable execution tree
-  /gate               Gate approval flow
-  /diff               Diff review with accept/reject
+  Browse & search
+  /list [type]           List nodes (workflows, skills, prompts...)
+  /search <query>        Search nodes by title
+  /show <name>           Show node content and metadata
+
+  Execution
+  /run <name>            Execute a workflow
+  /runs list             List recent executions
+  /runs status           Show active executions
+  /resume                Resume a paused execution
+  /stop                  Cancel the running workflow
+
+  Profiles
+  /profile list          List all profiles
+  /profile show          Show active profile details
+  /profile use <name>    Switch active profile
+  /profile controls      Show quality control settings
+
+  Hub
+  /hub list              List imported skrpts
+  /hub search <query>    Search community skrpts
+  /hub import <slug>     Import a skrpt from Hub
+  /hub update            Check for updates
+
+  Infrastructure
+  /mcp list              List MCP server connections
+  /mcp tools             List available MCP tools
+  /providers list        List configured AI providers
+  /workspace show        Show workspace context
+  /workspace set <path>  Change workspace directory
+  /tags list             List all tags
+  /tag <node> <tag>      Apply a tag to a node
+  /untag <node> <tag>    Remove a tag from a node
+  /config show           Show configuration
+  /config set <k> <v>    Update a configuration value
+
+  Session
+  /clear                 Clear session history
+  /help                  This message
 
   Type / to see all commands with autocomplete.`
 }

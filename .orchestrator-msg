@@ -1,19 +1,26 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Wired remaining read-side slash commands to real engine data:
+Comprehensive cleanup — all non-execution slash commands now wired to real data:
 
-- `/runs list` — queries executions table, shows status (✓/✗/◌/⏸), workflow name, timestamp, token count, errors
-- `/profile use <name>` — actually switches the active profile in the DB, updates prompt and status bar live
-- `/hub search <query>` — real Hub API search via engine's hubapi.Client, shows results with categories and descriptions
-- Engine layer: added ListExecutions, GetExecution, GetSteps, SetActiveProfile, FindProfileByName, Hub client
+**Reorganised:**
+- `/dials` removed as standalone → merged into `/profile controls` (renamed from "dials" to "quality controls" to match app UI)
+- `/status` removed as standalone → merged into `/runs status`
 
-### Still deferred (write/execution operations)
-- `/run` — execute workflow
-- `/resume`, `/stop`, `/status` — execution control
-- `/hub import`, `/hub update` — hub write operations
-- `/mcp connect/disconnect/tools` — MCP connection management
-- `/providers add`, `/workspace set`, `/config set`, `/dials set`
+**Newly wired:**
+- `/runs status` — shows active (running/paused) executions
+- `/workspace set <path>` — changes working directory, updates status bar
+- `/config set <key> <value>` — writes settings to DB
+- `/mcp tools` — lists MCP tool capabilities from connection config
+- `/hub import <slug>` — looks up skrpt on Hub API (download not yet wired)
+- `/hub update` — checks each imported skrpt for newer versions on Hub
+- `/tag <node> <tag>` — assigns tag to node in DB
+- `/untag <node> <tag>` — removes tag from node in DB
+
+**Only execution-dependent items remain:**
+- `/run`, `/resume`, `/stop` — need engine runner
+- `/mcp connect|disconnect` — need MCP client runtime
+- `/providers add` — needs interactive setup flow
 
 ### Tests
 - `go test ./...` — all passing

@@ -113,14 +113,16 @@ func BuildCommands(app *eng.App) []components.Command {
 		{Name: "/help", Description: "List all available commands"},
 		{Name: "/clear", Description: "Clear session history"},
 
-		// Runs.
+		// Execution (deferred — needs engine runner).
 		{Name: "/run", Description: "Execute a workflow", ArgProvider: nodeCompleter("workflow")},
-		{Name: "/runs", Description: "Execution history", Subcommands: []components.Subcommand{
-			{Name: "list", Description: "List recent executions"},
-		}},
 		{Name: "/resume", Description: "Resume a paused execution"},
 		{Name: "/stop", Description: "Cancel the running workflow"},
-		{Name: "/status", Description: "Show current execution status"},
+
+		// Runs.
+		{Name: "/runs", Description: "Execution history", Subcommands: []components.Subcommand{
+			{Name: "list", Description: "List recent executions"},
+			{Name: "status", Description: "Show current execution status"},
+		}},
 
 		// Browse.
 		{Name: "/list", Description: "List nodes by type"},
@@ -135,25 +137,20 @@ func BuildCommands(app *eng.App) []components.Command {
 			{Name: "update", Description: "Check for or apply updates"},
 		}},
 
-		// Profiles.
+		// Profiles (includes quality controls — they're a profile property).
 		{Name: "/profile", Description: "Voice profiles", Subcommands: []components.Subcommand{
 			{Name: "list", Description: "List all profiles"},
 			{Name: "show", Description: "Show active profile details"},
 			{Name: "use", Description: "Switch active profile", ArgProvider: profileCompleter},
-		}},
-
-		// Persona dials.
-		{Name: "/dials", Description: "Persona dials", Subcommands: []components.Subcommand{
-			{Name: "show", Description: "Show current dial settings"},
-			{Name: "set", Description: "Adjust a dial value"},
+			{Name: "controls", Description: "Show quality control settings"},
 		}},
 
 		// MCP & Services.
 		{Name: "/mcp", Description: "MCP servers", Subcommands: []components.Subcommand{
 			{Name: "list", Description: "List server connections"},
+			{Name: "tools", Description: "List available tools"},
 			{Name: "connect", Description: "Connect to a server"},
 			{Name: "disconnect", Description: "Disconnect a server"},
-			{Name: "tools", Description: "List available tools"},
 		}},
 		{Name: "/providers", Description: "AI providers", Subcommands: []components.Subcommand{
 			{Name: "list", Description: "List configured providers"},

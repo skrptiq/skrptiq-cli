@@ -1,7 +1,10 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,10 +15,7 @@ import (
 )
 
 // handleSlashCommand processes implemented slash commands.
-// cmd is the first word (e.g. "hub"), args is everything after (e.g. "list" or "search query").
-// Returns the updated model, a tea command, and whether the command was handled.
 func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool) {
-	// Split args into subcommand and remaining arguments.
 	sub, subArgs := splitFirst(args)
 
 	switch cmd {
@@ -29,7 +29,7 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		return *m, m.repl.Init(), true
 
 	case "list":
-		handleList(m, args) // args is the type filter
+		handleList(m, args)
 		return *m, nil, true
 
 	case "show":
@@ -49,9 +49,6 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 	case "profile":
 		return handleProfile(m, sub, subArgs)
 
-	case "dials":
-		return handleDials(m, sub, subArgs)
-
 	case "mcp":
 		return handleMCPCmd(m, sub)
 
@@ -59,19 +56,26 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		return handleProvidersCmd(m, sub)
 
 	case "workspace":
-		return handleWorkspaceCmd(m, sub)
+		return handleWorkspaceCmd(m, sub, subArgs)
 
 	case "tags":
 		return handleTagsCmd(m, sub)
 
+	case "tag":
+		handleTagNode(m, args)
+		return *m, nil, true
+
+	case "untag":
+		handleUntagNode(m, args)
+		return *m, nil, true
+
 	case "config":
-		return handleConfigCmd(m, sub)
+		return handleConfigCmd(m, sub, subArgs)
 	}
 
 	return *m, nil, false
 }
 
-// splitFirst splits a string into the first word and the rest.
 func splitFirst(s string) (string, string) {
 	s = strings.TrimSpace(s)
 	if idx := strings.Index(s, " "); idx > 0 {
@@ -113,7 +117,7 @@ func handleList(m *Model, args string) {
 	} else {
 		mapped, ok := typeMap[nodeType]
 		if !ok {
-			m.repl.AddOutput(theme.ErrorText.Render("Unknown node type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
+			m.repl.AddOutput(theme.ErrorText.Render("Unknown type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
 			return
 		}
 		filtered, e := m.engine.NodesByType(mapped)
@@ -127,7 +131,6 @@ func handleList(m *Model, args string) {
 		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
 		return
 	}
-
 	if len(nodes) == 0 {
 		m.repl.AddOutput(theme.Faint.Render("No nodes found."))
 		return
@@ -148,13 +151,11 @@ func handleShow(m *Model, args string) {
 		m.repl.AddOutput(noEngineMsg())
 		return
 	}
-
 	title := strings.TrimSpace(args)
 	if title == "" {
 		m.repl.AddOutput(theme.Faint.Render("Usage: /show <node name>"))
 		return
 	}
-
 	node, err := m.engine.FindNodeByTitle(title)
 	if err != nil {
 		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
@@ -184,19 +185,16 @@ func handleSearch(m *Model, args string) {
 		m.repl.AddOutput(noEngineMsg())
 		return
 	}
-
 	query := strings.TrimSpace(args)
 	if query == "" {
 		m.repl.AddOutput(theme.Faint.Render("Usage: /search <query>"))
 		return
 	}
-
 	nodes, err := m.engine.SearchNodes(query)
 	if err != nil {
 		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
 		return
 	}
-
 	if len(nodes) == 0 {
 		m.repl.AddOutput(theme.Faint.Render("No results for: " + query))
 		return
@@ -226,7 +224,6 @@ func handleHub(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
 			return *m, nil, true
 		}
-
 		var b strings.Builder
 		b.WriteString(theme.Title.Render("Hub — Imported Skrpts") + "\n")
 		if len(imports) == 0 {
@@ -272,20 +269,68 @@ func handleHub(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	case "import":
-		m.repl.AddOutput(theme.Faint.Render("/hub import — coming soon."))
+		slug := strings.TrimSpace(args)
+		if slug == "" {
+			m.repl.AddOutput(theme.Faint.Render("Usage: /hub import <slug>"))
+			return *m, nil, true
+		}
+		// Look up the skrpt to confirm it exists.
+		skrpt, err := m.engine.Hub.GetSkrpt(slug)
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Hub error: " + err.Error()))
+			return *m, nil, true
+		}
+		if skrpt == nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Skrpt not found: " + slug))
+			return *m, nil, true
+		}
+		m.repl.AddOutput(fmt.Sprintf("Found: %s v%s (%d nodes)\nImport download not yet wired — requires workspace file operations.",
+			theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
 
 	case "update":
-		m.repl.AddOutput(theme.Faint.Render("/hub update — coming soon."))
+		imports, err := m.engine.HubImports()
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(imports) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No imported skrpts to update."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Hub — Update Check") + "\n")
+		for _, imp := range imports {
+			versions, err := m.engine.Hub.GetVersions(imp.Slug)
+			if err != nil {
+				b.WriteString(fmt.Sprintf("  %s — %s\n", imp.Name, theme.ErrorText.Render("check failed")))
+				continue
+			}
+			currentVer := "(unknown)"
+			if imp.Version != nil {
+				currentVer = *imp.Version
+			}
+			if len(versions) > 0 && versions[0].Version != currentVer {
+				b.WriteString(fmt.Sprintf("  %s %s → %s\n",
+					theme.WarningText.Render("⬆"),
+					imp.Name,
+					theme.Bold.Render(versions[0].Version)))
+			} else {
+				b.WriteString(fmt.Sprintf("  %s %s %s\n",
+					theme.SuccessText.Render("✓"),
+					imp.Name,
+					theme.Faint.Render("up to date")))
+			}
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	default:
 		m.repl.AddOutput(usageBlock("/hub", []string{
 			"list    — List imported skrpts",
 			"search  — Search community skrpts",
 			"import  — Import a skrpt from Hub",
-			"update  — Check for or apply updates",
+			"update  — Check for updates",
 		}))
 	}
-
 	return *m, nil, true
 }
 
@@ -308,26 +353,11 @@ func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
 			m.repl.AddOutput(theme.Faint.Render("No executions found."))
 			return *m, nil, true
 		}
-
 		var b strings.Builder
 		b.WriteString(theme.Title.Render("Recent Runs") + "\n")
-		statusStyle := func(status string) string {
-			switch status {
-			case "completed":
-				return theme.SuccessText.Render("✓ completed")
-			case "failed":
-				return theme.ErrorText.Render("✗ failed")
-			case "running":
-				return theme.Subtitle.Render("◌ running")
-			case "paused":
-				return theme.WarningText.Render("⏸ paused")
-			default:
-				return theme.Faint.Render(status)
-			}
-		}
 		for _, r := range runs {
 			b.WriteString(fmt.Sprintf("  %s  %s  %s",
-				statusStyle(r.Status),
+				statusIcon(r.Status),
 				r.WorkflowTitle,
 				theme.Faint.Render(r.StartedAt),
 			))
@@ -341,12 +371,48 @@ func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
 		}
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
+	case "status":
+		runs, err := m.engine.ListExecutions(5)
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		// Filter to active (running/paused).
+		var active []string
+		for _, r := range runs {
+			if r.Status == "running" || r.Status == "paused" {
+				active = append(active, fmt.Sprintf("  %s  %s  %s",
+					statusIcon(r.Status), r.WorkflowTitle, theme.Faint.Render(r.StartedAt)))
+			}
+		}
+		if len(active) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No active executions."))
+		} else {
+			m.repl.AddOutput(theme.Title.Render("Active Runs") + "\n" + strings.Join(active, "\n"))
+		}
+
 	default:
 		m.repl.AddOutput(usageBlock("/runs", []string{
 			"list    — List recent executions",
+			"status  — Show active executions",
 		}))
 	}
 	return *m, nil, true
+}
+
+func statusIcon(status string) string {
+	switch status {
+	case "completed":
+		return theme.SuccessText.Render("✓")
+	case "failed":
+		return theme.ErrorText.Render("✗")
+	case "running":
+		return theme.Subtitle.Render("◌")
+	case "paused":
+		return theme.WarningText.Render("⏸")
+	default:
+		return theme.Faint.Render("○")
+	}
 }
 
 // --- /profile ---
@@ -414,58 +480,43 @@ func handleProfile(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 			return *m, nil, true
 		}
 		m.repl.AddOutput(theme.SuccessText.Render("Switched to profile: ") + profile.Name)
-		// Update the prompt context.
 		cfg := m.repl.Prompt()
 		cfg.ContextLeft = profile.Name
 		m.repl.SetPrompt(cfg)
-		// Update status bar.
 		m.statusBar.Profile = profile.Name
 
-	default:
-		m.repl.AddOutput(usageBlock("/profile", []string{
-			"list    — List all profiles",
-			"show    — Show active profile details",
-			"use     — Switch active profile",
-		}))
-	}
-
-	return *m, nil, true
-}
-
-// --- /dials ---
-
-func handleDials(m *Model, sub, args string) (Model, tea.Cmd, bool) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return *m, nil, true
-	}
-
-	switch sub {
-	case "show":
+	case "controls":
 		voice, _ := m.engine.ActiveProfile("voice")
 		if voice == nil {
-			m.repl.AddOutput(theme.Faint.Render("No active voice profile. Dials are configured per profile."))
+			m.repl.AddOutput(theme.Faint.Render("No active voice profile. Controls are configured per profile."))
 			return *m, nil, true
 		}
 		var b strings.Builder
-		b.WriteString(theme.Title.Render("Persona Dials") + " — " + voice.Name + "\n")
+		b.WriteString(theme.Title.Render("Quality Controls") + " — " + voice.Name + "\n")
 		if voice.Metadata != nil && *voice.Metadata != "" {
-			b.WriteString(theme.Faint.Render(*voice.Metadata))
+			// Try to pretty-print the JSON metadata.
+			var parsed map[string]interface{}
+			if err := json.Unmarshal([]byte(*voice.Metadata), &parsed); err == nil {
+				for k, v := range parsed {
+					b.WriteString(fmt.Sprintf("  %s %v\n",
+						lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k+":"), v))
+				}
+			} else {
+				b.WriteString(theme.Faint.Render(*voice.Metadata))
+			}
 		} else {
-			b.WriteString(theme.Faint.Render("No dial configuration in profile metadata."))
+			b.WriteString(theme.Faint.Render("No control settings in profile metadata."))
 		}
-		m.repl.AddOutput(b.String())
-
-	case "set":
-		m.repl.AddOutput(theme.Faint.Render("/dials set — coming soon."))
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	default:
-		m.repl.AddOutput(usageBlock("/dials", []string{
-			"show    — Show current persona dial settings",
-			"set     — Adjust a persona dial value",
+		m.repl.AddOutput(usageBlock("/profile", []string{
+			"list      — List all profiles",
+			"show      — Show active profile details",
+			"use       — Switch active profile",
+			"controls  — Show quality control settings",
 		}))
 	}
-
 	return *m, nil, true
 }
 
@@ -503,22 +554,49 @@ func handleMCPCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
 		}
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
-	case "connect":
-		m.repl.AddOutput(theme.Faint.Render("/mcp connect — coming soon."))
-	case "disconnect":
-		m.repl.AddOutput(theme.Faint.Render("/mcp disconnect — coming soon."))
 	case "tools":
-		m.repl.AddOutput(theme.Faint.Render("/mcp tools — coming soon."))
+		servers, err := m.engine.MCPServers()
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(servers) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No MCP servers configured."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("MCP Tools") + "\n")
+		for _, s := range servers {
+			b.WriteString("\n  " + theme.Bold.Render(s.Name) + "\n")
+			if s.Capabilities != nil && *s.Capabilities != "" {
+				var caps []string
+				if err := json.Unmarshal([]byte(*s.Capabilities), &caps); err == nil {
+					for _, cap := range caps {
+						b.WriteString("    " + cap + "\n")
+					}
+				} else {
+					b.WriteString("    " + theme.Faint.Render(*s.Capabilities) + "\n")
+				}
+			} else {
+				b.WriteString("    " + theme.Faint.Render("No tools listed — connect to discover.") + "\n")
+			}
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
+	case "connect":
+		m.repl.AddOutput(theme.Faint.Render("/mcp connect — requires MCP client runtime. Needs engine execution wiring."))
+
+	case "disconnect":
+		m.repl.AddOutput(theme.Faint.Render("/mcp disconnect — requires MCP client runtime. Needs engine execution wiring."))
 
 	default:
 		m.repl.AddOutput(usageBlock("/mcp", []string{
-			"list        — List MCP server connections",
-			"connect     — Connect to an MCP server",
-			"disconnect  — Disconnect an MCP server",
-			"tools       — List available MCP tools",
+			"list        — List server connections",
+			"tools       — List available tools",
+			"connect     — Connect to a server",
+			"disconnect  — Disconnect a server",
 		}))
 	}
-
 	return *m, nil, true
 }
 
@@ -537,7 +615,15 @@ func handleProvidersCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
 			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
 			return *m, nil, true
 		}
-		if len(providers) == 0 {
+		// Also check CLI-detected providers.
+		allConns, _ := m.engine.Connections()
+		var llmConns []struct{ name, provider, status string }
+		for _, c := range allConns {
+			if c.Type == "llm-provider" {
+				llmConns = append(llmConns, struct{ name, provider, status string }{c.Name, c.Provider, c.Status})
+			}
+		}
+		if len(providers) == 0 && len(llmConns) == 0 {
 			m.repl.AddOutput(theme.Faint.Render("No AI providers configured."))
 			return *m, nil, true
 		}
@@ -557,26 +643,26 @@ func handleProvidersCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	case "add":
-		m.repl.AddOutput(theme.Faint.Render("/providers add — coming soon."))
+		m.repl.AddOutput(theme.Faint.Render("/providers add — requires interactive provider setup flow. Needs engine execution wiring."))
 
 	default:
 		m.repl.AddOutput(usageBlock("/providers", []string{
-			"list    — List configured AI providers",
+			"list    — List configured providers",
 			"add     — Configure a new provider",
 		}))
 	}
-
 	return *m, nil, true
 }
 
 // --- /workspace ---
 
-func handleWorkspaceCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
+func handleWorkspaceCmd(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 	switch sub {
 	case "show":
 		var b strings.Builder
 		b.WriteString(theme.Title.Render("Workspace") + "\n")
-		b.WriteString("  " + theme.Faint.Render("Path: ") + m.statusBar.Workspace + "\n")
+		cwd, _ := os.Getwd()
+		b.WriteString("  " + theme.Faint.Render("Path: ") + cwd + "\n")
 		b.WriteString("  " + theme.Faint.Render("Profile: ") + m.statusBar.Profile)
 		if m.engine != nil {
 			b.WriteString("\n  " + theme.Faint.Render("Database: ") + m.engine.DB.Path())
@@ -584,15 +670,45 @@ func handleWorkspaceCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
 		m.repl.AddOutput(b.String())
 
 	case "set":
-		m.repl.AddOutput(theme.Faint.Render("/workspace set — coming soon."))
+		path := strings.TrimSpace(args)
+		if path == "" {
+			m.repl.AddOutput(theme.Faint.Render("Usage: /workspace set <path>"))
+			return *m, nil, true
+		}
+		// Expand ~ to home directory.
+		if strings.HasPrefix(path, "~") {
+			home, _ := os.UserHomeDir()
+			path = filepath.Join(home, path[1:])
+		}
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Invalid path: " + err.Error()))
+			return *m, nil, true
+		}
+		info, err := os.Stat(absPath)
+		if err != nil || !info.IsDir() {
+			m.repl.AddOutput(theme.ErrorText.Render("Not a directory: " + absPath))
+			return *m, nil, true
+		}
+		if err := os.Chdir(absPath); err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		// Update status bar.
+		home, _ := os.UserHomeDir()
+		display := absPath
+		if home != "" && strings.HasPrefix(absPath, home) {
+			display = "~" + absPath[len(home):]
+		}
+		m.statusBar.Workspace = display
+		m.repl.AddOutput(theme.SuccessText.Render("Workspace: ") + display)
 
 	default:
 		m.repl.AddOutput(usageBlock("/workspace", []string{
-			"show    — Show current workspace context",
+			"show    — Show current context",
 			"set     — Change workspace directory",
 		}))
 	}
-
 	return *m, nil, true
 }
 
@@ -628,31 +744,124 @@ func handleTagsCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
 			"list    — List all tags",
 		}))
 	}
-
 	return *m, nil, true
+}
+
+// --- /tag and /untag ---
+
+func handleTagNode(m *Model, args string) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return
+	}
+	// Expect: <node title> <tag name> — but both can have spaces.
+	// Use the tag list to find the tag name at the end.
+	args = strings.TrimSpace(args)
+	if args == "" {
+		m.repl.AddOutput(theme.Faint.Render("Usage: /tag <node title> <tag name>"))
+		return
+	}
+
+	tags, err := m.engine.Tags()
+	if err != nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+		return
+	}
+
+	// Try to match tag name from the end of the string.
+	var matchedTag string
+	var matchedTagID string
+	var nodeTitle string
+	for _, t := range tags {
+		if strings.HasSuffix(strings.ToLower(args), strings.ToLower(t.Name)) {
+			matchedTag = t.Name
+			matchedTagID = t.ID
+			nodeTitle = strings.TrimSpace(args[:len(args)-len(t.Name)])
+			break
+		}
+	}
+	if matchedTag == "" {
+		m.repl.AddOutput(theme.ErrorText.Render("Could not identify tag name. Available tags: /tags list"))
+		return
+	}
+
+	node, err := m.engine.FindNodeByTitle(nodeTitle)
+	if err != nil || node == nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Node not found: " + nodeTitle))
+		return
+	}
+
+	if err := m.engine.DB.AssignTag(node.ID, matchedTagID); err != nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+		return
+	}
+	m.repl.AddOutput(theme.SuccessText.Render("Tagged ") + node.Title + " with " + matchedTag)
+}
+
+func handleUntagNode(m *Model, args string) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return
+	}
+	args = strings.TrimSpace(args)
+	if args == "" {
+		m.repl.AddOutput(theme.Faint.Render("Usage: /untag <node title> <tag name>"))
+		return
+	}
+
+	tags, err := m.engine.Tags()
+	if err != nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+		return
+	}
+
+	var matchedTag string
+	var matchedTagID string
+	var nodeTitle string
+	for _, t := range tags {
+		if strings.HasSuffix(strings.ToLower(args), strings.ToLower(t.Name)) {
+			matchedTag = t.Name
+			matchedTagID = t.ID
+			nodeTitle = strings.TrimSpace(args[:len(args)-len(t.Name)])
+			break
+		}
+	}
+	if matchedTag == "" {
+		m.repl.AddOutput(theme.ErrorText.Render("Could not identify tag name. Available tags: /tags list"))
+		return
+	}
+
+	node, err := m.engine.FindNodeByTitle(nodeTitle)
+	if err != nil || node == nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Node not found: " + nodeTitle))
+		return
+	}
+
+	if err := m.engine.DB.UnassignTag(node.ID, matchedTagID); err != nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+		return
+	}
+	m.repl.AddOutput(theme.SuccessText.Render("Removed ") + matchedTag + " from " + node.Title)
 }
 
 // --- /config ---
 
-func handleConfigCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
+func handleConfigCmd(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 	switch sub {
 	case "show":
 		var b strings.Builder
 		b.WriteString(theme.Title.Render("Configuration") + "\n")
-
 		if m.engine == nil {
 			b.WriteString(theme.Faint.Render("  No engine connection."))
 			m.repl.AddOutput(b.String())
 			return *m, nil, true
 		}
-
 		keys := []struct{ key, label string }{
 			{"defaultProvider", "Default Provider"},
 			{"defaultModel", "Default Model"},
 			{"workspacePath", "Workspace Path"},
 			{"theme", "Theme"},
 		}
-
 		for _, k := range keys {
 			val := m.engine.Setting(k.key)
 			if val == "" {
@@ -664,7 +873,22 @@ func handleConfigCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	case "set":
-		m.repl.AddOutput(theme.Faint.Render("/config set — coming soon."))
+		if m.engine == nil {
+			m.repl.AddOutput(noEngineMsg())
+			return *m, nil, true
+		}
+		parts := strings.SplitN(args, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
+			m.repl.AddOutput(theme.Faint.Render("Usage: /config set <key> <value>"))
+			return *m, nil, true
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if err := m.engine.DB.SetSetting(key, value); err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		m.repl.AddOutput(theme.SuccessText.Render("Set ") + key + " = " + value)
 
 	default:
 		m.repl.AddOutput(usageBlock("/config", []string{
@@ -672,7 +896,6 @@ func handleConfigCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
 			"set     — Update a configuration value",
 		}))
 	}
-
 	return *m, nil, true
 }
 
