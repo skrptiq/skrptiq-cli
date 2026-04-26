@@ -115,56 +115,74 @@ func BuildCommands(app *eng.App) []components.Command {
 
 		// Runs.
 		{Name: "/run", Description: "Execute a workflow", ArgProvider: nodeCompleter("workflow")},
-		{Name: "/runs list", Description: "List recent executions"},
+		{Name: "/runs", Description: "Execution history", Subcommands: []components.Subcommand{
+			{Name: "list", Description: "List recent executions"},
+		}},
 		{Name: "/resume", Description: "Resume a paused execution"},
 		{Name: "/stop", Description: "Cancel the running workflow"},
 		{Name: "/status", Description: "Show current execution status"},
 
 		// Browse.
-		{Name: "/list", Description: "List nodes by type (workflows, skills, prompts...)"},
+		{Name: "/list", Description: "List nodes by type"},
 		{Name: "/search", Description: "Search nodes by title", ArgProvider: allNodeCompleter},
-		{Name: "/show", Description: "Show node content and metadata", ArgProvider: allNodeCompleter},
+		{Name: "/show", Description: "Show node content", ArgProvider: allNodeCompleter},
 
 		// Hub.
-		{Name: "/hub list", Description: "List imported skrpts"},
-		{Name: "/hub search", Description: "Search community skrpts"},
-		{Name: "/hub import", Description: "Import a skrpt from Hub"},
-		{Name: "/hub update", Description: "Check for or apply updates"},
+		{Name: "/hub", Description: "Hub operations", Subcommands: []components.Subcommand{
+			{Name: "list", Description: "List imported skrpts"},
+			{Name: "search", Description: "Search community skrpts"},
+			{Name: "import", Description: "Import a skrpt from Hub"},
+			{Name: "update", Description: "Check for or apply updates"},
+		}},
 
 		// Profiles.
-		{Name: "/profile list", Description: "List all voice profiles"},
-		{Name: "/profile use", Description: "Switch active profile", ArgProvider: profileCompleter},
-		{Name: "/profile show", Description: "Show active profile details"},
+		{Name: "/profile", Description: "Voice profiles", Subcommands: []components.Subcommand{
+			{Name: "list", Description: "List all profiles"},
+			{Name: "show", Description: "Show active profile details"},
+			{Name: "use", Description: "Switch active profile", ArgProvider: profileCompleter},
+		}},
 
 		// Persona dials.
-		{Name: "/dials show", Description: "Show current persona dial settings"},
-		{Name: "/dials set", Description: "Adjust a persona dial value"},
+		{Name: "/dials", Description: "Persona dials", Subcommands: []components.Subcommand{
+			{Name: "show", Description: "Show current dial settings"},
+			{Name: "set", Description: "Adjust a dial value"},
+		}},
 
 		// MCP & Services.
-		{Name: "/mcp list", Description: "List MCP server connections"},
-		{Name: "/mcp connect", Description: "Connect to an MCP server"},
-		{Name: "/mcp disconnect", Description: "Disconnect an MCP server"},
-		{Name: "/mcp tools", Description: "List available MCP tools"},
-		{Name: "/providers list", Description: "List configured AI providers"},
-		{Name: "/providers add", Description: "Configure a new provider"},
+		{Name: "/mcp", Description: "MCP servers", Subcommands: []components.Subcommand{
+			{Name: "list", Description: "List server connections"},
+			{Name: "connect", Description: "Connect to a server"},
+			{Name: "disconnect", Description: "Disconnect a server"},
+			{Name: "tools", Description: "List available tools"},
+		}},
+		{Name: "/providers", Description: "AI providers", Subcommands: []components.Subcommand{
+			{Name: "list", Description: "List configured providers"},
+			{Name: "add", Description: "Configure a new provider"},
+		}},
 
 		// Workspace.
-		{Name: "/workspace show", Description: "Show current workspace context"},
-		{Name: "/workspace set", Description: "Change workspace directory"},
+		{Name: "/workspace", Description: "Workspace context", Subcommands: []components.Subcommand{
+			{Name: "show", Description: "Show current context"},
+			{Name: "set", Description: "Change workspace directory"},
+		}},
 
 		// Tags.
-		{Name: "/tags list", Description: "List all tags"},
+		{Name: "/tags", Description: "Tags", Subcommands: []components.Subcommand{
+			{Name: "list", Description: "List all tags"},
+		}},
 		{Name: "/tag", Description: "Apply a tag to a node", ArgProvider: tagCompleter},
 		{Name: "/untag", Description: "Remove a tag from a node", ArgProvider: tagCompleter},
 
 		// Config.
-		{Name: "/config show", Description: "Show current configuration"},
-		{Name: "/config set", Description: "Update a configuration value"},
+		{Name: "/config", Description: "Configuration", Subcommands: []components.Subcommand{
+			{Name: "show", Description: "Show current configuration"},
+			{Name: "set", Description: "Update a configuration value"},
+		}},
 
 		// Prototype demos.
-		{Name: "/demo", Description: "Run streaming progress demo"},
-		{Name: "/tree", Description: "Show expandable execution tree demo"},
-		{Name: "/gate", Description: "Show gate approval flow demo"},
-		{Name: "/diff", Description: "Show diff review demo"},
+		{Name: "/demo", Description: "Streaming progress demo"},
+		{Name: "/tree", Description: "Execution tree demo"},
+		{Name: "/gate", Description: "Gate approval demo"},
+		{Name: "/diff", Description: "Diff review demo"},
 	}
 }

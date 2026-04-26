@@ -1,10 +1,17 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- Fixed tab completion for multi-word commands. `/hub l` + tab now correctly completes to `/hub list`.
-- Autocomplete filter now matches the full input against multi-word command names (e.g. typing `/hub l` filters to `/hub list`).
-- Fixed arg parsing to use `LastIndex` for space splitting so argument completers trigger at the right boundary.
+Hierarchical autocomplete — typing `/` now shows only top-level commands. Subcommands appear only after selecting the parent:
+
+1. `/` → `/help`, `/run`, `/hub`, `/profile`, `/mcp`, ...
+2. Select `/hub` → `list`, `search`, `import`, `update`
+3. Select `/profile use` → shows profile names from DB
+
+Three stages: command → subcommand → argument. Each level filters as you type.
+
+Command registry restructured with `Subcommands` field on `Command` type. ArgProviders can live on either commands (e.g. `/run`) or subcommands (e.g. `/profile use`).
 
 ### Tests
 - `go test ./...` — all passing
 - `go vet ./...` — clean
+- Comprehensive tests: top-level only at stage 1, subcommand filtering, arg via subcommand, NeedsMore signalling

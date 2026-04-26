@@ -16,25 +16,38 @@ type Completion struct {
 	Description string
 }
 
-// Command represents a slash command with optional argument completion.
+// Command represents a top-level slash command.
 type Command struct {
 	Name        string
 	Description string
+	// Subcommands are shown after selecting this command (stage 2).
+	// e.g. /hub → list, search, import, update.
+	Subcommands []Subcommand
 	// ArgProvider returns completions for the argument after the command.
-	// Called with the partial argument text typed so far.
-	// If nil, no argument completion is offered.
+	// Used for commands without subcommands (e.g. /show, /run).
+	// If both Subcommands and ArgProvider are set, Subcommands take priority.
 	ArgProvider func(partial string) []Completion
+}
+
+// Subcommand is a second-level command under a parent.
+type Subcommand struct {
+	Name        string
+	Description string
+	// ArgProvider returns completions for arguments after the subcommand.
+	ArgProvider func(partial string) []Completion
+}
+
+// HasSubcommands returns true if this command has subcommands.
+func (c Command) HasSubcommands() bool {
+	return len(c.Subcommands) > 0
 }
 
 // AutocompleteSelectMsg is sent when a completion is selected.
 type AutocompleteSelectMsg struct {
 	// FullText is the complete text to insert (e.g. "/show My Workflow").
 	FullText string
-	// IsCommand is true if a command was selected (stage 1),
-	// false if an argument was selected (stage 2).
-	IsCommand bool
-	// HasArgs indicates the selected command has an ArgProvider.
-	HasArgs bool
+	// NeedsMore is true if the autocomplete should continue to the next stage.
+	NeedsMore bool
 }
 
 // AutocompleteDismissMsg is sent when the autocomplete is dismissed.
@@ -66,27 +79,28 @@ func DefaultAutocompleteKeyMap() AutocompleteKeyMap {
 	}
 }
 
-// stage tracks whether we're completing commands or arguments.
+// stage tracks what level of completion we're at.
 type stage int
 
 const (
-	stageCommand stage = iota
-	stageArg
+	stageCommand stage = iota // top-level: /hub, /run, /help
+	stageSub                  // subcommand: list, search, import
+	stageArg                  // argument: workflow name, profile name
 )
 
-// Autocomplete is a filtered command/argument popup.
+// Autocomplete is a hierarchical command/subcommand/argument popup.
 type Autocomplete struct {
-	keys     AutocompleteKeyMap
-	commands []Command
-	items    []Completion
-	cursor   int
-	filter   string
-	width    int
-	maxShow  int
-	visible  bool
-	stage    stage
-	// activeCmd is the command selected in stage 1, used for stage 2 arg completion.
-	activeCmd *Command
+	keys      AutocompleteKeyMap
+	commands  []Command
+	items     []Completion
+	cursor    int
+	filter    string
+	width     int
+	maxShow   int
+	visible   bool
+	stage     stage
+	activeCmd *Command    // set during stageSub and stageArg
+	activeSub *Subcommand // set during stageArg (if came via subcommand)
 }
 
 // NewAutocomplete creates a new autocomplete component.
@@ -103,37 +117,25 @@ func (a *Autocomplete) SetWidth(w int) {
 	a.width = w
 }
 
-// Show activates the autocomplete popup with an initial filter.
+// Show activates stage 1: top-level command completion.
 func (a *Autocomplete) Show(filter string) {
 	a.visible = true
 	a.stage = stageCommand
 	a.activeCmd = nil
+	a.activeSub = nil
 	a.filter = filter
 	a.applyFilter()
 	a.cursor = 0
 }
 
-// ShowArgs activates argument completion for a specific command.
-func (a *Autocomplete) ShowArgs(cmd *Command, partial string) {
-	if cmd == nil || cmd.ArgProvider == nil {
-		return
-	}
-	a.visible = true
-	a.stage = stageArg
-	a.activeCmd = cmd
-	a.filter = partial
-	completions := cmd.ArgProvider(partial)
-	a.items = completions
-	a.cursor = 0
-}
-
-// Hide deactivates the autocomplete popup.
+// Hide deactivates the popup.
 func (a *Autocomplete) Hide() {
 	a.visible = false
 	a.filter = ""
 	a.cursor = 0
 	a.stage = stageCommand
 	a.activeCmd = nil
+	a.activeSub = nil
 	a.items = nil
 }
 
@@ -142,7 +144,7 @@ func (a Autocomplete) Visible() bool {
 	return a.visible
 }
 
-// SetFilter updates the filter text and refilters the list.
+// SetFilter updates the filter and refilters at the current stage.
 func (a *Autocomplete) SetFilter(filter string) {
 	a.filter = filter
 	a.applyFilter()
@@ -154,7 +156,41 @@ func (a *Autocomplete) SetFilter(filter string) {
 	}
 }
 
-// FindCommand looks up a command by name.
+// ShowSubcommands activates stage 2: subcommand completion for a parent command.
+func (a *Autocomplete) ShowSubcommands(cmd *Command, filter string) {
+	if cmd == nil || !cmd.HasSubcommands() {
+		return
+	}
+	a.visible = true
+	a.stage = stageSub
+	a.activeCmd = cmd
+	a.activeSub = nil
+	a.filter = filter
+	a.applyFilter()
+	a.cursor = 0
+}
+
+// ShowArgs activates stage 3: argument completion.
+func (a *Autocomplete) ShowArgs(cmd *Command, sub *Subcommand, partial string) {
+	var provider func(string) []Completion
+	if sub != nil && sub.ArgProvider != nil {
+		provider = sub.ArgProvider
+	} else if cmd != nil && cmd.ArgProvider != nil {
+		provider = cmd.ArgProvider
+	}
+	if provider == nil {
+		return
+	}
+	a.visible = true
+	a.stage = stageArg
+	a.activeCmd = cmd
+	a.activeSub = sub
+	a.filter = partial
+	a.items = provider(partial)
+	a.cursor = 0
+}
+
+// FindCommand looks up a top-level command by name.
 func (a *Autocomplete) FindCommand(name string) *Command {
 	name = strings.ToLower(strings.TrimSpace(name))
 	for i := range a.commands {
@@ -165,7 +201,21 @@ func (a *Autocomplete) FindCommand(name string) *Command {
 	return nil
 }
 
-// Update handles key events for the autocomplete.
+// FindSubcommand looks up a subcommand within a command.
+func (a *Autocomplete) FindSubcommand(cmd *Command, name string) *Subcommand {
+	if cmd == nil {
+		return nil
+	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	for i := range cmd.Subcommands {
+		if strings.ToLower(cmd.Subcommands[i].Name) == name {
+			return &cmd.Subcommands[i]
+		}
+	}
+	return nil
+}
+
+// Update handles key events.
 func (a Autocomplete) Update(msg tea.Msg) (Autocomplete, tea.Cmd, bool) {
 	if !a.visible {
 		return a, nil, false
@@ -192,30 +242,44 @@ func (a Autocomplete) Update(msg tea.Msg) (Autocomplete, tea.Cmd, bool) {
 			}
 			selected := a.items[a.cursor]
 
-			if a.stage == stageCommand {
-				// Check if this command has arg completion.
+			switch a.stage {
+			case stageCommand:
 				cmd := a.FindCommand(selected.Value)
-				hasArgs := cmd != nil && cmd.ArgProvider != nil
+				needsMore := cmd != nil && (cmd.HasSubcommands() || cmd.ArgProvider != nil)
 				a.Hide()
 				return a, func() tea.Msg {
 					return AutocompleteSelectMsg{
 						FullText:  selected.Value,
-						IsCommand: true,
-						HasArgs:   hasArgs,
+						NeedsMore: needsMore,
+					}
+				}, true
+
+			case stageSub:
+				sub := a.FindSubcommand(a.activeCmd, selected.Value)
+				needsMore := sub != nil && sub.ArgProvider != nil
+				fullText := a.activeCmd.Name + " " + selected.Value
+				a.Hide()
+				return a, func() tea.Msg {
+					return AutocompleteSelectMsg{
+						FullText:  fullText,
+						NeedsMore: needsMore,
+					}
+				}, true
+
+			case stageArg:
+				prefix := a.activeCmd.Name
+				if a.activeSub != nil {
+					prefix += " " + a.activeSub.Name
+				}
+				fullText := prefix + " " + selected.Value
+				a.Hide()
+				return a, func() tea.Msg {
+					return AutocompleteSelectMsg{
+						FullText:  fullText,
+						NeedsMore: false,
 					}
 				}, true
 			}
-
-			// Stage 2: argument selected — build full text.
-			fullText := a.activeCmd.Name + " " + selected.Value
-			a.Hide()
-			return a, func() tea.Msg {
-				return AutocompleteSelectMsg{
-					FullText:  fullText,
-					IsCommand: false,
-					HasArgs:   false,
-				}
-			}, true
 
 		case key.Matches(msg, a.keys.Dismiss):
 			a.Hide()
@@ -228,7 +292,7 @@ func (a Autocomplete) Update(msg tea.Msg) (Autocomplete, tea.Cmd, bool) {
 	return a, nil, false
 }
 
-// View renders the autocomplete popup.
+// View renders the popup.
 func (a Autocomplete) View() string {
 	if !a.visible || len(a.items) == 0 {
 		return ""
@@ -306,21 +370,45 @@ func (a Autocomplete) View() string {
 }
 
 func (a *Autocomplete) applyFilter() {
-	if a.stage == stageArg && a.activeCmd != nil && a.activeCmd.ArgProvider != nil {
-		a.items = a.activeCmd.ArgProvider(a.filter)
-		return
-	}
+	switch a.stage {
+	case stageCommand:
+		// Filter top-level commands only.
+		a.items = nil
+		query := strings.ToLower(strings.TrimPrefix(a.filter, "/"))
+		for _, cmd := range a.commands {
+			name := strings.TrimPrefix(cmd.Name, "/")
+			if query == "" || strings.HasPrefix(strings.ToLower(name), query) {
+				a.items = append(a.items, Completion{
+					Value:       cmd.Name,
+					Description: cmd.Description,
+				})
+			}
+		}
 
-	// Stage 1: filter commands.
-	a.items = nil
-	query := strings.ToLower(strings.TrimPrefix(a.filter, "/"))
-	for _, cmd := range a.commands {
-		name := strings.TrimPrefix(cmd.Name, "/")
-		if query == "" || strings.HasPrefix(strings.ToLower(name), query) {
-			a.items = append(a.items, Completion{
-				Value:       cmd.Name,
-				Description: cmd.Description,
-			})
+	case stageSub:
+		// Filter subcommands of the active command.
+		a.items = nil
+		query := strings.ToLower(a.filter)
+		if a.activeCmd != nil {
+			for _, sub := range a.activeCmd.Subcommands {
+				if query == "" || strings.HasPrefix(strings.ToLower(sub.Name), query) {
+					a.items = append(a.items, Completion{
+						Value:       sub.Name,
+						Description: sub.Description,
+					})
+				}
+			}
+		}
+
+	case stageArg:
+		var provider func(string) []Completion
+		if a.activeSub != nil && a.activeSub.ArgProvider != nil {
+			provider = a.activeSub.ArgProvider
+		} else if a.activeCmd != nil && a.activeCmd.ArgProvider != nil {
+			provider = a.activeCmd.ArgProvider
+		}
+		if provider != nil {
+			a.items = provider(a.filter)
 		}
 	}
 }

@@ -188,17 +188,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case components.AutocompleteSelectMsg:
-		if msg.IsCommand && msg.HasArgs {
-			// Command selected that has arg completion — set input and trigger stage 2.
+		if msg.NeedsMore {
+			// More input needed — set text with trailing space and trigger next stage.
 			m.input.SetValue(msg.FullText + " ")
 			m.input.CursorEnd()
 			m.prevInput = m.input.Value()
-			cmd := m.autocomplete.FindCommand(msg.FullText)
-			if cmd != nil {
-				m.autocomplete.ShowArgs(cmd, "")
-			}
+			triggerNextStage(&m.autocomplete, msg.FullText)
 		} else {
-			// Final selection (no args, or arg selected) — set input and submit.
+			// Final selection — set input text.
 			m.input.SetValue(msg.FullText)
 			m.input.CursorEnd()
 			m.prevInput = m.input.Value()
@@ -238,26 +235,81 @@ func (m *Model) updateAutocomplete(input string) {
 		return
 	}
 
-	// Check if the full input matches a command that has an ArgProvider.
-	// e.g. "/show " or "/run " — the command is complete and we need arg completion.
-	if spaceIdx := strings.LastIndex(input, " "); spaceIdx > 0 {
-		cmdPart := strings.TrimSpace(input[:spaceIdx])
-		argPart := strings.TrimSpace(input[spaceIdx+1:])
+	parts := strings.SplitN(input, " ", 3)
+	cmdName := parts[0] // e.g. "/hub"
 
-		cmd := m.autocomplete.FindCommand(cmdPart)
-		if cmd != nil && cmd.ArgProvider != nil {
-			m.autocomplete.ShowArgs(cmd, argPart)
+	cmd := m.autocomplete.FindCommand(cmdName)
+
+	switch len(parts) {
+	case 1:
+		// Just "/hub" or "/h" — stage 1, filter top-level commands.
+		if !m.autocomplete.Visible() {
+			m.autocomplete.Show(input)
+		} else {
+			m.autocomplete.SetFilter(input)
+		}
+
+	case 2:
+		// "/hub list" or "/hub l" or "/run " — check what the command expects.
+		subOrArg := parts[1]
+
+		if cmd == nil {
+			m.autocomplete.Hide()
 			return
 		}
-		// No exact command match with args — fall through to filter
-		// commands by the full input (e.g. "/hub l" filters to "/hub list").
+
+		if cmd.HasSubcommands() {
+			// Show subcommand completions filtered by what's typed.
+			m.autocomplete.ShowSubcommands(cmd, subOrArg)
+		} else if cmd.ArgProvider != nil {
+			// Show argument completions.
+			m.autocomplete.ShowArgs(cmd, nil, subOrArg)
+		} else {
+			m.autocomplete.Hide()
+		}
+
+	case 3:
+		// "/profile use Ben" — stage 3, argument after subcommand.
+		if cmd == nil {
+			m.autocomplete.Hide()
+			return
+		}
+		subName := parts[1]
+		argPartial := parts[2]
+		sub := m.autocomplete.FindSubcommand(cmd, subName)
+		if sub != nil && sub.ArgProvider != nil {
+			m.autocomplete.ShowArgs(cmd, sub, argPartial)
+		} else {
+			m.autocomplete.Hide()
+		}
+
+	default:
+		m.autocomplete.Hide()
+	}
+}
+
+// triggerNextStage activates the next autocomplete stage after a selection.
+func triggerNextStage(ac *components.Autocomplete, fullText string) {
+	parts := strings.SplitN(fullText, " ", 3)
+	cmdName := parts[0]
+	cmd := ac.FindCommand(cmdName)
+	if cmd == nil {
+		return
 	}
 
-	// Filter commands by the full input text.
-	if !m.autocomplete.Visible() {
-		m.autocomplete.Show(input)
-	} else {
-		m.autocomplete.SetFilter(input)
+	switch len(parts) {
+	case 1:
+		if cmd.HasSubcommands() {
+			ac.ShowSubcommands(cmd, "")
+		} else if cmd.ArgProvider != nil {
+			ac.ShowArgs(cmd, nil, "")
+		}
+
+	case 2:
+		sub := ac.FindSubcommand(cmd, parts[1])
+		if sub != nil && sub.ArgProvider != nil {
+			ac.ShowArgs(cmd, sub, "")
+		}
 	}
 }
 
