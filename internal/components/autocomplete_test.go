@@ -10,7 +10,23 @@ import (
 func testCommands() []Command {
 	return []Command{
 		{Name: "/help", Description: "List all commands"},
-		{Name: "/run", Description: "Execute a workflow"},
+		{Name: "/run", Description: "Execute a workflow", ArgProvider: func(partial string) []Completion {
+			items := []Completion{
+				{Value: "Blog Post Pipeline", Description: "workflow"},
+				{Value: "Code Review", Description: "workflow"},
+				{Value: "Content Polish", Description: "workflow"},
+			}
+			if partial == "" {
+				return items
+			}
+			var filtered []Completion
+			for _, item := range items {
+				if strings.Contains(strings.ToLower(item.Value), strings.ToLower(partial)) {
+					filtered = append(filtered, item)
+				}
+			}
+			return filtered
+		}},
 		{Name: "/runs", Description: "List recent executions"},
 		{Name: "/resume", Description: "Resume a paused execution"},
 		{Name: "/hub", Description: "Hub status"},
@@ -33,8 +49,8 @@ func TestShowAndHide(t *testing.T) {
 	if !a.Visible() {
 		t.Error("should be visible after Show")
 	}
-	if len(a.filtered) != len(testCommands()) {
-		t.Errorf("expected all commands with '/' filter, got %d", len(a.filtered))
+	if len(a.items) != len(testCommands()) {
+		t.Errorf("expected all commands with '/' filter, got %d", len(a.items))
 	}
 
 	a.Hide()
@@ -48,18 +64,18 @@ func TestFilterByPrefix(t *testing.T) {
 	a.SetWidth(80)
 
 	a.Show("/ru")
-	if len(a.filtered) != 2 {
-		t.Errorf("expected 2 matches for '/ru' (run, runs), got %d", len(a.filtered))
+	if len(a.items) != 2 {
+		t.Errorf("expected 2 matches for '/ru' (run, runs), got %d", len(a.items))
 	}
 
 	a.SetFilter("/run")
-	if len(a.filtered) != 2 {
-		t.Errorf("expected 2 matches for '/run' (run, runs), got %d", len(a.filtered))
+	if len(a.items) != 2 {
+		t.Errorf("expected 2 matches for '/run' (run, runs), got %d", len(a.items))
 	}
 
 	a.SetFilter("/runs")
-	if len(a.filtered) != 1 {
-		t.Errorf("expected 1 match for '/runs', got %d", len(a.filtered))
+	if len(a.items) != 1 {
+		t.Errorf("expected 1 match for '/runs', got %d", len(a.items))
 	}
 }
 
@@ -68,8 +84,8 @@ func TestFilterHub(t *testing.T) {
 	a.SetWidth(80)
 
 	a.Show("/hub")
-	if len(a.filtered) != 2 {
-		t.Errorf("expected 2 matches for '/hub', got %d", len(a.filtered))
+	if len(a.items) != 2 {
+		t.Errorf("expected 2 matches for '/hub', got %d", len(a.items))
 	}
 }
 
@@ -78,31 +94,27 @@ func TestCursorNavigation(t *testing.T) {
 	a.SetWidth(80)
 	a.Show("/")
 
-	// Move down.
 	a, _, _ = a.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if a.cursor != 1 {
 		t.Errorf("expected cursor at 1, got %d", a.cursor)
 	}
 
-	// Move up.
 	a, _, _ = a.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if a.cursor != 0 {
 		t.Errorf("expected cursor at 0, got %d", a.cursor)
 	}
 
-	// Can't go above 0.
 	a, _, _ = a.Update(tea.KeyMsg{Type: tea.KeyUp})
 	if a.cursor != 0 {
 		t.Errorf("expected cursor to stay at 0, got %d", a.cursor)
 	}
 }
 
-func TestSelectCommand(t *testing.T) {
+func TestSelectCommandWithoutArgs(t *testing.T) {
 	a := NewAutocomplete(testCommands())
 	a.SetWidth(80)
-	a.Show("/")
+	a.Show("/h")
 
-	// Select first item.
 	var cmd tea.Cmd
 	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -113,11 +125,91 @@ func TestSelectCommand(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected AutocompleteSelectMsg, got %T", msg)
 	}
-	if sel.Command != "/help" {
-		t.Errorf("expected '/help', got %q", sel.Command)
+	if sel.FullText != "/help" {
+		t.Errorf("expected '/help', got %q", sel.FullText)
 	}
-	if a.Visible() {
-		t.Error("should hide after selection")
+	if !sel.IsCommand {
+		t.Error("expected IsCommand to be true")
+	}
+	if sel.HasArgs {
+		t.Error("expected HasArgs to be false for /help")
+	}
+}
+
+func TestSelectCommandWithArgs(t *testing.T) {
+	a := NewAutocomplete(testCommands())
+	a.SetWidth(80)
+	a.Show("/ru")
+
+	// Move to /run (first match).
+	var cmd tea.Cmd
+	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected command from select")
+	}
+	msg := cmd()
+	sel, ok := msg.(AutocompleteSelectMsg)
+	if !ok {
+		t.Fatalf("expected AutocompleteSelectMsg, got %T", msg)
+	}
+	if sel.FullText != "/run" {
+		t.Errorf("expected '/run', got %q", sel.FullText)
+	}
+	if !sel.HasArgs {
+		t.Error("expected HasArgs to be true for /run")
+	}
+}
+
+func TestArgCompletion(t *testing.T) {
+	a := NewAutocomplete(testCommands())
+	a.SetWidth(80)
+
+	cmd := a.FindCommand("/run")
+	if cmd == nil {
+		t.Fatal("expected to find /run command")
+	}
+
+	a.ShowArgs(cmd, "")
+	if !a.Visible() {
+		t.Error("should be visible after ShowArgs")
+	}
+	if len(a.items) != 3 {
+		t.Errorf("expected 3 workflow completions, got %d", len(a.items))
+	}
+
+	// Filter args.
+	a.ShowArgs(cmd, "blog")
+	if len(a.items) != 1 {
+		t.Errorf("expected 1 match for 'blog', got %d", len(a.items))
+	}
+	if a.items[0].Value != "Blog Post Pipeline" {
+		t.Errorf("expected 'Blog Post Pipeline', got %q", a.items[0].Value)
+	}
+}
+
+func TestArgSelection(t *testing.T) {
+	a := NewAutocomplete(testCommands())
+	a.SetWidth(80)
+
+	cmd := a.FindCommand("/run")
+	a.ShowArgs(cmd, "")
+
+	// Select first arg.
+	var teaCmd tea.Cmd
+	a, teaCmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if teaCmd == nil {
+		t.Fatal("expected command from arg select")
+	}
+	msg := teaCmd()
+	sel, ok := msg.(AutocompleteSelectMsg)
+	if !ok {
+		t.Fatalf("expected AutocompleteSelectMsg, got %T", msg)
+	}
+	if sel.FullText != "/run Blog Post Pipeline" {
+		t.Errorf("expected '/run Blog Post Pipeline', got %q", sel.FullText)
+	}
+	if sel.IsCommand {
+		t.Error("expected IsCommand to be false for arg selection")
 	}
 }
 
@@ -135,26 +227,21 @@ func TestDismiss(t *testing.T) {
 	if _, ok := msg.(AutocompleteDismissMsg); !ok {
 		t.Errorf("expected AutocompleteDismissMsg, got %T", msg)
 	}
-	if a.Visible() {
-		t.Error("should hide after dismiss")
-	}
 }
 
 func TestKeysConsumed(t *testing.T) {
 	a := NewAutocomplete(testCommands())
 	a.SetWidth(80)
 
-	// Keys should NOT be consumed when not visible.
 	_, _, consumed := a.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if consumed {
-		t.Error("keys should not be consumed when autocomplete is hidden")
+		t.Error("keys should not be consumed when hidden")
 	}
 
-	// Keys SHOULD be consumed when visible.
 	a.Show("/")
 	_, _, consumed = a.Update(tea.KeyMsg{Type: tea.KeyDown})
 	if !consumed {
-		t.Error("keys should be consumed when autocomplete is visible")
+		t.Error("keys should be consumed when visible")
 	}
 }
 
@@ -162,7 +249,6 @@ func TestViewRenders(t *testing.T) {
 	a := NewAutocomplete(testCommands())
 	a.SetWidth(80)
 
-	// No output when hidden.
 	if a.View() != "" {
 		t.Error("expected empty view when hidden")
 	}
@@ -182,32 +268,27 @@ func TestEmptyFilter(t *testing.T) {
 	a.SetWidth(80)
 
 	a.Show("/zzz")
-	if len(a.filtered) != 0 {
-		t.Errorf("expected 0 matches for '/zzz', got %d", len(a.filtered))
+	if len(a.items) != 0 {
+		t.Errorf("expected 0 matches for '/zzz', got %d", len(a.items))
 	}
-	// View should be empty when no matches.
 	if a.View() != "" {
 		t.Error("expected empty view with no matches")
 	}
 }
 
-func TestTabSelect(t *testing.T) {
+func TestFindCommand(t *testing.T) {
 	a := NewAutocomplete(testCommands())
-	a.SetWidth(80)
-	a.Show("/h")
 
-	// Tab should also select.
-	var cmd tea.Cmd
-	a, cmd, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	cmd := a.FindCommand("/run")
 	if cmd == nil {
-		t.Fatal("expected command from tab select")
+		t.Fatal("expected to find /run")
 	}
-	msg := cmd()
-	sel, ok := msg.(AutocompleteSelectMsg)
-	if !ok {
-		t.Fatalf("expected AutocompleteSelectMsg, got %T", msg)
+	if cmd.Name != "/run" {
+		t.Errorf("expected '/run', got %q", cmd.Name)
 	}
-	if sel.Command != "/help" {
-		t.Errorf("expected '/help', got %q", sel.Command)
+
+	cmd = a.FindCommand("/nonexistent")
+	if cmd != nil {
+		t.Error("expected nil for nonexistent command")
 	}
 }

@@ -10,15 +10,31 @@ import (
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 )
 
-// Command represents a slash command in the autocomplete list.
-type Command struct {
-	Name        string
+// Completion represents a single item in the autocomplete list.
+type Completion struct {
+	Value       string
 	Description string
 }
 
-// AutocompleteSelectMsg is sent when a command is selected.
+// Command represents a slash command with optional argument completion.
+type Command struct {
+	Name        string
+	Description string
+	// ArgProvider returns completions for the argument after the command.
+	// Called with the partial argument text typed so far.
+	// If nil, no argument completion is offered.
+	ArgProvider func(partial string) []Completion
+}
+
+// AutocompleteSelectMsg is sent when a completion is selected.
 type AutocompleteSelectMsg struct {
-	Command string
+	// FullText is the complete text to insert (e.g. "/show My Workflow").
+	FullText string
+	// IsCommand is true if a command was selected (stage 1),
+	// false if an argument was selected (stage 2).
+	IsCommand bool
+	// HasArgs indicates the selected command has an ArgProvider.
+	HasArgs bool
 }
 
 // AutocompleteDismissMsg is sent when the autocomplete is dismissed.
@@ -50,25 +66,35 @@ func DefaultAutocompleteKeyMap() AutocompleteKeyMap {
 	}
 }
 
-// Autocomplete is a filtered command popup.
+// stage tracks whether we're completing commands or arguments.
+type stage int
+
+const (
+	stageCommand stage = iota
+	stageArg
+)
+
+// Autocomplete is a filtered command/argument popup.
 type Autocomplete struct {
 	keys     AutocompleteKeyMap
 	commands []Command
-	filtered []Command
+	items    []Completion
 	cursor   int
 	filter   string
 	width    int
 	maxShow  int
 	visible  bool
+	stage    stage
+	// activeCmd is the command selected in stage 1, used for stage 2 arg completion.
+	activeCmd *Command
 }
 
 // NewAutocomplete creates a new autocomplete component.
 func NewAutocomplete(commands []Command) Autocomplete {
 	return Autocomplete{
-		keys:     DefaultAutocompleteKeyMap(),
+		keys:    DefaultAutocompleteKeyMap(),
 		commands: commands,
-		filtered: commands,
-		maxShow:  8,
+		maxShow: 8,
 	}
 }
 
@@ -80,8 +106,24 @@ func (a *Autocomplete) SetWidth(w int) {
 // Show activates the autocomplete popup with an initial filter.
 func (a *Autocomplete) Show(filter string) {
 	a.visible = true
+	a.stage = stageCommand
+	a.activeCmd = nil
 	a.filter = filter
 	a.applyFilter()
+	a.cursor = 0
+}
+
+// ShowArgs activates argument completion for a specific command.
+func (a *Autocomplete) ShowArgs(cmd *Command, partial string) {
+	if cmd == nil || cmd.ArgProvider == nil {
+		return
+	}
+	a.visible = true
+	a.stage = stageArg
+	a.activeCmd = cmd
+	a.filter = partial
+	completions := cmd.ArgProvider(partial)
+	a.items = completions
 	a.cursor = 0
 }
 
@@ -90,6 +132,9 @@ func (a *Autocomplete) Hide() {
 	a.visible = false
 	a.filter = ""
 	a.cursor = 0
+	a.stage = stageCommand
+	a.activeCmd = nil
+	a.items = nil
 }
 
 // Visible returns whether the popup is shown.
@@ -101,16 +146,26 @@ func (a Autocomplete) Visible() bool {
 func (a *Autocomplete) SetFilter(filter string) {
 	a.filter = filter
 	a.applyFilter()
-	if a.cursor >= len(a.filtered) {
-		a.cursor = len(a.filtered) - 1
+	if a.cursor >= len(a.items) {
+		a.cursor = len(a.items) - 1
 	}
 	if a.cursor < 0 {
 		a.cursor = 0
 	}
 }
 
+// FindCommand looks up a command by name.
+func (a *Autocomplete) FindCommand(name string) *Command {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for i := range a.commands {
+		if strings.ToLower(a.commands[i].Name) == name {
+			return &a.commands[i]
+		}
+	}
+	return nil
+}
+
 // Update handles key events for the autocomplete.
-// Returns the updated model, an optional command, and whether the key was consumed.
 func (a Autocomplete) Update(msg tea.Msg) (Autocomplete, tea.Cmd, bool) {
 	if !a.visible {
 		return a, nil, false
@@ -126,20 +181,41 @@ func (a Autocomplete) Update(msg tea.Msg) (Autocomplete, tea.Cmd, bool) {
 			return a, nil, true
 
 		case key.Matches(msg, a.keys.Down):
-			if a.cursor < len(a.filtered)-1 {
+			if a.cursor < len(a.items)-1 {
 				a.cursor++
 			}
 			return a, nil, true
 
 		case key.Matches(msg, a.keys.Select):
-			if len(a.filtered) > 0 {
-				selected := a.filtered[a.cursor].Name
+			if len(a.items) == 0 {
+				return a, nil, true
+			}
+			selected := a.items[a.cursor]
+
+			if a.stage == stageCommand {
+				// Check if this command has arg completion.
+				cmd := a.FindCommand(selected.Value)
+				hasArgs := cmd != nil && cmd.ArgProvider != nil
 				a.Hide()
 				return a, func() tea.Msg {
-					return AutocompleteSelectMsg{Command: selected}
+					return AutocompleteSelectMsg{
+						FullText:  selected.Value,
+						IsCommand: true,
+						HasArgs:   hasArgs,
+					}
 				}, true
 			}
-			return a, nil, true
+
+			// Stage 2: argument selected — build full text.
+			fullText := a.activeCmd.Name + " " + selected.Value
+			a.Hide()
+			return a, func() tea.Msg {
+				return AutocompleteSelectMsg{
+					FullText:  fullText,
+					IsCommand: false,
+					HasArgs:   false,
+				}
+			}, true
 
 		case key.Matches(msg, a.keys.Dismiss):
 			a.Hide()
@@ -153,16 +229,14 @@ func (a Autocomplete) Update(msg tea.Msg) (Autocomplete, tea.Cmd, bool) {
 }
 
 // View renders the autocomplete popup.
-// The popup renders upward from the input line (like Claude Code).
 func (a Autocomplete) View() string {
-	if !a.visible || len(a.filtered) == 0 {
+	if !a.visible || len(a.items) == 0 {
 		return ""
 	}
 
-	// Determine visible window.
-	show := a.filtered
+	show := a.items
+	startOffset := 0
 	if len(show) > a.maxShow {
-		// Scroll so cursor is always visible.
 		start := a.cursor - a.maxShow/2
 		if start < 0 {
 			start = 0
@@ -172,17 +246,17 @@ func (a Autocomplete) View() string {
 			end = len(show)
 			start = end - a.maxShow
 		}
+		startOffset = start
 		show = show[start:end]
 	}
 
 	nameWidth := 0
-	for _, cmd := range show {
-		w := lipgloss.Width(cmd.Name)
+	for _, item := range show {
+		w := lipgloss.Width(item.Value)
 		if w > nameWidth {
 			nameWidth = w
 		}
 	}
-	// Pad name column.
 	nameWidth += 2
 
 	selectedStyle := lipgloss.NewStyle().
@@ -197,29 +271,17 @@ func (a Autocomplete) View() string {
 		Foreground(theme.Muted)
 
 	var lines []string
-	for i, cmd := range show {
-		// Find the actual index in filtered to compare with cursor.
-		actualIdx := i
-		if len(a.filtered) > a.maxShow {
-			start := a.cursor - a.maxShow/2
-			if start < 0 {
-				start = 0
-			}
-			if start+a.maxShow > len(a.filtered) {
-				start = len(a.filtered) - a.maxShow
-			}
-			actualIdx = start + i
-		}
+	for i, item := range show {
+		actualIdx := startOffset + i
 
-		name := cmd.Name
-		desc := cmd.Description
+		name := item.Value
+		desc := item.Description
 
-		// Truncate description to fit.
 		maxDesc := a.width - nameWidth - 4
 		if maxDesc < 0 {
 			maxDesc = 0
 		}
-		if lipgloss.Width(desc) > maxDesc {
+		if maxDesc > 0 && lipgloss.Width(desc) > maxDesc {
 			desc = desc[:maxDesc-1] + "…"
 		}
 
@@ -244,17 +306,21 @@ func (a Autocomplete) View() string {
 }
 
 func (a *Autocomplete) applyFilter() {
-	if a.filter == "" || a.filter == "/" {
-		a.filtered = a.commands
+	if a.stage == stageArg && a.activeCmd != nil && a.activeCmd.ArgProvider != nil {
+		a.items = a.activeCmd.ArgProvider(a.filter)
 		return
 	}
 
+	// Stage 1: filter commands.
+	a.items = nil
 	query := strings.ToLower(strings.TrimPrefix(a.filter, "/"))
-	a.filtered = nil
 	for _, cmd := range a.commands {
 		name := strings.TrimPrefix(cmd.Name, "/")
-		if strings.HasPrefix(strings.ToLower(name), query) {
-			a.filtered = append(a.filtered, cmd)
+		if query == "" || strings.HasPrefix(strings.ToLower(name), query) {
+			a.items = append(a.items, Completion{
+				Value:       cmd.Name,
+				Description: cmd.Description,
+			})
 		}
 	}
 }

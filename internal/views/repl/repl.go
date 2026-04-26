@@ -188,10 +188,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case components.AutocompleteSelectMsg:
-		// Insert the selected command into the input.
-		m.input.SetValue(msg.Command + " ")
-		m.input.CursorEnd()
-		m.prevInput = m.input.Value()
+		if msg.IsCommand && msg.HasArgs {
+			// Command selected that has arg completion — set input and trigger stage 2.
+			m.input.SetValue(msg.FullText + " ")
+			m.input.CursorEnd()
+			m.prevInput = m.input.Value()
+			cmd := m.autocomplete.FindCommand(msg.FullText)
+			if cmd != nil {
+				m.autocomplete.ShowArgs(cmd, "")
+			}
+		} else {
+			// Final selection (no args, or arg selected) — set input and submit.
+			m.input.SetValue(msg.FullText)
+			m.input.CursorEnd()
+			m.prevInput = m.input.Value()
+		}
 		return m, nil
 
 	case components.AutocompleteDismissMsg:
@@ -222,15 +233,32 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m *Model) updateAutocomplete(input string) {
-	if strings.HasPrefix(input, "/") && !strings.Contains(input, " ") {
-		// Show autocomplete and filter by what's typed so far.
-		if !m.autocomplete.Visible() {
-			m.autocomplete.Show(input)
-		} else {
-			m.autocomplete.SetFilter(input)
-		}
-	} else {
+	if !strings.HasPrefix(input, "/") {
 		m.autocomplete.Hide()
+		return
+	}
+
+	// Check if input has a space — could be stage 2 (argument).
+	if spaceIdx := strings.Index(input, " "); spaceIdx > 0 {
+		cmdPart := input[:spaceIdx]
+		argPart := strings.TrimSpace(input[spaceIdx+1:])
+
+		cmd := m.autocomplete.FindCommand(cmdPart)
+		if cmd != nil && cmd.ArgProvider != nil {
+			m.autocomplete.ShowArgs(cmd, argPart)
+			return
+		}
+
+		// No arg provider for this command — no completions.
+		m.autocomplete.Hide()
+		return
+	}
+
+	// Stage 1: command completion.
+	if !m.autocomplete.Visible() {
+		m.autocomplete.Show(input)
+	} else {
+		m.autocomplete.SetFilter(input)
 	}
 }
 

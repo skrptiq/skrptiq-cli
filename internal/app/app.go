@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -8,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/skrptiq/skrptiq-cli/internal/components"
+	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 	"github.com/skrptiq/skrptiq-cli/internal/views/diff"
 	"github.com/skrptiq/skrptiq-cli/internal/views/gate"
@@ -38,6 +41,8 @@ type Model struct {
 	keys       KeyMap
 	header     components.Header
 	statusBar  components.StatusBar
+	engine     *eng.App
+	commands   []components.Command
 	width      int
 	height     int
 	activeView viewID
@@ -56,20 +61,74 @@ type Model struct {
 
 // New creates a new root app model.
 func New() Model {
+	// Open the engine (shared DB).
+	engine, _ := eng.Open("")
+
+	commands := BuildCommands(engine)
+
+	// Build status bar from real data.
+	statusBar := buildStatusBar(engine)
+
+	// Build prompt with active profile name.
+	profileName := "default"
+	if engine != nil {
+		if p, _ := engine.ActiveProfile("voice"); p != nil {
+			profileName = p.Name
+		}
+	}
+
 	prompt := repl.PromptConfig{
 		Symbol:       "❯ ",
 		Style:        theme.Prompt,
-		ContextLeft:  "default",
+		ContextLeft:  profileName,
 		ContextRight: "ctrl+d ctrl+d to exit",
 	}
 
 	return Model{
 		keys:       DefaultKeyMap(),
 		header:     components.NewHeader("skrptiq", "v0.1.0-prototype"),
-		statusBar:  components.NewStatusBar(),
+		statusBar:  statusBar,
+		engine:     engine,
+		commands:   commands,
 		activeView: viewREPL,
-		repl:       repl.NewWithPrompt(prompt, SlashCommands),
+		repl:       repl.NewWithPrompt(prompt, commands),
 	}
+}
+
+func buildStatusBar(engine *eng.App) components.StatusBar {
+	sb := components.NewStatusBar()
+
+	if engine == nil {
+		return sb
+	}
+
+	// Set profile from DB.
+	if p, _ := engine.ActiveProfile("voice"); p != nil {
+		sb.Profile = p.Name
+	}
+
+	// Detect workspace.
+	if cwd, err := os.Getwd(); err == nil {
+		home, _ := os.UserHomeDir()
+		if home != "" && strings.HasPrefix(cwd, home) {
+			sb.Workspace = "~" + cwd[len(home):]
+		} else {
+			sb.Workspace = filepath.Base(cwd)
+		}
+	}
+
+	// Set MCP servers from DB.
+	if servers, err := engine.MCPServers(); err == nil {
+		sb.MCP = nil
+		for _, s := range servers {
+			sb.MCP = append(sb.MCP, components.MCPStatus{
+				Name:      s.Name,
+				Connected: s.Status == "connected",
+			})
+		}
+	}
+
+	return sb
 }
 
 func (m Model) Init() tea.Cmd {
@@ -253,7 +312,7 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 		return m, nil
 
 	case cmd == "clear":
-		m.repl = repl.NewWithPrompt(m.repl.Prompt(), SlashCommands)
+		m.repl = repl.NewWithPrompt(m.repl.Prompt(), m.commands)
 		resizeView(&m)
 		return m, m.repl.Init()
 

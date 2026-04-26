@@ -1,20 +1,22 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- Slash command autocomplete popup — typing "/" triggers a filtered command list with descriptions. Arrow keys navigate, enter/tab selects, esc dismisses. Filters as you type (e.g. "/ru" → /run, /runs).
-- Command registry with 30+ slash commands aligned to desktop app navigation (GH#434).
-- Commands support both bare ("tree") and prefixed ("/tree") input.
-- Unimplemented commands show "not yet implemented" rather than "unknown command".
-- /clear command resets session history.
-- /help updated with full command reference.
+- **Engine integration**: CLI now imports `github.com/skrptiq/engine/storage` directly (GH#435 resolved — packages moved out of internal/).
+- **`internal/engine/` package**: Opens shared DB at `~/.skrptiq/skrptiq.db`, provides typed queries for workflows, profiles, connections, MCP servers, tags.
+- **Multi-stage autocomplete**: Stage 1 = command completion (type `/`). Stage 2 = argument completion (after selecting a command with an ArgProvider). e.g. `/run` shows workflow names, `/show` shows all nodes, `/profile` shows profiles, `/tag` shows tags.
+- **Real data in status bar**: Profile name, workspace path, and MCP server connections now come from the engine DB.
+- **Real data in prompt**: Active voice profile name shown as left context.
 
-### New files
-- `internal/components/autocomplete.go` — reusable autocomplete popup component
-- `internal/components/autocomplete_test.go` — tests for filtering, navigation, selection, dismissal
-- `internal/app/commands.go` — slash command registry
+### Engine types consumed
+- `storage.Open`, `storage.DB`, `storage.Node`, `storage.Profile`, `storage.Connection`, `storage.Tag`
+- Queries: `GetAllNodes`, `GetAllProfiles`, `GetConnectionsByType`, `GetAllTags`
 
 ### Tests
 - `go test ./...` — all passing (8 test packages)
 - `go vet ./...` — clean
-- New: autocomplete filter, cursor bounds, select, dismiss, tab select, empty filter, consumed keys
-- New: slash prefix commands, unimplemented command message
+- Updated autocomplete tests cover: stage 1 (command), stage 2 (arg), arg filtering, arg selection, FindCommand
+
+### Next
+- Wire `/run` to `engine.RunWorkflow` with real execution + progress callbacks
+- Wire `/runs` to list executions from DB
+- Wire `/list`, `/show` to display real node data
