@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,7 +49,9 @@ func DefaultPromptConfig() PromptConfig {
 
 // KeyMap defines REPL-specific key bindings.
 type KeyMap struct {
-	Submit key.Binding
+	Submit    key.Binding
+	HistoryUp key.Binding
+	HistoryDown key.Binding
 }
 
 // DefaultKeyMap returns default REPL key bindings.
@@ -57,6 +60,14 @@ func DefaultKeyMap() KeyMap {
 		Submit: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "submit"),
+		),
+		HistoryUp: key.NewBinding(
+			key.WithKeys("up"),
+			key.WithHelp("↑", "previous command"),
+		),
+		HistoryDown: key.NewBinding(
+			key.WithKeys("down"),
+			key.WithHelp("↓", "next command"),
 		),
 	}
 }
@@ -68,11 +79,16 @@ type Model struct {
 	input        textinput.Model
 	viewport     viewport.Model
 	autocomplete components.Autocomplete
-	history      []string
+	history      []string   // display history (rendered output)
+	cmdHistory   []string   // command history (raw inputs for up/down)
+	cmdHistIdx   int        // -1 = new input, 0..n = browsing history
+	savedInput   string     // saved current input when browsing history
 	width        int
 	height       int
 	ready        bool
-	prevInput    string // tracks previous input value for change detection
+	prevInput    string     // tracks previous input value for change detection
+	activity     string     // activity indicator text (empty = idle)
+	activitySpinner spinner.Model
 }
 
 // New creates a new REPL view model.
@@ -88,12 +104,17 @@ func NewWithPrompt(cfg PromptConfig, commands []components.Command) Model {
 	ti.Focus()
 	ti.CharLimit = 500
 
+	s := components.NewSpinner()
+
 	return Model{
-		keys:         DefaultKeyMap(),
-		prompt:       cfg,
-		input:        ti,
-		autocomplete: components.NewAutocomplete(commands),
-		history:      []string{},
+		keys:            DefaultKeyMap(),
+		prompt:          cfg,
+		input:           ti,
+		autocomplete:    components.NewAutocomplete(commands),
+		history:         []string{},
+		cmdHistory:      []string{},
+		cmdHistIdx:      -1,
+		activitySpinner: s,
 	}
 }
 
@@ -105,6 +126,16 @@ func (m Model) Prompt() PromptConfig {
 // History returns the current history entries.
 func (m Model) History() []string {
 	return m.history
+}
+
+// SetActivity sets the activity indicator text. Empty string clears it.
+func (m *Model) SetActivity(text string) {
+	m.activity = text
+}
+
+// Activity returns the current activity text.
+func (m Model) Activity() string {
+	return m.activity
 }
 
 // SetPrompt updates the prompt configuration.
@@ -173,9 +204,46 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 
+		// History navigation (only when autocomplete is hidden).
+		if !m.autocomplete.Visible() {
+			if key.Matches(msg, m.keys.HistoryUp) {
+				if len(m.cmdHistory) > 0 {
+					if m.cmdHistIdx == -1 {
+						// Save current input before browsing.
+						m.savedInput = m.input.Value()
+						m.cmdHistIdx = len(m.cmdHistory) - 1
+					} else if m.cmdHistIdx > 0 {
+						m.cmdHistIdx--
+					}
+					m.input.SetValue(m.cmdHistory[m.cmdHistIdx])
+					m.input.CursorEnd()
+					m.prevInput = m.input.Value()
+				}
+				return m, nil
+			}
+			if key.Matches(msg, m.keys.HistoryDown) {
+				if m.cmdHistIdx >= 0 {
+					m.cmdHistIdx++
+					if m.cmdHistIdx >= len(m.cmdHistory) {
+						// Back to current input.
+						m.cmdHistIdx = -1
+						m.input.SetValue(m.savedInput)
+					} else {
+						m.input.SetValue(m.cmdHistory[m.cmdHistIdx])
+					}
+					m.input.CursorEnd()
+					m.prevInput = m.input.Value()
+				}
+				return m, nil
+			}
+		}
+
 		// Submit command.
 		if key.Matches(msg, m.keys.Submit) && m.input.Value() != "" {
 			input := m.input.Value()
+			m.cmdHistory = append(m.cmdHistory, input)
+			m.cmdHistIdx = -1
+			m.savedInput = ""
 			m.history = append(m.history, m.prompt.Style.Render(m.prompt.Symbol)+input)
 			m.input.SetValue("")
 			m.prevInput = ""
@@ -207,6 +275,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case OutputMsg:
 		m.AddOutput(msg.Text)
+		return m, nil
+
+	case spinner.TickMsg:
+		if m.activity != "" {
+			var cmd tea.Cmd
+			m.activitySpinner, cmd = m.activitySpinner.Update(msg)
+			return m, cmd
+		}
 		return m, nil
 	}
 
@@ -321,6 +397,11 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
+
+	// Render activity indicator above the input if engine is active.
+	if m.activity != "" {
+		b.WriteString(m.activitySpinner.View() + " " + theme.Subtitle.Render(m.activity) + "\n")
+	}
 
 	// Render autocomplete popup above the input if visible.
 	if m.autocomplete.Visible() {

@@ -188,6 +188,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return clearExitHintMsg{}
 			})
 		}
+		// Escape cancels the active overlay and returns to REPL.
+		if key.Matches(msg, m.keys.Back) && m.activeView != viewREPL {
+			m.repl.AddOutput(theme.Faint.Render("Cancelled."))
+			m.repl.SetActivity("")
+			m.activeView = viewREPL
+			resizeView(&m)
+			return m, nil
+		}
 
 	case clearExitHintMsg:
 		m.exitHint = false
@@ -200,12 +208,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Progress completed.
 	case progress.DoneMsg:
 		m.repl.AddOutput(msg.Summary)
+		m.repl.SetActivity("")
 		m.activeView = viewREPL
 		resizeView(&m)
 		return m, nil
 
 	// Tree dismissed.
 	case tree.DismissMsg:
+		m.repl.SetActivity("")
 		m.activeView = viewREPL
 		resizeView(&m)
 		return m, nil

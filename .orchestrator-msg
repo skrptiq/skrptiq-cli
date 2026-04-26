@@ -1,17 +1,15 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Hierarchical autocomplete — typing `/` now shows only top-level commands. Subcommands appear only after selecting the parent:
+Three REPL interaction features matching Claude Code / Codex CLI conventions:
 
-1. `/` → `/help`, `/run`, `/hub`, `/profile`, `/mcp`, ...
-2. Select `/hub` → `list`, `search`, `import`, `update`
-3. Select `/profile use` → shows profile names from DB
+1. **Command history** — up/down arrows cycle through previously submitted commands. Current input is preserved when browsing and restored when pressing down past the end.
 
-Three stages: command → subcommand → argument. Each level filters as you type.
+2. **Escape to cancel** — escape from any overlay view (progress, tree, gate, diff) returns to the REPL input with a "Cancelled." message. Activity indicator is cleared.
 
-Command registry restructured with `Subcommands` field on `Command` type. ArgProviders can live on either commands (e.g. `/run`) or subcommands (e.g. `/profile use`).
+3. **Activity indicator** — spinner + text line rendered above the prompt when the engine is active. SetActivity("text") shows it, SetActivity("") clears it. Ready for engine execution wiring. Creative word prompt (word of the day etc.) to be designed later.
 
 ### Tests
 - `go test ./...` — all passing
 - `go vet ./...` — clean
-- Comprehensive tests: top-level only at stage 1, subcommand filtering, arg via subcommand, NeedsMore signalling
+- New tests: command history up/down, preserves partial input, activity indicator show/clear, escape cancels overlay, escape no-op in REPL

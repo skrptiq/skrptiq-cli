@@ -253,3 +253,28 @@ func TestDeferredCommandShowsMessage(t *testing.T) {
 		t.Error("expected output message for deferred command")
 	}
 }
+
+func TestEscapeCancelsOverlay(t *testing.T) {
+	m := setupModel()
+	// Enter tree view.
+	m, _ = handleCommand(m, "/tree")
+	if m.activeView != viewTree {
+		t.Fatalf("expected tree view, got %d", m.activeView)
+	}
+	// Press escape.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.activeView != viewREPL {
+		t.Errorf("expected REPL view after escape, got %d", m.activeView)
+	}
+}
+
+func TestEscapeDoesNothingInREPL(t *testing.T) {
+	m := setupModel()
+	// Escape in REPL should not quit or change view.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.activeView != viewREPL {
+		t.Errorf("expected REPL view, got %d", m.activeView)
+	}
+}
