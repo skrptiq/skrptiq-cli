@@ -178,6 +178,13 @@ func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.autocomplete.SetWidth(width)
+	m.input.SetWidth(width - lipgloss.Width(m.input.Prompt) - 1)
+
+	if m.printer != nil {
+		// No viewport needed — output goes to terminal scrollback.
+		m.ready = true
+		return
+	}
 
 	// Viewport gets all height except the prompt line(s).
 	promptLines := 1
@@ -198,8 +205,6 @@ func (m *Model) SetSize(width, height int) {
 		m.viewport.Height = vpHeight
 		m.viewport.SetContent(m.renderHistory())
 	}
-
-	m.input.SetWidth(width - lipgloss.Width(m.input.Prompt) - 1)
 }
 
 // UpdateLastOutput replaces the last history entry (for streaming updates).

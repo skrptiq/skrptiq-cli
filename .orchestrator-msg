@@ -1,10 +1,4 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Major rendering change — removed alt screen, output now goes to terminal scrollback.
-
-- **Terminal scrollback works** — all command output, execution progress, and chat responses are printed via `tea.Println()` and persist in the terminal's native scrollback buffer. Scroll up with your terminal to see previous content.
-- **Removed alt screen** — bubbletea no longer takes over the terminal. The TUI only renders the input area (activity indicator, autocomplete popup, context line, input).
-- **Header prints once at startup** — shows version, profile, workspace, database path.
-- **Status bar info moved to context line** — profile and workspace shown in the prompt area.
-- **Streaming respects scrollback** — `UpdateLastOutput` is a no-op when using scrollback (can't update in-place). `AddOutput` prints to scrollback via `Println`.
+Fixed "Initialising..." hang — when using terminal scrollback (no viewport), SetSize now marks ready immediately without creating a viewport.
