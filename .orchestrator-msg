@@ -1,21 +1,4 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Visible mode switching for the CLI — three modes with distinct visual identity:
-
-**Command mode** (default) — `❯` prompt, profile name left, exit hint right. Slash commands work, bare text prompts to enter chat mode.
-
-**Chat mode** (`/chat`) — `💬` prompt, "chat" left context, provider name + "/exit to return" right. All bare text goes to the LLM handler (placeholder until wired). Detects default provider from settings.
-
-**Run mode** (`/run <workflow>`) — `▶` prompt (green), "run" left context, workflow name + "/exit or esc to cancel" right. Bare text goes to gate/approval handler (placeholder until wired).
-
-**Mode transitions:**
-- `/chat` → enters chat mode
-- `/run <name>` → enters run mode
-- `/exit` → returns to command mode from any mode
-- `esc` → exits current mode (or cancels overlay)
-- Mode label, prompt symbol, and context line all update visually
-
-### Tests
-- `go test ./...` — all passing
-- `go vet ./...` — clean
+Prompt now initialises through enterMode(ModeCommand) so the default command mode prompt is always consistent — profile name left, exit hint right, ❯ symbol.

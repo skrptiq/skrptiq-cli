@@ -96,30 +96,19 @@ func New() Model {
 	// Build status bar from real data.
 	statusBar := buildStatusBar(engine)
 
-	// Build prompt with active profile name.
-	profileName := "default"
-	if engine != nil {
-		if p, _ := engine.ActiveProfile("voice"); p != nil {
-			profileName = p.Name
-		}
-	}
-
-	prompt := repl.PromptConfig{
-		Symbol:       "❯ ",
-		Style:        theme.Prompt,
-		ContextLeft:  profileName,
-		ContextRight: "ctrl+d ctrl+d to exit",
-	}
-
 	m := Model{
 		keys:       DefaultKeyMap(),
 		header:     components.NewHeader("skrptiq", "v0.1.0-prototype"),
 		statusBar:  statusBar,
 		engine:     engine,
 		commands:   commands,
+		mode:       ModeCommand,
 		activeView: viewREPL,
-		repl:       repl.NewWithPrompt(prompt, commands),
+		repl:       repl.NewWithPrompt(repl.DefaultPromptConfig(), commands),
 	}
+
+	// Set the prompt via enterMode so it's always consistent.
+	enterMode(&m, ModeCommand)
 
 	if engineErr != nil {
 		m.repl.AddOutput(theme.ErrorText.Render("Engine: " + engineErr.Error()))
