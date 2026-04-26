@@ -1,17 +1,19 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Fixed DB path — CLI was creating an empty DB at `~/.skrptiq/skrptiq.db` instead of reading the desktop app's shared DB at `~/Library/Application Support/skrptiq/data/skrptiq.db`.
+Wired remaining read-side slash commands to real engine data:
 
-- `DefaultDBPath` now checks the macOS app location first, falls back to `~/.skrptiq/`
-- Startup shows the connected DB path so the user can verify
-- Engine errors are shown instead of silently swallowed
+- `/runs list` — queries executions table, shows status (✓/✗/◌/⏸), workflow name, timestamp, token count, errors
+- `/profile use <name>` — actually switches the active profile in the DB, updates prompt and status bar live
+- `/hub search <query>` — real Hub API search via engine's hubapi.Client, shows results with categories and descriptions
+- Engine layer: added ListExecutions, GetExecution, GetSteps, SetActiveProfile, FindProfileByName, Hub client
 
-### Impact
-All slash commands now return real data: 161 nodes, 11 hub imports, 8 profiles from the shared DB. Autocomplete shows actual workflow/node/profile names.
-
-### Note for cross-platform
-The macOS `~/Library/Application Support/` path is hardcoded. Will need Linux/Windows equivalents when we ship cross-platform.
+### Still deferred (write/execution operations)
+- `/run` — execute workflow
+- `/resume`, `/stop`, `/status` — execution control
+- `/hub import`, `/hub update` — hub write operations
+- `/mcp connect/disconnect/tools` — MCP connection management
+- `/providers add`, `/workspace set`, `/config set`, `/dials set`
 
 ### Tests
 - `go test ./...` — all passing

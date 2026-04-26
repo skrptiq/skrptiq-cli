@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/skrptiq/engine/hubapi"
 	"github.com/skrptiq/engine/storage"
 )
 
@@ -31,7 +32,8 @@ func DefaultDBPath() string {
 
 // App is the CLI's handle to the engine.
 type App struct {
-	DB *storage.DB
+	DB  *storage.DB
+	Hub *hubapi.Client
 }
 
 // Open opens the engine database at the given path.
@@ -44,7 +46,10 @@ func Open(path string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &App{DB: db}, nil
+	return &App{
+		DB:  db,
+		Hub: hubapi.NewClient(db),
+	}, nil
 }
 
 // Close closes the database connection.
@@ -178,4 +183,73 @@ func (a *App) HubImports() ([]storage.HubImport, error) {
 // Setting returns a setting value by key.
 func (a *App) Setting(key string) string {
 	return a.DB.GetSetting(key)
+}
+
+// ExecutionSummary is a lightweight execution record for listing.
+type ExecutionSummary struct {
+	ID            string
+	WorkflowTitle string
+	Status        string
+	TotalTokens   int
+	StartedAt     string
+	CompletedAt   *string
+	Error         *string
+}
+
+// ListExecutions returns recent executions with workflow titles.
+func (a *App) ListExecutions(limit int) ([]ExecutionSummary, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := a.DB.Query(
+		`SELECT e.id, COALESCE(n.title, e.workflow_node_id), e.status, e.total_tokens, e.started_at, e.completed_at, e.error
+		 FROM executions e
+		 LEFT JOIN nodes n ON n.id = e.workflow_node_id
+		 ORDER BY e.started_at DESC
+		 LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []ExecutionSummary
+	for rows.Next() {
+		var s ExecutionSummary
+		if err := rows.Scan(&s.ID, &s.WorkflowTitle, &s.Status, &s.TotalTokens, &s.StartedAt, &s.CompletedAt, &s.Error); err != nil {
+			return nil, err
+		}
+		results = append(results, s)
+	}
+	return results, nil
+}
+
+// GetExecution returns a single execution by ID.
+func (a *App) GetExecution(id string) (*storage.Execution, error) {
+	return a.DB.GetExecution(id)
+}
+
+// GetSteps returns all steps for an execution.
+func (a *App) GetSteps(executionID string) ([]storage.ExecutionStep, error) {
+	return a.DB.GetStepsByExecution(executionID)
+}
+
+// SetActiveProfile sets a profile as active for its type.
+func (a *App) SetActiveProfile(id, profileType string) error {
+	return a.DB.SetActiveProfile(id, profileType)
+}
+
+// FindProfileByName finds a profile by name (case-insensitive).
+func (a *App) FindProfileByName(name string) (*storage.Profile, error) {
+	profiles, err := a.DB.GetAllProfiles()
+	if err != nil {
+		return nil, err
+	}
+	lower := strings.ToLower(name)
+	for _, p := range profiles {
+		if strings.ToLower(p.Name) == lower {
+			return &p, nil
+		}
+	}
+	return nil, nil
 }

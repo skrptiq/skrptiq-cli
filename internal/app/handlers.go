@@ -243,13 +243,39 @@ func handleHub(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	case "search":
-		m.repl.AddOutput(theme.Faint.Render("/hub search — requires Hub API client. Coming soon."))
+		query := strings.TrimSpace(args)
+		if query == "" {
+			m.repl.AddOutput(theme.Faint.Render("Usage: /hub search <query>"))
+			return *m, nil, true
+		}
+		results, err := m.engine.Hub.Search(query)
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Hub search error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(results) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No results for: " + query))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("%d results for %q:\n", len(results), query))
+		for _, r := range results {
+			b.WriteString(fmt.Sprintf("  %s", theme.Bold.Render(r.Name)))
+			if r.Category != "" {
+				b.WriteString(theme.Faint.Render(" [" + r.Category + "]"))
+			}
+			b.WriteString("\n")
+			if r.Description != "" {
+				b.WriteString("    " + theme.Faint.Render(r.Description) + "\n")
+			}
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 
 	case "import":
-		m.repl.AddOutput(theme.Faint.Render("/hub import — requires Hub API client. Coming soon."))
+		m.repl.AddOutput(theme.Faint.Render("/hub import — coming soon."))
 
 	case "update":
-		m.repl.AddOutput(theme.Faint.Render("/hub update — requires Hub API client. Coming soon."))
+		m.repl.AddOutput(theme.Faint.Render("/hub update — coming soon."))
 
 	default:
 		m.repl.AddOutput(usageBlock("/hub", []string{
@@ -266,9 +292,55 @@ func handleHub(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 // --- /runs ---
 
 func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return *m, nil, true
+	}
+
 	switch sub {
-	case "list", "":
-		m.repl.AddOutput(theme.Faint.Render("/runs list — execution history display coming soon."))
+	case "list":
+		runs, err := m.engine.ListExecutions(20)
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(runs) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No executions found."))
+			return *m, nil, true
+		}
+
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Recent Runs") + "\n")
+		statusStyle := func(status string) string {
+			switch status {
+			case "completed":
+				return theme.SuccessText.Render("✓ completed")
+			case "failed":
+				return theme.ErrorText.Render("✗ failed")
+			case "running":
+				return theme.Subtitle.Render("◌ running")
+			case "paused":
+				return theme.WarningText.Render("⏸ paused")
+			default:
+				return theme.Faint.Render(status)
+			}
+		}
+		for _, r := range runs {
+			b.WriteString(fmt.Sprintf("  %s  %s  %s",
+				statusStyle(r.Status),
+				r.WorkflowTitle,
+				theme.Faint.Render(r.StartedAt),
+			))
+			if r.TotalTokens > 0 {
+				b.WriteString(theme.Faint.Render(fmt.Sprintf("  %d tokens", r.TotalTokens)))
+			}
+			if r.Error != nil && *r.Error != "" {
+				b.WriteString("\n    " + theme.ErrorText.Render(*r.Error))
+			}
+			b.WriteString("\n")
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
 	default:
 		m.repl.AddOutput(usageBlock("/runs", []string{
 			"list    — List recent executions",
@@ -328,7 +400,26 @@ func handleProfile(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 			m.repl.AddOutput(theme.Faint.Render("Usage: /profile use <name>"))
 			return *m, nil, true
 		}
-		m.repl.AddOutput(theme.Faint.Render("Profile switching to \"" + name + "\" — coming soon."))
+		profile, err := m.engine.FindProfileByName(name)
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if profile == nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Profile not found: " + name))
+			return *m, nil, true
+		}
+		if err := m.engine.SetActiveProfile(profile.ID, profile.Type); err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		m.repl.AddOutput(theme.SuccessText.Render("Switched to profile: ") + profile.Name)
+		// Update the prompt context.
+		cfg := m.repl.Prompt()
+		cfg.ContextLeft = profile.Name
+		m.repl.SetPrompt(cfg)
+		// Update status bar.
+		m.statusBar.Profile = profile.Name
 
 	default:
 		m.repl.AddOutput(usageBlock("/profile", []string{
