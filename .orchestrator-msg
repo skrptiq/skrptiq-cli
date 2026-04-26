@@ -1,4 +1,11 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Tab-completing an argument (workflow name, profile name, node name) now sets the input text without auto-submitting. The user reviews and presses enter to confirm. Only top-level commands (/help, /chat, /exit) auto-submit on tab selection.
+- Reverted input variable detection workaround — the CLI correctly relies on BuildExecutionPlan.InputVariables
+- Created GH#438: skrpts have empty context mappings in execution metadata, so workflows run with no inputs despite documenting them. Likely affects multiple Hub skrpts.
+
+### Root cause (GH#438)
+Skrpt authoring issue, not engine or CLI. The Blog Post Pipeline documents 5 inputs in markdown but:
+- Step node contents don't contain {{input.*}} references
+- Execution metadata context fields are empty strings instead of variable references
+- Engine planner correctly returns InputVariables: [] because there's nothing to detect
