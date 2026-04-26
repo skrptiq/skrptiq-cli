@@ -1,4 +1,4 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Prompt now initialises through enterMode(ModeCommand) so the default command mode prompt is always consistent — profile name left, exit hint right, ❯ symbol.
+Command mode now shows "command · Profile Name" in the context line, matching how chat shows "chat" and run shows "run".

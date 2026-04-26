@@ -170,14 +170,13 @@ func enterMode(m *Model, mode AppMode) {
 		cfg.Symbol = "❯ "
 		cfg.Style = theme.Prompt
 		cfg.ContextRight = "ctrl+d ctrl+d to exit"
-		// Restore profile name.
+		profileName := "default"
 		if m.engine != nil {
 			if p, _ := m.engine.ActiveProfile("voice"); p != nil {
-				cfg.ContextLeft = p.Name
-			} else {
-				cfg.ContextLeft = "default"
+				profileName = p.Name
 			}
 		}
+		cfg.ContextLeft = "command · " + profileName
 
 	case ModeChat:
 		cfg.Symbol = "💬 "
