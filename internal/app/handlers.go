@@ -8,106 +8,70 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/skrptiq/engine/storage"
-	"github.com/skrptiq/skrptiq-cli/internal/components"
-	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
-	"github.com/skrptiq/skrptiq-cli/internal/views/repl"
 )
 
-
-// handleSlashCommand processes implemented slash commands.
-func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool) {
+// handleSlashCommand processes slash commands. Returns true if handled.
+func (a *App) handleSlashCommand(cmd string, args string) bool {
 	sub, subArgs := splitFirst(args)
 
 	switch cmd {
 	case "help":
-		m.repl.AddOutput(helpText())
-		return *m, nil, true
-
+		a.Print(helpText())
 	case "chat":
-		handleEnterChat(m, args)
-		return *m, nil, true
-
+		a.handleEnterChat(args)
 	case "command":
-		if m.mode != ModeCommand {
-			m.repl.AddOutput(theme.Faint.Render("Exited " + m.mode.ModeLabel() + " mode."))
-			enterMode(m, ModeCommand)
+		if a.mode != ModeCommand {
+			a.Print(theme.Faint.Render("Exited " + a.mode.Label() + " mode."))
+			a.setMode(ModeCommand)
 		} else {
-			m.repl.AddOutput(theme.Faint.Render("Already in command mode."))
+			a.Print(theme.Faint.Render("Already in command mode."))
 		}
-		return *m, nil, true
-
 	case "exit":
-		if m.mode != ModeCommand {
-			m.repl.AddOutput(theme.Faint.Render("Exited " + m.mode.ModeLabel() + " mode."))
-			enterMode(m, ModeCommand)
+		if a.mode != ModeCommand {
+			a.Print(theme.Faint.Render("Exited " + a.mode.Label() + " mode."))
+			a.setMode(ModeCommand)
 		} else {
-			m.repl.AddOutput(theme.Faint.Render("Already in command mode. Use ctrl+d ctrl+d to exit skrptiq."))
+			a.Print(theme.Faint.Render("Already in command mode. Use ctrl+d to exit skrptiq."))
 		}
-		return *m, nil, true
-
 	case "run":
-		cmd := handleEnterRun(m, args)
-		return *m, cmd, true
-
+		a.handleEnterRun(args)
 	case "clear":
-		m.repl = repl.NewWithPrompt(m.repl.Prompt(), m.commands)
-		resizeView(m)
-		return *m, m.repl.Init(), true
-
+		fmt.Print("\033[2J\033[H") // ANSI clear screen
 	case "list":
-		handleList(m, args)
-		return *m, nil, true
-
+		a.handleList(args)
 	case "show":
-		handleShow(m, args)
-		return *m, nil, true
-
+		a.handleShow(args)
 	case "search":
-		handleSearch(m, args)
-		return *m, nil, true
-
+		a.handleSearch(args)
 	case "hub":
-		return handleHub(m, sub, subArgs)
-
+		a.handleHub(sub, subArgs)
 	case "runs":
-		return handleRuns(m, sub, subArgs)
-
+		a.handleRuns(sub, subArgs)
 	case "profile":
-		return handleProfile(m, sub, subArgs)
-
+		a.handleProfile(sub, subArgs)
 	case "mcp":
-		return handleMCPCmd(m, sub)
-
+		a.handleMCPCmd(sub)
 	case "providers":
-		return handleProvidersCmd(m, sub)
-
+		a.handleProvidersCmd(sub)
 	case "workspace":
-		return handleWorkspaceCmd(m, sub, subArgs)
-
+		a.handleWorkspaceCmd(sub, subArgs)
 	case "tags":
-		return handleTagsCmd(m, sub)
-
+		a.handleTagsCmd(sub)
 	case "tag":
-		handleTagNode(m, args)
-		return *m, nil, true
-
+		a.handleTagNode(args)
 	case "untag":
-		handleUntagNode(m, args)
-		return *m, nil, true
-
+		a.handleUntagNode(args)
 	case "config":
-		return handleConfigCmd(m, sub, subArgs)
-
+		a.handleConfigCmd(sub, subArgs)
 	case "settings":
-		return handleSettings(m, sub, subArgs)
+		a.handleSettings(sub, subArgs)
+	default:
+		return false
 	}
-
-	return *m, nil, false
+	return true
 }
 
 func splitFirst(s string) (string, string) {
@@ -120,14 +84,12 @@ func splitFirst(s string) (string, string) {
 
 // --- /list ---
 
-func handleList(m *Model, args string) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
+func (a *App) handleList(args string) {
+	if a.engine == nil {
+		a.Print(noEngineMsg())
 		return
 	}
-
 	nodeType := strings.TrimSpace(strings.ToLower(args))
-
 	typeMap := map[string]string{
 		"workflows": "workflow", "workflow": "workflow",
 		"skills": "skill", "skill": "skill",
@@ -141,9 +103,8 @@ func handleList(m *Model, args string) {
 
 	var nodes []struct{ Title, Type string }
 	var err error
-
 	if nodeType == "" {
-		all, e := m.engine.DB.GetAllNodes()
+		all, e := a.engine.DB.GetAllNodes()
 		err = e
 		for _, n := range all {
 			nodes = append(nodes, struct{ Title, Type string }{n.Title, n.Type})
@@ -151,789 +112,403 @@ func handleList(m *Model, args string) {
 	} else {
 		mapped, ok := typeMap[nodeType]
 		if !ok {
-			m.repl.AddOutput(theme.ErrorText.Render("Unknown type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
+			a.Print(theme.ErrorText.Render("Unknown type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
 			return
 		}
-		filtered, e := m.engine.NodesByType(mapped)
+		filtered, e := a.engine.NodesByType(mapped)
 		err = e
 		for _, n := range filtered {
 			nodes = append(nodes, struct{ Title, Type string }{n.Title, n.Type})
 		}
 	}
-
 	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+		a.Print(theme.ErrorText.Render("Error: " + err.Error()))
 		return
 	}
 	if len(nodes) == 0 {
-		m.repl.AddOutput(theme.Faint.Render("No nodes found."))
+		a.Print(theme.Faint.Render("No nodes found."))
 		return
 	}
-
-	// Sort by type then name.
 	sort.Slice(nodes, func(i, j int) bool {
 		if nodes[i].Type != nodes[j].Type {
 			return nodes[i].Type < nodes[j].Type
 		}
 		return strings.ToLower(nodes[i].Title) < strings.ToLower(nodes[j].Title)
 	})
-
-	var b strings.Builder
 	typeFilter := ""
 	if nodeType != "" {
 		typeFilter = " (" + nodeType + ")"
 	}
-	b.WriteString(fmt.Sprintf("%s%s — %d nodes\n", theme.Title.Render("Nodes"), typeFilter, len(nodes)))
-
+	a.Print(fmt.Sprintf("%s%s — %d nodes", theme.Title.Render("Nodes"), typeFilter, len(nodes)))
 	typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 	for _, n := range nodes {
-		b.WriteString(fmt.Sprintf("  %s %s\n", typeStyle.Render(n.Type), n.Title))
+		a.Print(fmt.Sprintf("  %s %s", typeStyle.Render(n.Type), n.Title))
 	}
-
-	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 }
 
 // --- /show ---
 
-func handleShow(m *Model, args string) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
+func (a *App) handleShow(args string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	title := strings.TrimSpace(args)
-	if title == "" {
-		m.repl.AddOutput(theme.Faint.Render("Usage: /show <node name>"))
-		return
-	}
-	node, err := m.engine.FindNodeByTitle(title)
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-	if node == nil {
-		m.repl.AddOutput(theme.Faint.Render("No node found: " + title))
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(theme.Title.Render(node.Title) + "\n")
-	b.WriteString(theme.Faint.Render("Type: ") + node.Type + "\n")
+	if title == "" { a.Print(theme.Faint.Render("Usage: /show <node name>")); return }
+	node, err := a.engine.FindNodeByTitle(title)
+	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	if node == nil { a.Print(theme.Faint.Render("No node found: " + title)); return }
+	a.Print(theme.Title.Render(node.Title))
+	a.Print(theme.Faint.Render("Type: ") + node.Type)
 	if node.Description != nil && *node.Description != "" {
-		b.WriteString(theme.Faint.Render("Description: ") + *node.Description + "\n")
+		a.Print(theme.Faint.Render("Description: ") + *node.Description)
 	}
 	if node.Content != nil && *node.Content != "" {
-		b.WriteString("\n" + *node.Content)
+		a.Print("\n" + *node.Content)
 	}
-	m.repl.AddOutput(b.String())
 }
 
 // --- /search ---
 
-func handleSearch(m *Model, args string) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
+func (a *App) handleSearch(args string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	query := strings.TrimSpace(args)
-	if query == "" {
-		m.repl.AddOutput(theme.Faint.Render("Usage: /search <query>"))
-		return
-	}
-	nodes, err := m.engine.SearchNodes(query)
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-	if len(nodes) == 0 {
-		m.repl.AddOutput(theme.Faint.Render("No results for: " + query))
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%d results for %q:\n", len(nodes), query))
+	if query == "" { a.Print(theme.Faint.Render("Usage: /search <query>")); return }
+	nodes, err := a.engine.SearchNodes(query)
+	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	if len(nodes) == 0 { a.Print(theme.Faint.Render("No results for: " + query)); return }
+	a.Print(fmt.Sprintf("%d results for %q:", len(nodes), query))
 	typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 	for _, n := range nodes {
-		b.WriteString(fmt.Sprintf("  %s %s\n", typeStyle.Render(n.Type), n.Title))
+		a.Print(fmt.Sprintf("  %s %s", typeStyle.Render(n.Type), n.Title))
 	}
-	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 }
 
 // --- /hub ---
 
-func handleHub(m *Model, sub, args string) (Model, tea.Cmd, bool) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return *m, nil, true
-	}
-
+func (a *App) handleHub(sub, args string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		imports, err := m.engine.HubImports()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Hub — Imported Skrpts") + "\n")
+		imports, err := a.engine.HubImports()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		a.Print(theme.Title.Render("Hub — Imported Skrpts"))
 		if len(imports) == 0 {
-			b.WriteString(theme.Faint.Render("  No skrpts imported from Hub."))
+			a.Print(theme.Faint.Render("  No skrpts imported from Hub."))
 		} else {
 			for _, imp := range imports {
 				ver := ""
-				if imp.Version != nil {
-					ver = theme.Faint.Render(" v" + *imp.Version)
-				}
-				b.WriteString(fmt.Sprintf("  %s%s\n", imp.Name, ver))
+				if imp.Version != nil { ver = theme.Faint.Render(" v" + *imp.Version) }
+				a.Print(fmt.Sprintf("  %s%s", imp.Name, ver))
 			}
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	case "search":
 		query := strings.TrimSpace(args)
-		if query == "" {
-			m.repl.AddOutput(theme.Faint.Render("Usage: /hub search <query>"))
-			return *m, nil, true
-		}
-		results, err := m.engine.Hub.Search(query)
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Hub search error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(results) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No results for: " + query))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(fmt.Sprintf("%d results for %q:\n", len(results), query))
+		if query == "" { a.Print(theme.Faint.Render("Usage: /hub search <query>")); return }
+		results, err := a.engine.Hub.Search(query)
+		if err != nil { a.Print(theme.ErrorText.Render("Hub search error: " + err.Error())); return }
+		if len(results) == 0 { a.Print(theme.Faint.Render("No results for: " + query)); return }
+		a.Print(fmt.Sprintf("%d results for %q:", len(results), query))
 		for _, r := range results {
-			b.WriteString(fmt.Sprintf("  %s", theme.Bold.Render(r.Name)))
-			if r.Category != "" {
-				b.WriteString(theme.Faint.Render(" [" + r.Category + "]"))
-			}
-			b.WriteString("\n")
-			if r.Description != "" {
-				b.WriteString("    " + theme.Faint.Render(r.Description) + "\n")
-			}
+			line := fmt.Sprintf("  %s", theme.Bold.Render(r.Name))
+			if r.Category != "" { line += theme.Faint.Render(" [" + r.Category + "]") }
+			a.Print(line)
+			if r.Description != "" { a.Print("    " + theme.Faint.Render(r.Description)) }
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	case "import":
 		slug := strings.TrimSpace(args)
-		if slug == "" {
-			m.repl.AddOutput(theme.Faint.Render("Usage: /hub import <slug>"))
-			return *m, nil, true
-		}
-		// Look up the skrpt to confirm it exists.
-		skrpt, err := m.engine.Hub.GetSkrpt(slug)
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Hub error: " + err.Error()))
-			return *m, nil, true
-		}
-		if skrpt == nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Skrpt not found: " + slug))
-			return *m, nil, true
-		}
-		m.repl.AddOutput(fmt.Sprintf("Found: %s v%s (%d nodes)\nImport download not yet wired — requires workspace file operations.",
-			theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
-
+		if slug == "" { a.Print(theme.Faint.Render("Usage: /hub import <slug>")); return }
+		skrpt, err := a.engine.Hub.GetSkrpt(slug)
+		if err != nil { a.Print(theme.ErrorText.Render("Hub error: " + err.Error())); return }
+		if skrpt == nil { a.Print(theme.ErrorText.Render("Skrpt not found: " + slug)); return }
+		a.Print(fmt.Sprintf("Found: %s v%s (%d nodes)\nImport download not yet wired.", theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
 	case "update":
-		imports, err := m.engine.HubImports()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(imports) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No imported skrpts to update."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Hub — Update Check") + "\n")
+		imports, err := a.engine.HubImports()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(imports) == 0 { a.Print(theme.Faint.Render("No imported skrpts to update.")); return }
+		a.Print(theme.Title.Render("Hub — Update Check"))
 		for _, imp := range imports {
-			versions, err := m.engine.Hub.GetVersions(imp.Slug)
-			if err != nil {
-				b.WriteString(fmt.Sprintf("  %s — %s\n", imp.Name, theme.ErrorText.Render("check failed")))
-				continue
-			}
+			versions, err := a.engine.Hub.GetVersions(imp.Slug)
+			if err != nil { a.Print(fmt.Sprintf("  %s — %s", imp.Name, theme.ErrorText.Render("check failed"))); continue }
 			currentVer := "(unknown)"
-			if imp.Version != nil {
-				currentVer = *imp.Version
-			}
+			if imp.Version != nil { currentVer = *imp.Version }
 			if len(versions) > 0 && versions[0].Version != currentVer {
-				b.WriteString(fmt.Sprintf("  %s %s → %s\n",
-					theme.WarningText.Render("⬆"),
-					imp.Name,
-					theme.Bold.Render(versions[0].Version)))
+				a.Print(fmt.Sprintf("  %s %s → %s", theme.WarningText.Render("⬆"), imp.Name, theme.Bold.Render(versions[0].Version)))
 			} else {
-				b.WriteString(fmt.Sprintf("  %s %s %s\n",
-					theme.SuccessText.Render("✓"),
-					imp.Name,
-					theme.Faint.Render("up to date")))
+				a.Print(fmt.Sprintf("  %s %s %s", theme.SuccessText.Render("✓"), imp.Name, theme.Faint.Render("up to date")))
 			}
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	default:
-		m.repl.AddOutput(usageBlock("/hub", []string{
-			"list    — List imported skrpts",
-			"search  — Search community skrpts",
-			"import  — Import a skrpt from Hub",
-			"update  — Check for updates",
-		}))
+		a.Print(usageBlock("/hub", []string{"list", "search", "import", "update"}))
 	}
-	return *m, nil, true
 }
 
 // --- /runs ---
 
-func handleRuns(m *Model, sub, args string) (Model, tea.Cmd, bool) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return *m, nil, true
-	}
-
+func (a *App) handleRuns(sub, args string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		runs, err := m.engine.ListExecutions(20)
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(runs) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No executions found."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Recent Runs") + "\n")
+		runs, err := a.engine.ListExecutions(20)
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(runs) == 0 { a.Print(theme.Faint.Render("No executions found.")); return }
+		a.Print(theme.Title.Render("Recent Runs"))
 		for _, r := range runs {
-			// Show short ID for use with /runs show.
 			shortID := r.ID
-			if len(shortID) > 8 {
-				shortID = shortID[:8]
-			}
-			b.WriteString(fmt.Sprintf("  %s  %s  %s  %s",
-				statusIcon(r.Status),
-				theme.Faint.Render(shortID),
-				r.WorkflowTitle,
-				theme.Faint.Render(r.StartedAt),
-			))
-			if r.TotalTokens > 0 {
-				b.WriteString(theme.Faint.Render(fmt.Sprintf("  %d tokens", r.TotalTokens)))
-			}
-			if r.Error != nil && *r.Error != "" {
-				b.WriteString("\n         " + theme.ErrorText.Render(*r.Error))
-			}
-			b.WriteString("\n")
+			if len(shortID) > 8 { shortID = shortID[:8] }
+			line := fmt.Sprintf("  %s  %s  %s  %s", statusIcon(r.Status), theme.Faint.Render(shortID), r.WorkflowTitle, theme.Faint.Render(r.StartedAt))
+			if r.TotalTokens > 0 { line += theme.Faint.Render(fmt.Sprintf("  %d tokens", r.TotalTokens)) }
+			a.Print(line)
+			if r.Error != nil && *r.Error != "" { a.Print("         " + theme.ErrorText.Render(*r.Error)) }
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	case "status":
-		runs, err := m.engine.ListExecutions(10)
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
+		runs, err := a.engine.ListExecutions(10)
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 		var active []string
 		for _, r := range runs {
 			if r.Status == "running" || r.Status == "paused" {
-				active = append(active, fmt.Sprintf("  %s  %s  %s",
-					statusIcon(r.Status), r.WorkflowTitle, theme.Faint.Render(r.StartedAt)))
+				active = append(active, fmt.Sprintf("  %s  %s  %s", statusIcon(r.Status), r.WorkflowTitle, theme.Faint.Render(r.StartedAt)))
 			}
 		}
-		if len(active) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No active executions."))
-		} else {
-			m.repl.AddOutput(theme.Title.Render("Active Runs") + "\n" + strings.Join(active, "\n"))
+		if len(active) == 0 { a.Print(theme.Faint.Render("No active executions.")) } else {
+			a.Print(theme.Title.Render("Active Runs"))
+			for _, line := range active { a.Print(line) }
 		}
-
 	case "show":
-		handleRunShow(m, args)
-
+		a.handleRunShow(args)
 	default:
-		m.repl.AddOutput(usageBlock("/runs", []string{
-			"list         — List recent executions",
-			"status       — Show active executions",
-			"show <id>    — Show run details and step outputs",
-		}))
+		a.Print(usageBlock("/runs", []string{"list", "status", "show <id>"}))
 	}
-	return *m, nil, true
 }
 
-func handleRunShow(m *Model, args string) {
+func (a *App) handleRunShow(args string) {
 	idArg, stepArg := splitFirst(args)
-	if idArg == "" {
-		m.repl.AddOutput(theme.Faint.Render("Usage: /runs show <id> [step <n>]"))
-		return
-	}
+	if idArg == "" { a.Print(theme.Faint.Render("Usage: /runs show <id> [step <n>]")); return }
+	fullID, err := a.engine.FindRunByPrefix(idArg)
+	if err != nil || fullID == nil { a.Print(theme.ErrorText.Render("Run not found: " + idArg)); return }
+	run, err := a.engine.GetRunDetail(*fullID)
+	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 
-	// Support short IDs by prefix match.
-	fullID, err := m.engine.FindRunByPrefix(idArg)
-	if err != nil || fullID == nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Run not found: " + idArg))
-		return
-	}
-
-	run, err := m.engine.GetRunDetail(*fullID)
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-
-	// If a step number was requested, show that step's output.
 	if stepArg != "" {
-		stepKey, _ := splitFirst(stepArg)
-		if stepKey == "step" {
-			_, stepNum := splitFirst(stepArg)
-			if stepNum == "" {
-				m.repl.AddOutput(theme.Faint.Render("Usage: /runs show <id> step <number>"))
-				return
-			}
+		stepKey, stepNum := splitFirst(stepArg)
+		if stepKey == "step" && stepNum != "" {
 			n := 0
 			fmt.Sscanf(stepNum, "%d", &n)
 			for _, s := range run.Steps {
 				if s.Position == n {
-					var b strings.Builder
-					b.WriteString(theme.Title.Render(s.NodeTitle) + " — step " + fmt.Sprintf("%d", s.Position) + "\n")
-					b.WriteString(theme.Faint.Render("Status: ") + statusIcon(s.Status) + " " + s.Status + "\n")
+					a.Print(theme.Title.Render(s.NodeTitle) + " — step " + fmt.Sprintf("%d", s.Position))
+					a.Print(theme.Faint.Render("Status: ") + statusIcon(s.Status) + " " + s.Status)
 					if s.Provider != "" {
-						b.WriteString(theme.Faint.Render("Provider: ") + s.Provider)
-						if s.Model != "" {
-							b.WriteString(" / " + s.Model)
-						}
-						b.WriteString("\n")
+						p := s.Provider
+						if s.Model != "" { p += " / " + s.Model }
+						a.Print(theme.Faint.Render("Provider: ") + p)
 					}
-					if s.Duration != "" {
-						b.WriteString(theme.Faint.Render("Duration: ") + s.Duration + "\n")
-					}
-					if s.Error != "" {
-						b.WriteString(theme.ErrorText.Render("Error: ") + s.Error + "\n")
-					}
-					if s.Output != "" {
-						b.WriteString("\n" + s.Output)
-					} else {
-						b.WriteString(theme.Faint.Render("\n(no output)"))
-					}
-					m.repl.AddOutput(b.String())
+					if s.Duration != "" { a.Print(theme.Faint.Render("Duration: ") + s.Duration) }
+					if s.Error != "" { a.Print(theme.ErrorText.Render("Error: ") + s.Error) }
+					if s.Output != "" { a.Print("\n" + s.Output) } else { a.Print(theme.Faint.Render("\n(no output)")) }
 					return
 				}
 			}
-			m.repl.AddOutput(theme.ErrorText.Render(fmt.Sprintf("Step %d not found in this run.", n)))
+			a.Print(theme.ErrorText.Render(fmt.Sprintf("Step %d not found.", n)))
 			return
 		}
 	}
 
-	// Show full run summary.
-	var b strings.Builder
-	b.WriteString(theme.Title.Render(run.WorkflowTitle) + "\n")
-	b.WriteString(theme.Faint.Render("ID: ") + run.ID + "\n")
-	b.WriteString(theme.Faint.Render("Status: ") + statusIcon(run.Status) + " " + run.Status + "\n")
-	b.WriteString(theme.Faint.Render("Started: ") + run.StartedAt + "\n")
-	if run.CompletedAt != nil {
-		b.WriteString(theme.Faint.Render("Completed: ") + *run.CompletedAt + "\n")
-	}
-	if run.TotalTokens > 0 {
-		b.WriteString(theme.Faint.Render("Tokens: ") + fmt.Sprintf("%d", run.TotalTokens) + "\n")
-	}
-	if run.Error != nil && *run.Error != "" {
-		b.WriteString(theme.ErrorText.Render("Error: ") + *run.Error + "\n")
-	}
-
+	a.Print(theme.Title.Render(run.WorkflowTitle))
+	a.Print(theme.Faint.Render("ID: ") + run.ID)
+	a.Print(theme.Faint.Render("Status: ") + statusIcon(run.Status) + " " + run.Status)
+	a.Print(theme.Faint.Render("Started: ") + run.StartedAt)
+	if run.CompletedAt != nil { a.Print(theme.Faint.Render("Completed: ") + *run.CompletedAt) }
+	if run.TotalTokens > 0 { a.Print(theme.Faint.Render("Tokens: ") + fmt.Sprintf("%d", run.TotalTokens)) }
+	if run.Error != nil && *run.Error != "" { a.Print(theme.ErrorText.Render("Error: ") + *run.Error) }
 	if len(run.Steps) > 0 {
-		b.WriteString("\n" + theme.Bold.Render("Steps") + "\n")
+		a.Print("\n" + theme.Bold.Render("Steps"))
 		for _, s := range run.Steps {
-			b.WriteString(fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, s.NodeTitle))
-			if s.Provider != "" {
-				b.WriteString(theme.Faint.Render(" (" + s.Provider + ")"))
-			}
-			if s.Duration != "" {
-				b.WriteString(theme.Faint.Render(" " + s.Duration))
-			}
-			outLen := len(s.Output)
-			if outLen > 0 {
-				b.WriteString(theme.Faint.Render(fmt.Sprintf(" %d chars", outLen)))
-			}
-			b.WriteString("\n")
-			if s.Error != "" {
-				b.WriteString("    " + theme.ErrorText.Render(s.Error) + "\n")
-			}
+			line := fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, s.NodeTitle)
+			if s.Provider != "" { line += theme.Faint.Render(" (" + s.Provider + ")") }
+			if s.Duration != "" { line += theme.Faint.Render(" " + s.Duration) }
+			if len(s.Output) > 0 { line += theme.Faint.Render(fmt.Sprintf(" %d chars", len(s.Output))) }
+			a.Print(line)
 		}
-		b.WriteString(theme.Faint.Render("\nUse /runs show " + run.ID[:8] + " step <n> to view step output."))
+		a.Print(theme.Faint.Render("\nUse /runs show " + run.ID[:8] + " step <n> to view step output."))
 	}
-
-	m.repl.AddOutput(b.String())
 }
 
 func statusIcon(status string) string {
 	switch status {
-	case "completed":
-		return theme.SuccessText.Render("✓")
-	case "failed":
-		return theme.ErrorText.Render("✗")
-	case "running":
-		return theme.Subtitle.Render("◌")
-	case "paused":
-		return theme.WarningText.Render("⏸")
-	default:
-		return theme.Faint.Render("○")
+	case "completed": return theme.SuccessText.Render("✓")
+	case "failed": return theme.ErrorText.Render("✗")
+	case "running": return theme.Subtitle.Render("◌")
+	case "paused": return theme.WarningText.Render("⏸")
+	default: return theme.Faint.Render("○")
 	}
 }
 
 // --- /profile ---
 
-func handleProfile(m *Model, sub, args string) (Model, tea.Cmd, bool) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return *m, nil, true
-	}
-
+func (a *App) handleProfile(sub, args string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		profiles, err := m.engine.Profiles()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(profiles) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No profiles configured."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Profiles") + "\n")
+		profiles, err := a.engine.Profiles()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(profiles) == 0 { a.Print(theme.Faint.Render("No profiles configured.")); return }
+		a.Print(theme.Title.Render("Profiles"))
 		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 		for _, p := range profiles {
 			active := "  "
-			if p.IsActive == 1 {
-				active = theme.SuccessText.Render("● ")
-			}
-			b.WriteString(fmt.Sprintf("  %s%s %s\n", active, typeStyle.Render(p.Type), p.Name))
+			if p.IsActive == 1 { active = theme.SuccessText.Render("● ") }
+			a.Print(fmt.Sprintf("  %s%s %s", active, typeStyle.Render(p.Type), p.Name))
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	case "show":
-		voice, _ := m.engine.ActiveProfile("voice")
-		if voice == nil {
-			m.repl.AddOutput(theme.Faint.Render("No active voice profile."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render(voice.Name) + "\n")
-		b.WriteString(theme.Faint.Render("Type: ") + voice.Type + "\n")
-		if voice.Content != "" {
-			b.WriteString("\n" + voice.Content)
-		}
-		m.repl.AddOutput(b.String())
-
+		voice, _ := a.engine.ActiveProfile("voice")
+		if voice == nil { a.Print(theme.Faint.Render("No active voice profile.")); return }
+		a.Print(theme.Title.Render(voice.Name))
+		a.Print(theme.Faint.Render("Type: ") + voice.Type)
+		if voice.Content != "" { a.Print("\n" + voice.Content) }
 	case "use":
 		name := strings.TrimSpace(args)
-		if name == "" {
-			m.repl.AddOutput(theme.Faint.Render("Usage: /profile use <name>"))
-			return *m, nil, true
-		}
-		profile, err := m.engine.FindProfileByName(name)
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if profile == nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Profile not found: " + name))
-			return *m, nil, true
-		}
-		if err := m.engine.SetActiveProfile(profile.ID, profile.Type); err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		m.repl.AddOutput(theme.SuccessText.Render("Switched to profile: ") + profile.Name)
-		cfg := m.repl.Prompt()
-		cfg.ContextLeft = profile.Name
-		m.repl.SetPrompt(cfg)
-		m.statusBar.Profile = profile.Name
-
+		if name == "" { a.Print(theme.Faint.Render("Usage: /profile use <name>")); return }
+		profile, err := a.engine.FindProfileByName(name)
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if profile == nil { a.Print(theme.ErrorText.Render("Profile not found: " + name)); return }
+		if err := a.engine.SetActiveProfile(profile.ID, profile.Type); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		a.Print(theme.SuccessText.Render("Switched to profile: ") + profile.Name)
+		a.updatePrompt()
 	case "controls":
-		voice, _ := m.engine.ActiveProfile("voice")
-		if voice == nil {
-			m.repl.AddOutput(theme.Faint.Render("No active voice profile. Controls are configured per profile."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Quality Controls") + " — " + voice.Name + "\n")
+		voice, _ := a.engine.ActiveProfile("voice")
+		if voice == nil { a.Print(theme.Faint.Render("No active voice profile.")); return }
+		a.Print(theme.Title.Render("Quality Controls") + " — " + voice.Name)
 		if voice.Metadata != nil && *voice.Metadata != "" {
-			// Try to pretty-print the JSON metadata.
-			var parsed map[string]interface{}
+			var parsed map[string]any
 			if err := json.Unmarshal([]byte(*voice.Metadata), &parsed); err == nil {
 				for k, v := range parsed {
-					b.WriteString(fmt.Sprintf("  %s %v\n",
-						lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k+":"), v))
+					a.Print(fmt.Sprintf("  %s %v", lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k+":"), v))
 				}
 			} else {
-				b.WriteString(theme.Faint.Render(*voice.Metadata))
+				a.Print(theme.Faint.Render(*voice.Metadata))
 			}
 		} else {
-			b.WriteString(theme.Faint.Render("No control settings in profile metadata."))
+			a.Print(theme.Faint.Render("No control settings in profile metadata."))
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	default:
-		m.repl.AddOutput(usageBlock("/profile", []string{
-			"list      — List all profiles",
-			"show      — Show active profile details",
-			"use       — Switch active profile",
-			"controls  — Show quality control settings",
-		}))
+		a.Print(usageBlock("/profile", []string{"list", "show", "use", "controls"}))
 	}
-	return *m, nil, true
 }
 
 // --- /mcp ---
 
-func handleMCPCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return *m, nil, true
-	}
-
+func (a *App) handleMCPCmd(sub string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		servers, err := m.engine.MCPServers()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(servers) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No MCP servers configured."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("MCP Servers") + "\n")
+		servers, err := a.engine.MCPServers()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(servers) == 0 { a.Print(theme.Faint.Render("No MCP servers configured.")); return }
+		a.Print(theme.Title.Render("MCP Servers"))
 		for _, s := range servers {
 			indicator := theme.ErrorText.Render("●")
-			if s.Status == "connected" {
-				indicator = theme.SuccessText.Render("●")
-			}
-			b.WriteString(fmt.Sprintf("  %s %s", indicator, s.Name))
-			if s.Provider != "" {
-				b.WriteString(theme.Faint.Render(" (" + s.Provider + ")"))
-			}
-			b.WriteString("\n")
+			if s.Status == "connected" { indicator = theme.SuccessText.Render("●") }
+			line := fmt.Sprintf("  %s %s", indicator, s.Name)
+			if s.Provider != "" { line += theme.Faint.Render(" (" + s.Provider + ")") }
+			a.Print(line)
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	case "tools":
-		servers, err := m.engine.MCPServers()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(servers) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No MCP servers configured."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("MCP Tools") + "\n")
+		servers, err := a.engine.MCPServers()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(servers) == 0 { a.Print(theme.Faint.Render("No MCP servers configured.")); return }
+		a.Print(theme.Title.Render("MCP Tools"))
 		for _, s := range servers {
-			b.WriteString("\n  " + theme.Bold.Render(s.Name) + "\n")
+			a.Print("\n  " + theme.Bold.Render(s.Name))
 			if s.Capabilities != nil && *s.Capabilities != "" {
 				var caps []string
 				if err := json.Unmarshal([]byte(*s.Capabilities), &caps); err == nil {
-					for _, cap := range caps {
-						b.WriteString("    " + cap + "\n")
-					}
-				} else {
-					b.WriteString("    " + theme.Faint.Render(*s.Capabilities) + "\n")
-				}
-			} else {
-				b.WriteString("    " + theme.Faint.Render("No tools listed — connect to discover.") + "\n")
-			}
+					for _, cap := range caps { a.Print("    " + cap) }
+				} else { a.Print("    " + theme.Faint.Render(*s.Capabilities)) }
+			} else { a.Print("    " + theme.Faint.Render("No tools listed.")) }
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
-	case "connect":
-		m.repl.AddOutput(theme.Faint.Render("/mcp connect — requires MCP client runtime. Needs engine execution wiring."))
-
-	case "disconnect":
-		m.repl.AddOutput(theme.Faint.Render("/mcp disconnect — requires MCP client runtime. Needs engine execution wiring."))
-
+	case "connect": a.Print(theme.Faint.Render("/mcp connect — requires MCP client runtime."))
+	case "disconnect": a.Print(theme.Faint.Render("/mcp disconnect — requires MCP client runtime."))
 	default:
-		m.repl.AddOutput(usageBlock("/mcp", []string{
-			"list        — List server connections",
-			"tools       — List available tools",
-			"connect     — Connect to a server",
-			"disconnect  — Disconnect a server",
-		}))
+		a.Print(usageBlock("/mcp", []string{"list", "tools", "connect", "disconnect"}))
 	}
-	return *m, nil, true
 }
 
 // --- /providers ---
 
-func handleProvidersCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return *m, nil, true
-	}
-
+func (a *App) handleProvidersCmd(sub string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		providers, err := m.engine.Providers()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		// Also check CLI-detected providers.
-		allConns, _ := m.engine.Connections()
-		var llmConns []struct{ name, provider, status string }
-		for _, c := range allConns {
-			if c.Type == "llm-provider" {
-				llmConns = append(llmConns, struct{ name, provider, status string }{c.Name, c.Provider, c.Status})
-			}
-		}
-		if len(providers) == 0 && len(llmConns) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No AI providers configured."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("AI Providers") + "\n")
+		providers, err := a.engine.Providers()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(providers) == 0 { a.Print(theme.Faint.Render("No AI providers configured.")); return }
+		a.Print(theme.Title.Render("AI Providers"))
 		for _, p := range providers {
 			indicator := theme.ErrorText.Render("●")
-			if p.Status == "connected" {
-				indicator = theme.SuccessText.Render("●")
-			}
-			b.WriteString(fmt.Sprintf("  %s %s", indicator, p.Name))
-			if p.Provider != "" {
-				b.WriteString(theme.Faint.Render(" (" + p.Provider + ")"))
-			}
-			b.WriteString("\n")
+			if p.Status == "connected" { indicator = theme.SuccessText.Render("●") }
+			line := fmt.Sprintf("  %s %s", indicator, p.Name)
+			if p.Provider != "" { line += theme.Faint.Render(" (" + p.Provider + ")") }
+			a.Print(line)
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
-	case "add":
-		m.repl.AddOutput(theme.Faint.Render("/providers add — requires interactive provider setup flow. Needs engine execution wiring."))
-
+	case "add": a.Print(theme.Faint.Render("/providers add — requires interactive setup."))
 	default:
-		m.repl.AddOutput(usageBlock("/providers", []string{
-			"list    — List configured providers",
-			"add     — Configure a new provider",
-		}))
+		a.Print(usageBlock("/providers", []string{"list", "add"}))
 	}
-	return *m, nil, true
 }
 
 // --- /workspace ---
 
-func handleWorkspaceCmd(m *Model, sub, args string) (Model, tea.Cmd, bool) {
+func (a *App) handleWorkspaceCmd(sub, args string) {
 	switch sub {
 	case "show":
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Workspace") + "\n")
+		a.Print(theme.Title.Render("Workspace"))
 		cwd, _ := os.Getwd()
-		b.WriteString("  " + theme.Faint.Render("Path: ") + cwd + "\n")
-		b.WriteString("  " + theme.Faint.Render("Profile: ") + m.statusBar.Profile)
-		if m.engine != nil {
-			b.WriteString("\n  " + theme.Faint.Render("Database: ") + m.engine.DB.Path())
-		}
-		m.repl.AddOutput(b.String())
-
+		a.Print("  " + theme.Faint.Render("Path: ") + cwd)
+		if a.engine != nil { a.Print("  " + theme.Faint.Render("Database: ") + a.engine.DB.Path()) }
 	case "set":
 		path := strings.TrimSpace(args)
-		if path == "" {
-			m.repl.AddOutput(theme.Faint.Render("Usage: /workspace set <path>"))
-			return *m, nil, true
-		}
-		// Expand ~ to home directory.
+		if path == "" { a.Print(theme.Faint.Render("Usage: /workspace set <path>")); return }
 		if strings.HasPrefix(path, "~") {
 			home, _ := os.UserHomeDir()
 			path = filepath.Join(home, path[1:])
 		}
 		absPath, err := filepath.Abs(path)
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Invalid path: " + err.Error()))
-			return *m, nil, true
-		}
+		if err != nil { a.Print(theme.ErrorText.Render("Invalid path: " + err.Error())); return }
 		info, err := os.Stat(absPath)
-		if err != nil || !info.IsDir() {
-			m.repl.AddOutput(theme.ErrorText.Render("Not a directory: " + absPath))
-			return *m, nil, true
-		}
-		if err := os.Chdir(absPath); err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		// Update status bar.
-		home, _ := os.UserHomeDir()
-		display := absPath
-		if home != "" && strings.HasPrefix(absPath, home) {
-			display = "~" + absPath[len(home):]
-		}
-		m.statusBar.Workspace = display
-		m.repl.AddOutput(theme.SuccessText.Render("Workspace: ") + display)
-
+		if err != nil || !info.IsDir() { a.Print(theme.ErrorText.Render("Not a directory: " + absPath)); return }
+		if err := os.Chdir(absPath); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		a.Print(theme.SuccessText.Render("Workspace: ") + absPath)
 	default:
-		m.repl.AddOutput(usageBlock("/workspace", []string{
-			"show    — Show current context",
-			"set     — Change workspace directory",
-		}))
+		a.Print(usageBlock("/workspace", []string{"show", "set"}))
 	}
-	return *m, nil, true
 }
 
 // --- /tags ---
 
-func handleTagsCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return *m, nil, true
-	}
-
+func (a *App) handleTagsCmd(sub string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		tags, err := m.engine.Tags()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(tags) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No tags defined."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Tags") + "\n")
+		tags, err := a.engine.Tags()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(tags) == 0 { a.Print(theme.Faint.Render("No tags defined.")); return }
+		a.Print(theme.Title.Render("Tags"))
 		for _, t := range tags {
 			colour := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Colour))
-			b.WriteString(fmt.Sprintf("  %s %s\n", colour.Render("●"), t.Name))
+			a.Print(fmt.Sprintf("  %s %s", colour.Render("●"), t.Name))
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	default:
-		m.repl.AddOutput(usageBlock("/tags", []string{
-			"list    — List all tags",
-		}))
+		a.Print(usageBlock("/tags", []string{"list"}))
 	}
-	return *m, nil, true
 }
 
 // --- /tag and /untag ---
 
-func handleTagNode(m *Model, args string) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
-	// Expect: <node title> <tag name> — but both can have spaces.
-	// Use the tag list to find the tag name at the end.
+func (a *App) handleTagNode(args string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	args = strings.TrimSpace(args)
-	if args == "" {
-		m.repl.AddOutput(theme.Faint.Render("Usage: /tag <node title> <tag name>"))
-		return
-	}
-
-	tags, err := m.engine.Tags()
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-
-	// Try to match tag name from the end of the string.
-	var matchedTag string
-	var matchedTagID string
-	var nodeTitle string
+	if args == "" { a.Print(theme.Faint.Render("Usage: /tag <node title> <tag name>")); return }
+	tags, err := a.engine.Tags()
+	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	var matchedTag, matchedTagID, nodeTitle string
 	for _, t := range tags {
 		if strings.HasSuffix(strings.ToLower(args), strings.ToLower(t.Name)) {
 			matchedTag = t.Name
@@ -942,44 +517,20 @@ func handleTagNode(m *Model, args string) {
 			break
 		}
 	}
-	if matchedTag == "" {
-		m.repl.AddOutput(theme.ErrorText.Render("Could not identify tag name. Available tags: /tags list"))
-		return
-	}
-
-	node, err := m.engine.FindNodeByTitle(nodeTitle)
-	if err != nil || node == nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Node not found: " + nodeTitle))
-		return
-	}
-
-	if err := m.engine.DB.AssignTag(node.ID, matchedTagID); err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-	m.repl.AddOutput(theme.SuccessText.Render("Tagged ") + node.Title + " with " + matchedTag)
+	if matchedTag == "" { a.Print(theme.ErrorText.Render("Could not identify tag. Use /tags list.")); return }
+	node, err := a.engine.FindNodeByTitle(nodeTitle)
+	if err != nil || node == nil { a.Print(theme.ErrorText.Render("Node not found: " + nodeTitle)); return }
+	if err := a.engine.DB.AssignTag(node.ID, matchedTagID); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	a.Print(theme.SuccessText.Render("Tagged ") + node.Title + " with " + matchedTag)
 }
 
-func handleUntagNode(m *Model, args string) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
+func (a *App) handleUntagNode(args string) {
+	if a.engine == nil { a.Print(noEngineMsg()); return }
 	args = strings.TrimSpace(args)
-	if args == "" {
-		m.repl.AddOutput(theme.Faint.Render("Usage: /untag <node title> <tag name>"))
-		return
-	}
-
-	tags, err := m.engine.Tags()
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-
-	var matchedTag string
-	var matchedTagID string
-	var nodeTitle string
+	if args == "" { a.Print(theme.Faint.Render("Usage: /untag <node title> <tag name>")); return }
+	tags, err := a.engine.Tags()
+	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	var matchedTag, matchedTagID, nodeTitle string
 	for _, t := range tags {
 		if strings.HasSuffix(strings.ToLower(args), strings.ToLower(t.Name)) {
 			matchedTag = t.Name
@@ -988,36 +539,20 @@ func handleUntagNode(m *Model, args string) {
 			break
 		}
 	}
-	if matchedTag == "" {
-		m.repl.AddOutput(theme.ErrorText.Render("Could not identify tag name. Available tags: /tags list"))
-		return
-	}
-
-	node, err := m.engine.FindNodeByTitle(nodeTitle)
-	if err != nil || node == nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Node not found: " + nodeTitle))
-		return
-	}
-
-	if err := m.engine.DB.UnassignTag(node.ID, matchedTagID); err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-	m.repl.AddOutput(theme.SuccessText.Render("Removed ") + matchedTag + " from " + node.Title)
+	if matchedTag == "" { a.Print(theme.ErrorText.Render("Could not identify tag. Use /tags list.")); return }
+	node, err := a.engine.FindNodeByTitle(nodeTitle)
+	if err != nil || node == nil { a.Print(theme.ErrorText.Render("Node not found: " + nodeTitle)); return }
+	if err := a.engine.DB.UnassignTag(node.ID, matchedTagID); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	a.Print(theme.SuccessText.Render("Removed ") + matchedTag + " from " + node.Title)
 }
 
 // --- /config ---
 
-func handleConfigCmd(m *Model, sub, args string) (Model, tea.Cmd, bool) {
+func (a *App) handleConfigCmd(sub, args string) {
 	switch sub {
 	case "show":
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Configuration") + "\n")
-		if m.engine == nil {
-			b.WriteString(theme.Faint.Render("  No engine connection."))
-			m.repl.AddOutput(b.String())
-			return *m, nil, true
-		}
+		a.Print(theme.Title.Render("Configuration"))
+		if a.engine == nil { a.Print(theme.Faint.Render("  No engine connection.")); return }
 		keys := []struct{ key, label string }{
 			{"defaultProvider", "Default Provider"},
 			{"defaultModel", "Default Model"},
@@ -1025,234 +560,91 @@ func handleConfigCmd(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 			{"theme", "Theme"},
 		}
 		for _, k := range keys {
-			val := m.engine.Setting(k.key)
-			if val == "" {
-				val = theme.Faint.Render("(not set)")
-			}
-			b.WriteString(fmt.Sprintf("  %s %s\n",
-				lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k.label+":"), val))
+			val := a.engine.Setting(k.key)
+			if val == "" { val = theme.Faint.Render("(not set)") }
+			a.Print(fmt.Sprintf("  %s %s", lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k.label+":"), val))
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
 	case "set":
-		if m.engine == nil {
-			m.repl.AddOutput(noEngineMsg())
-			return *m, nil, true
-		}
+		if a.engine == nil { a.Print(noEngineMsg()); return }
 		parts := strings.SplitN(args, " ", 2)
-		if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
-			m.repl.AddOutput(theme.Faint.Render("Usage: /config set <key> <value>"))
-			return *m, nil, true
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-		if err := m.engine.DB.SetSetting(key, value); err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		m.repl.AddOutput(theme.SuccessText.Render("Set ") + key + " = " + value)
-
+		if len(parts) < 2 { a.Print(theme.Faint.Render("Usage: /config set <key> <value>")); return }
+		key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		if err := a.engine.DB.SetSetting(key, value); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		a.Print(theme.SuccessText.Render("Set ") + key + " = " + value)
 	default:
-		m.repl.AddOutput(usageBlock("/config", []string{
-			"show    — Show current configuration",
-			"set     — Update a configuration value",
-		}))
+		a.Print(usageBlock("/config", []string{"show", "set"}))
 	}
-	return *m, nil, true
 }
 
 // --- /settings ---
 
-func handleSettings(m *Model, sub, args string) (Model, tea.Cmd, bool) {
+func (a *App) handleSettings(sub, args string) {
 	switch sub {
 	case "about":
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("skrptiq") + " v0.1.0-prototype\n")
-		b.WriteString(theme.Faint.Render("Interactive terminal for personalised AI agents\n"))
-		b.WriteString(theme.Faint.Render("Engine: "))
-		if m.engine != nil {
-			b.WriteString(m.engine.DB.Path())
-		} else {
-			b.WriteString("not connected")
-		}
-		b.WriteString("\n")
+		a.Print(theme.Title.Render("skrptiq") + " v0.1.0-prototype")
+		a.Print(theme.Faint.Render("Interactive terminal for personalised AI agents"))
+		if a.engine != nil { a.Print(theme.Faint.Render("Engine: ") + a.engine.DB.Path()) } else { a.Print(theme.Faint.Render("Engine: not connected")) }
 		cwd, _ := os.Getwd()
-		b.WriteString(theme.Faint.Render("Working directory: ") + cwd + "\n")
-		b.WriteString(theme.Faint.Render("Platform: ") + "darwin/arm64")
-		m.repl.AddOutput(b.String())
-
-	case "providers":
-		// Delegate to existing providers handler.
-		return handleProvidersCmd(m, "list")
-
+		a.Print(theme.Faint.Render("Working directory: ") + cwd)
+	case "providers": a.handleProvidersCmd("list")
 	case "connections":
-		if m.engine == nil {
-			m.repl.AddOutput(noEngineMsg())
-			return *m, nil, true
-		}
-		conns, err := m.engine.Connections()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return *m, nil, true
-		}
-		if len(conns) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No connections configured."))
-			return *m, nil, true
-		}
-		var b strings.Builder
-		b.WriteString(theme.Title.Render("Connections") + "\n")
+		if a.engine == nil { a.Print(noEngineMsg()); return }
+		conns, err := a.engine.Connections()
+		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(conns) == 0 { a.Print(theme.Faint.Render("No connections configured.")); return }
+		a.Print(theme.Title.Render("Connections"))
 		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(16)
 		for _, c := range conns {
 			indicator := theme.ErrorText.Render("●")
-			if c.Status == "connected" {
-				indicator = theme.SuccessText.Render("●")
-			}
-			b.WriteString(fmt.Sprintf("  %s %s %s", indicator, typeStyle.Render(c.Type), c.Name))
-			if c.Provider != "" {
-				b.WriteString(theme.Faint.Render(" (" + c.Provider + ")"))
-			}
-			b.WriteString("\n")
+			if c.Status == "connected" { indicator = theme.SuccessText.Render("●") }
+			line := fmt.Sprintf("  %s %s %s", indicator, typeStyle.Render(c.Type), c.Name)
+			if c.Provider != "" { line += theme.Faint.Render(" (" + c.Provider + ")") }
+			a.Print(line)
 		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-
-	case "config":
-		return handleConfigCmd(m, "show", "")
-
-	case "set":
-		return handleConfigCmd(m, "set", args)
-
+	case "config": a.handleConfigCmd("show", "")
+	case "set": a.handleConfigCmd("set", args)
 	default:
-		m.repl.AddOutput(usageBlock("/settings", []string{
-			"about        — Version and system info",
-			"providers    — AI provider configuration",
-			"connections  — All connections (providers, MCP, services)",
-			"config       — Show configuration values",
-			"set          — Update a configuration value",
-		}))
+		a.Print(usageBlock("/settings", []string{"about", "providers", "connections", "config", "set"}))
 	}
-	return *m, nil, true
 }
 
 // --- /run ---
 
-func handleEnterRun(m *Model, args string) tea.Cmd {
-	m.runWorkflow = strings.TrimSpace(args)
-	enterMode(m, ModeRun)
-
-	if m.runWorkflow == "" {
-		// Set bare completer for workflow names.
-		if m.engine != nil {
-			m.repl.SetBareCompleter(func(partial string) []components.Completion {
-				nodes, err := m.engine.NodesByType("workflow")
-				if err != nil {
-					return nil
-				}
-				partial = strings.ToLower(partial)
-				var results []components.Completion
-				for _, n := range nodes {
-					if strings.Contains(strings.ToLower(n.Title), partial) {
-						results = append(results, components.Completion{
-							Value:       n.Title,
-							Description: "workflow",
-						})
-					}
-				}
-				return results
-			})
-		}
-		m.repl.AddOutput(theme.Title.Render("Run Mode") + "\n" +
-			theme.Faint.Render("Type a workflow name (tab to complete), or /exit to return."))
-		return nil
+func (a *App) handleEnterRun(args string) {
+	a.runWorkflow = strings.TrimSpace(args)
+	a.setMode(ModeRun)
+	if a.runWorkflow == "" {
+		a.Print(theme.Title.Render("Run Mode"))
+		a.Print(theme.Faint.Render("Type a workflow name (tab to complete), or /exit to return."))
+		return
 	}
-
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return nil
-	}
-
-	// Find the workflow node.
-	node, err := m.engine.FindNodeByTitle(m.runWorkflow)
+	if a.engine == nil { a.Print(noEngineMsg()); return }
+	node, err := a.engine.FindNodeByTitle(a.runWorkflow)
 	if err != nil || node == nil || node.Type != "workflow" {
-		m.repl.AddOutput(theme.ErrorText.Render("Workflow not found: " + m.runWorkflow))
-		return nil
+		a.Print(theme.ErrorText.Render("Workflow not found: " + a.runWorkflow))
+		return
 	}
-
-	return handleEnterRunExec(m.engine, m, node)
-}
-
-// handleEnterRunExec starts execution for a resolved workflow node.
-func handleEnterRunExec(engine *eng.App, m *Model, node *storage.Node) tea.Cmd {
-	plan, err := engine.BuildPlan(node.ID)
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Plan error: " + err.Error()))
-		return nil
-	}
-
-	m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + plan.WorkflowTitle)
-
-	// Show plan steps.
-	var b strings.Builder
-	for _, pg := range plan.PositionGroups {
-		for _, step := range pg.Steps {
-			gate := ""
-			if step.IsGate {
-				gate = theme.WarningText.Render(" (gate)")
-			}
-			b.WriteString(fmt.Sprintf("  %d. %s%s\n", step.Position, step.NodeTitle, gate))
-		}
-	}
-	m.repl.AddOutput(b.String())
-
-	// If inputs are required, collect them before starting.
-	if len(plan.InputVariables) > 0 {
-		m.pendingInputs = plan.InputVariables
-		m.collectedInputs = make(map[string]string)
-		m.pendingNode = node
-
-		// Build input metadata from the plan.
-		m.inputMeta = make(map[string]inputMetaInfo)
-		for varName, meta := range plan.InputMeta {
-			m.inputMeta[varName] = inputMetaInfo{
-				Label:       meta.Label,
-				Description: meta.Description,
-				Example:     meta.Example,
-			}
-		}
-
-		m.repl.AddOutput(theme.Faint.Render(fmt.Sprintf(
-			"%d input(s) required. Enter each value and press enter.", len(plan.InputVariables))))
-		promptForInput(m)
-		return nil
-	}
-
-	// No inputs required — start immediately.
-	return startExecution(engine, m, node, map[string]string{})
+	a.startExecution(node)
 }
 
 // --- /chat ---
 
-func handleEnterChat(m *Model, args string) {
-	// Determine provider.
+func (a *App) handleEnterChat(args string) {
 	provider := "not connected"
-	if m.engine != nil {
-		defaultProvider := m.engine.Setting("defaultProvider")
+	if a.engine != nil {
+		defaultProvider := a.engine.Setting("defaultProvider")
 		if defaultProvider != "" {
 			provider = defaultProvider
 		} else {
-			// Check for any configured provider.
-			providers, err := m.engine.Providers()
-			if err == nil && len(providers) > 0 {
-				provider = providers[0].Name
-			}
+			providers, err := a.engine.Providers()
+			if err == nil && len(providers) > 0 { provider = providers[0].Name }
 		}
 	}
-
-	m.chatProvider = provider
-	enterMode(m, ModeChat)
-
-	m.repl.AddOutput(theme.Title.Render("Chat Mode") + "\n" +
-		theme.Faint.Render("Provider: ") + provider + "\n" +
-		theme.Faint.Render("Type naturally. /exit to return to command mode."))
+	a.chatProvider = provider
+	a.setMode(ModeChat)
+	a.Print(theme.Title.Render("Chat Mode"))
+	a.Print(theme.Faint.Render("Provider: ") + provider)
+	a.Print(theme.Faint.Render("Type naturally. /exit to return to command mode."))
 }
 
 // --- helpers ---
@@ -1268,4 +660,58 @@ func usageBlock(cmd string, subcommands []string) string {
 
 func noEngineMsg() string {
 	return theme.ErrorText.Render("No database connection. Is ~/.skrptiq/skrptiq.db accessible?")
+}
+
+func helpText() string {
+	return `Available commands:
+
+  Modes
+  /chat                  Enter chat mode (talk to your AI team)
+  /run <name>            Enter run mode (execute a workflow)
+  /command               Return to command mode
+  /exit                  Return to command mode
+
+  Browse & search
+  /list [type]           List nodes (workflows, skills, prompts...)
+  /search <query>        Search nodes by title
+  /show <name>           Show node content and metadata
+
+  Execution
+  /runs list             List recent executions
+  /runs status           Show active executions
+  /runs show <id>        Show run details and step outputs
+
+  Profiles
+  /profile list          List all profiles
+  /profile show          Show active profile details
+  /profile use <name>    Switch active profile
+  /profile controls      Show quality control settings
+
+  Hub
+  /hub list              List imported skrpts
+  /hub search <query>    Search community skrpts
+  /hub import <slug>     Import a skrpt from Hub
+  /hub update            Check for updates
+
+  Infrastructure
+  /mcp list              List MCP server connections
+  /mcp tools             List available MCP tools
+  /workspace show        Show workspace context
+  /workspace set <path>  Change workspace directory
+  /tags list             List all tags
+  /tag <node> <tag>      Apply a tag to a node
+  /untag <node> <tag>    Remove a tag from a node
+
+  Settings
+  /settings about        Version and system info
+  /settings providers    AI provider configuration
+  /settings connections  All connections
+  /settings config       Show configuration values
+  /settings set <k> <v>  Update a configuration value
+
+  Session
+  /clear                 Clear screen
+  /help                  This message
+
+  Tab to complete commands. Ctrl+C to cancel. Ctrl+D to exit.`
 }

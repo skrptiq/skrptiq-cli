@@ -3,15 +3,14 @@ package app
 import (
 	"strings"
 
-	"github.com/skrptiq/skrptiq-cli/internal/components"
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 )
 
 // BuildCommands creates the slash command registry with arg providers
 // wired to the engine. If engine is nil, no arg completion is available.
-func BuildCommands(app *eng.App) []components.Command {
-	nodeCompleter := func(nodeType string) func(string) []components.Completion {
-		return func(partial string) []components.Completion {
+func BuildCommands(app *eng.App) []Command {
+	nodeCompleter := func(nodeType string) func(string) []Completion {
+		return func(partial string) []Completion {
 			if app == nil {
 				return nil
 			}
@@ -20,7 +19,7 @@ func BuildCommands(app *eng.App) []components.Command {
 				return nil
 			}
 			partial = strings.ToLower(partial)
-			var results []components.Completion
+			var results []Completion
 			for _, n := range nodes {
 				if partial == "" || strings.Contains(strings.ToLower(n.Title), partial) {
 					desc := n.Type
@@ -31,7 +30,7 @@ func BuildCommands(app *eng.App) []components.Command {
 						}
 						desc = d
 					}
-					results = append(results, components.Completion{
+					results = append(results, Completion{
 						Value:       n.Title,
 						Description: desc,
 					})
@@ -41,7 +40,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		}
 	}
 
-	allNodeCompleter := func(partial string) []components.Completion {
+	allNodeCompleter := func(partial string) []Completion {
 		if app == nil {
 			return nil
 		}
@@ -50,10 +49,10 @@ func BuildCommands(app *eng.App) []components.Command {
 			return nil
 		}
 		partial = strings.ToLower(partial)
-		var results []components.Completion
+		var results []Completion
 		for _, n := range nodes {
 			if partial == "" || strings.Contains(strings.ToLower(n.Title), partial) {
-				results = append(results, components.Completion{
+				results = append(results, Completion{
 					Value:       n.Title,
 					Description: n.Type,
 				})
@@ -62,7 +61,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		return results
 	}
 
-	profileCompleter := func(partial string) []components.Completion {
+	profileCompleter := func(partial string) []Completion {
 		if app == nil {
 			return nil
 		}
@@ -71,14 +70,14 @@ func BuildCommands(app *eng.App) []components.Command {
 			return nil
 		}
 		partial = strings.ToLower(partial)
-		var results []components.Completion
+		var results []Completion
 		for _, p := range profiles {
 			if partial == "" || strings.Contains(strings.ToLower(p.Name), partial) {
 				active := ""
 				if p.IsActive == 1 {
 					active = " (active)"
 				}
-				results = append(results, components.Completion{
+				results = append(results, Completion{
 					Value:       p.Name,
 					Description: p.Type + active,
 				})
@@ -87,7 +86,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		return results
 	}
 
-	tagCompleter := func(partial string) []components.Completion {
+	tagCompleter := func(partial string) []Completion {
 		if app == nil {
 			return nil
 		}
@@ -96,10 +95,10 @@ func BuildCommands(app *eng.App) []components.Command {
 			return nil
 		}
 		partial = strings.ToLower(partial)
-		var results []components.Completion
+		var results []Completion
 		for _, t := range tags {
 			if partial == "" || strings.Contains(strings.ToLower(t.Name), partial) {
-				results = append(results, components.Completion{
+				results = append(results, Completion{
 					Value:       t.Name,
 					Description: t.Colour,
 				})
@@ -123,8 +122,8 @@ func BuildCommands(app *eng.App) []components.Command {
 		}
 	}
 
-	runCompleter := func(a *eng.App) func(string) []components.Completion {
-		return func(partial string) []components.Completion {
+	runCompleter := func(a *eng.App) func(string) []Completion {
+		return func(partial string) []Completion {
 			if a == nil {
 				return nil
 			}
@@ -133,7 +132,7 @@ func BuildCommands(app *eng.App) []components.Command {
 				return nil
 			}
 			partial = strings.ToLower(partial)
-			var results []components.Completion
+			var results []Completion
 			for _, r := range runs {
 				shortID := r.ID
 				if len(shortID) > 8 {
@@ -141,7 +140,7 @@ func BuildCommands(app *eng.App) []components.Command {
 				}
 				label := shortID + " " + r.WorkflowTitle
 				if partial == "" || strings.Contains(strings.ToLower(label), partial) {
-					results = append(results, components.Completion{
+					results = append(results, Completion{
 						Value:       shortID,
 						Description: statusLabel(r.Status) + " " + r.WorkflowTitle + " " + r.StartedAt,
 					})
@@ -151,7 +150,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		}
 	}
 
-	return []components.Command{
+	return []Command{
 		// Modes.
 		{Name: "/chat", Description: "Enter chat mode"},
 		{Name: "/run", Description: "Enter run mode", ArgProvider: nodeCompleter("workflow")},
@@ -167,7 +166,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		{Name: "/stop", Description: "Cancel the running workflow"},
 
 		// Runs.
-		{Name: "/runs", Description: "Execution history", Subcommands: []components.Subcommand{
+		{Name: "/runs", Description: "Execution history", Subcommands: []Subcommand{
 			{Name: "list", Description: "List recent executions"},
 			{Name: "status", Description: "Show active executions"},
 			{Name: "show", Description: "Show run details", ArgProvider: runCompleter(app)},
@@ -179,7 +178,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		{Name: "/show", Description: "Show node content", ArgProvider: allNodeCompleter},
 
 		// Hub.
-		{Name: "/hub", Description: "Hub operations", Subcommands: []components.Subcommand{
+		{Name: "/hub", Description: "Hub operations", Subcommands: []Subcommand{
 			{Name: "list", Description: "List imported skrpts"},
 			{Name: "search", Description: "Search community skrpts"},
 			{Name: "import", Description: "Import a skrpt from Hub"},
@@ -187,7 +186,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		}},
 
 		// Profiles (includes quality controls — they're a profile property).
-		{Name: "/profile", Description: "Voice profiles", Subcommands: []components.Subcommand{
+		{Name: "/profile", Description: "Voice profiles", Subcommands: []Subcommand{
 			{Name: "list", Description: "List all profiles"},
 			{Name: "show", Description: "Show active profile details"},
 			{Name: "use", Description: "Switch active profile", ArgProvider: profileCompleter},
@@ -195,7 +194,7 @@ func BuildCommands(app *eng.App) []components.Command {
 		}},
 
 		// MCP.
-		{Name: "/mcp", Description: "MCP servers", Subcommands: []components.Subcommand{
+		{Name: "/mcp", Description: "MCP servers", Subcommands: []Subcommand{
 			{Name: "list", Description: "List server connections"},
 			{Name: "tools", Description: "List available tools"},
 			{Name: "connect", Description: "Connect to a server"},
@@ -203,20 +202,20 @@ func BuildCommands(app *eng.App) []components.Command {
 		}},
 
 		// Tags.
-		{Name: "/tags", Description: "Tags", Subcommands: []components.Subcommand{
+		{Name: "/tags", Description: "Tags", Subcommands: []Subcommand{
 			{Name: "list", Description: "List all tags"},
 		}},
 		{Name: "/tag", Description: "Apply a tag to a node", ArgProvider: tagCompleter},
 		{Name: "/untag", Description: "Remove a tag from a node", ArgProvider: tagCompleter},
 
 		// Workspace.
-		{Name: "/workspace", Description: "Workspace context", Subcommands: []components.Subcommand{
+		{Name: "/workspace", Description: "Workspace context", Subcommands: []Subcommand{
 			{Name: "show", Description: "Show current context"},
 			{Name: "set", Description: "Change workspace directory"},
 		}},
 
 		// Settings.
-		{Name: "/settings", Description: "App settings", Subcommands: []components.Subcommand{
+		{Name: "/settings", Description: "App settings", Subcommands: []Subcommand{
 			{Name: "about", Description: "Version and system info"},
 			{Name: "providers", Description: "AI provider configuration"},
 			{Name: "connections", Description: "All connections (providers, MCP, services)"},

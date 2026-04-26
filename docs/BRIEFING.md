@@ -3,25 +3,17 @@
 
 ## Priority Queue
 
-### 1. GH#420 — Interactive terminal app
+### 1. GH#420 — Wire chat + run modes to engine (plan approved)
 
-**Read the full issue.** All blockers resolved — storage consolidation (GH#423) shipped, engine packages available.
+Chat mode → `llm.GetProvider().Stream()`. Run mode → `execution.RunWorkflow()` / `execution.ResumeExecution()`. Goroutines + channels for async streaming. This is the MVP.
 
-**Prototype first:** bubbletea TUI for the hardest interaction surfaces:
-- Streaming step progress display
-- Gate approval flow (view/approve/edit/cancel)
-- Diff review with accept/reject
-- Expandable execution trees
-- Session history and command input coexistence
-
-Then build the full REPL: natural language input → workflow selection, profile loading, MCP server connections, Hub import.
-
-**Engine dependency:** `go.mod` imports from `skrptiq-app/engine/`. Same storage, same execution, different frontend.
+### 2. GH#434 — Remaining slash commands (post-MVP polish)
 
 ## Cross-Repo Context
-- **Engine** is in `skrptiq-app/engine/` — all Go packages (execution, providers, MCP, storage, hub client).
-- **Storage** at `~/.skrptiq/skrptiq.db` — shared with desktop app.
+- **Engine packages** at: `engine/execution`, `engine/storage`, `engine/llm`, `engine/mcp`, `engine/hubapi`.
+- **Shared DB** at `~/Library/Application Support/skrptiq/data/skrptiq.db`.
+- **App:** Microsoft 365 integration next, then local RAG.
 
 ## Constraints
-- Import engine module only — never app-internal packages
+- Import engine module only — never app-internal Electron packages
 - Single binary distribution — no runtime dependencies

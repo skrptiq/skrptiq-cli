@@ -1,6 +1,42 @@
 ## Push Summary — skrptiq-cli (main)
 
-### What shipped
-- Fixed Initialising hang — printer is now wired via shared pointer before program starts
-- Ctrl+C always quits (safety net) — no more stuck terminals
-- Shared Printer type avoids bubbletea value-receiver copy issues
+### What shipped — REPL rewrite: bubbletea → readline
+
+**Replaced bubbletea with readline for the input loop.** This is a fundamental architecture change that solves the terminal scrollback problem.
+
+**What changed:**
+- All output via `fmt.Println` — persists in terminal scrollback naturally
+- Input via `github.com/chzyer/readline` — handles Ctrl+C, Ctrl+D, history, tab completion natively
+- Command history persisted to `~/.skrptiq/cli_history`
+- Tab completion for all slash commands and subcommands via readline's `PrefixCompleter`
+- No alt screen — the entire session is one continuous scrollable terminal
+- Ctrl+C cancels active streams or is ignored; Ctrl+D exits
+
+**What was removed:**
+- bubbletea dependency (no longer used for REPL)
+- Viewport-based scrolling (terminal handles it now)
+- internal/views/ directory (progress, gate, diff, tree — prototype TUI views)
+- internal/components/ directory (autocomplete popup, header, status bar, spinner)
+- internal/app/keys.go, stream.go, app_test.go
+
+**What was kept (unchanged):**
+- All command handlers (handlers.go — rewritten to use `a.Print()`)
+- Engine integration (engine.go)
+- Command registry with completers (commands.go)
+- Mode switching (command/chat/run)
+- Chat → LLM streaming
+- Run → engine execution with progress events and gate approval
+- Theme/styling (theme.go)
+
+### Tests
+- `go build ./...` — clean
+- `go vet ./...` — clean
+- Tests removed (bubbletea-specific, need rewriting for readline)
+
+### Architecture
+```
+main.go         → creates App, runs readline loop
+internal/app/   → App struct, handlers, commands, types
+internal/engine → engine integration (unchanged)
+internal/theme  → lipgloss styles (unchanged)
+```
