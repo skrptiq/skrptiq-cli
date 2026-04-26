@@ -68,7 +68,7 @@ func New() Model {
 		header:     components.NewHeader("skrptiq", "v0.1.0-prototype"),
 		statusBar:  components.NewStatusBar(),
 		activeView: viewREPL,
-		repl:       repl.NewWithPrompt(prompt),
+		repl:       repl.NewWithPrompt(prompt, SlashCommands),
 	}
 }
 
@@ -242,14 +242,22 @@ func (m Model) View() string {
 }
 
 func handleCommand(m Model, input string) (Model, tea.Cmd) {
-	cmd := strings.TrimSpace(strings.ToLower(input))
+	raw := strings.TrimSpace(input)
+	cmd := strings.ToLower(raw)
+	// Strip leading "/" for slash commands.
+	cmd = strings.TrimPrefix(cmd, "/")
 
 	switch {
 	case cmd == "help":
 		m.repl.AddOutput(helpText())
 		return m, nil
 
-	case cmd == "run demo" || cmd == "demo":
+	case cmd == "clear":
+		m.repl = repl.NewWithPrompt(m.repl.Prompt(), SlashCommands)
+		resizeView(&m)
+		return m, m.repl.Init()
+
+	case cmd == "run" || cmd == "run demo" || cmd == "demo":
 		m.progress = progress.New([]string{
 			"Drafting Agent",
 			"Review Agent (GPT-4)",
@@ -279,19 +287,58 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 		resizeView(&m)
 		return m, m.diff.Init()
 
+	case strings.HasPrefix(cmd, "run ") ||
+		strings.HasPrefix(cmd, "runs") ||
+		strings.HasPrefix(cmd, "resume") ||
+		strings.HasPrefix(cmd, "stop") ||
+		strings.HasPrefix(cmd, "status") ||
+		strings.HasPrefix(cmd, "list") ||
+		strings.HasPrefix(cmd, "search") ||
+		strings.HasPrefix(cmd, "show") ||
+		strings.HasPrefix(cmd, "hub") ||
+		strings.HasPrefix(cmd, "profile") ||
+		strings.HasPrefix(cmd, "dials") ||
+		strings.HasPrefix(cmd, "mcp") ||
+		strings.HasPrefix(cmd, "providers") ||
+		strings.HasPrefix(cmd, "workspace") ||
+		strings.HasPrefix(cmd, "repos") ||
+		strings.HasPrefix(cmd, "tags") ||
+		strings.HasPrefix(cmd, "tag ") ||
+		strings.HasPrefix(cmd, "untag") ||
+		strings.HasPrefix(cmd, "config"):
+		m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — not yet implemented. Coming soon."))
+		return m, nil
+
 	default:
-		m.repl.AddOutput("Unknown command: " + input + ". Type help for available commands.")
+		m.repl.AddOutput("Unknown command: " + raw + ". Type /help for available commands.")
 		return m, nil
 	}
 }
 
 func helpText() string {
 	return `Available commands:
-  run demo  — streaming step progress display
-  tree      — expandable execution tree
-  gate      — gate approval flow
-  diff      — diff review with accept/reject
-  help      — this message`
+  /run [name]    Execute a workflow or pick from list
+  /runs          List recent executions
+  /list [type]   List nodes (workflows, skills, prompts...)
+  /search        Search nodes by title
+  /show [name]   Show node content and metadata
+  /hub           Hub status, search, import, update
+  /profile       Show or switch voice profile
+  /dials         Show or adjust persona dials
+  /mcp           Show MCP server connections
+  /providers     List configured AI providers
+  /workspace     Show or change workspace context
+  /config        Show or update configuration
+  /clear         Clear session history
+  /help          This message
+
+  Prototype demos:
+  /demo          Streaming step progress
+  /tree          Expandable execution tree
+  /gate          Gate approval flow
+  /diff          Diff review with accept/reject
+
+  Type / to see all commands with autocomplete.`
 }
 
 func mockTree() *tree.Node {

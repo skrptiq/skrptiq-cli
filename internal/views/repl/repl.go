@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/skrptiq/skrptiq-cli/internal/components"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 )
 
@@ -62,23 +63,25 @@ func DefaultKeyMap() KeyMap {
 
 // Model is the REPL view model.
 type Model struct {
-	keys     KeyMap
-	prompt   PromptConfig
-	input    textinput.Model
-	viewport viewport.Model
-	history  []string
-	width    int
-	height   int
-	ready    bool
+	keys         KeyMap
+	prompt       PromptConfig
+	input        textinput.Model
+	viewport     viewport.Model
+	autocomplete components.Autocomplete
+	history      []string
+	width        int
+	height       int
+	ready        bool
+	prevInput    string // tracks previous input value for change detection
 }
 
 // New creates a new REPL view model.
 func New() Model {
-	return NewWithPrompt(DefaultPromptConfig())
+	return NewWithPrompt(DefaultPromptConfig(), nil)
 }
 
-// NewWithPrompt creates a new REPL view model with a custom prompt.
-func NewWithPrompt(cfg PromptConfig) Model {
+// NewWithPrompt creates a new REPL view model with a custom prompt and commands.
+func NewWithPrompt(cfg PromptConfig, commands []components.Command) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Type a command or ask a question..."
 	ti.Prompt = cfg.Style.Render(cfg.Symbol)
@@ -86,11 +89,22 @@ func NewWithPrompt(cfg PromptConfig) Model {
 	ti.CharLimit = 500
 
 	return Model{
-		keys:    DefaultKeyMap(),
-		prompt:  cfg,
-		input:   ti,
-		history: []string{},
+		keys:         DefaultKeyMap(),
+		prompt:       cfg,
+		input:        ti,
+		autocomplete: components.NewAutocomplete(commands),
+		history:      []string{},
 	}
+}
+
+// Prompt returns the current prompt configuration.
+func (m Model) Prompt() PromptConfig {
+	return m.prompt
+}
+
+// History returns the current history entries.
+func (m Model) History() []string {
+	return m.history
 }
 
 // SetPrompt updates the prompt configuration.
@@ -103,13 +117,14 @@ func (m *Model) SetPrompt(cfg PromptConfig) {
 func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
+	m.autocomplete.SetWidth(width)
 
 	// Viewport gets all height except the prompt line(s).
 	promptLines := 1
 	if m.prompt.ContextLeft != "" || m.prompt.ContextRight != "" {
-		promptLines = 2 // context line + input line
+		promptLines = 2
 	}
-	vpHeight := height - promptLines - 1 // extra line for padding
+	vpHeight := height - promptLines - 1
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
@@ -145,16 +160,42 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// If autocomplete is visible, let it handle keys first.
+		if m.autocomplete.Visible() {
+			var cmd tea.Cmd
+			var consumed bool
+			m.autocomplete, cmd, consumed = m.autocomplete.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if consumed {
+				return m, tea.Batch(cmds...)
+			}
+		}
+
+		// Submit command.
 		if key.Matches(msg, m.keys.Submit) && m.input.Value() != "" {
 			input := m.input.Value()
 			m.history = append(m.history, m.prompt.Style.Render(m.prompt.Symbol)+input)
 			m.input.SetValue("")
+			m.prevInput = ""
+			m.autocomplete.Hide()
 			if m.ready {
 				m.viewport.SetContent(m.renderHistory())
 				m.viewport.GotoBottom()
 			}
 			return m, func() tea.Msg { return SubmitMsg{Input: input} }
 		}
+
+	case components.AutocompleteSelectMsg:
+		// Insert the selected command into the input.
+		m.input.SetValue(msg.Command + " ")
+		m.input.CursorEnd()
+		m.prevInput = m.input.Value()
+		return m, nil
+
+	case components.AutocompleteDismissMsg:
+		return m, nil
 
 	case OutputMsg:
 		m.AddOutput(msg.Text)
@@ -166,11 +207,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	m.input, cmd = m.input.Update(msg)
 	cmds = append(cmds, cmd)
 
+	// Detect input changes to drive autocomplete.
+	currentInput := m.input.Value()
+	if currentInput != m.prevInput {
+		m.prevInput = currentInput
+		m.updateAutocomplete(currentInput)
+	}
+
 	// Update viewport.
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
+}
+
+func (m *Model) updateAutocomplete(input string) {
+	if strings.HasPrefix(input, "/") && !strings.Contains(input, " ") {
+		// Show autocomplete and filter by what's typed so far.
+		if !m.autocomplete.Visible() {
+			m.autocomplete.Show(input)
+		} else {
+			m.autocomplete.SetFilter(input)
+		}
+	} else {
+		m.autocomplete.Hide()
+	}
 }
 
 func (m Model) View() string {
@@ -181,6 +242,14 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
+
+	// Render autocomplete popup above the input if visible.
+	if m.autocomplete.Visible() {
+		popup := m.autocomplete.View()
+		if popup != "" {
+			b.WriteString(popup + "\n")
+		}
+	}
 
 	// Render context line above input if configured.
 	if m.prompt.ContextLeft != "" || m.prompt.ContextRight != "" {

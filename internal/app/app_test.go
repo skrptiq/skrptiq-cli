@@ -199,3 +199,47 @@ func TestREPLSubmitRouting(t *testing.T) {
 		t.Errorf("expected tree view from REPL submit, got %d", m.activeView)
 	}
 }
+
+func TestSlashPrefixCommands(t *testing.T) {
+	m := setupModel()
+	m, _ = handleCommand(m, "/help")
+	if m.activeView != viewREPL {
+		t.Errorf("expected REPL view after /help, got %d", m.activeView)
+	}
+
+	m = setupModel()
+	m, _ = handleCommand(m, "/demo")
+	if m.activeView != viewProgress {
+		t.Errorf("expected progress view after /demo, got %d", m.activeView)
+	}
+
+	m = setupModel()
+	m, _ = handleCommand(m, "/tree")
+	if m.activeView != viewTree {
+		t.Errorf("expected tree view after /tree, got %d", m.activeView)
+	}
+
+	m = setupModel()
+	m, _ = handleCommand(m, "/gate")
+	if m.activeView != viewGate {
+		t.Errorf("expected gate view after /gate, got %d", m.activeView)
+	}
+
+	m = setupModel()
+	m, _ = handleCommand(m, "/diff")
+	if m.activeView != viewDiff {
+		t.Errorf("expected diff view after /diff, got %d", m.activeView)
+	}
+}
+
+func TestUnimplementedCommandShowsMessage(t *testing.T) {
+	m := setupModel()
+	m, _ = handleCommand(m, "/runs")
+	if m.activeView != viewREPL {
+		t.Errorf("expected REPL view after unimplemented command, got %d", m.activeView)
+	}
+	// Should have added output about not implemented.
+	if len(m.repl.History()) == 0 {
+		t.Error("expected output message for unimplemented command")
+	}
+}

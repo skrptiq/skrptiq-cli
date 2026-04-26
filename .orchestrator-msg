@@ -1,13 +1,20 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- Double Ctrl+D exit (500ms grace period) — replaces Ctrl+C. Shows "Press Ctrl+D again to exit." hint on first press, clears after timeout.
-- Configurable REPL prompt via PromptConfig: custom symbol, style, context left (e.g. profile name), context right (e.g. exit hint, model name).
-- Default prompt shows "default" left context and "ctrl+d ctrl+d to exit" right context.
-- Welcome message updated to reference /help.
-- Created GH#434: CLI slash commands — comprehensive command palette aligned with desktop app UI (Runs, List, Hub, Profiles, MCP, Workspace, Tags, Config).
+- Slash command autocomplete popup — typing "/" triggers a filtered command list with descriptions. Arrow keys navigate, enter/tab selects, esc dismisses. Filters as you type (e.g. "/ru" → /run, /runs).
+- Command registry with 30+ slash commands aligned to desktop app navigation (GH#434).
+- Commands support both bare ("tree") and prefixed ("/tree") input.
+- Unimplemented commands show "not yet implemented" rather than "unknown command".
+- /clear command resets session history.
+- /help updated with full command reference.
+
+### New files
+- `internal/components/autocomplete.go` — reusable autocomplete popup component
+- `internal/components/autocomplete_test.go` — tests for filtering, navigation, selection, dismissal
+- `internal/app/commands.go` — slash command registry
 
 ### Tests
-- `go test ./...` — all passing
+- `go test ./...` — all passing (8 test packages)
 - `go vet ./...` — clean
-- New tests: single Ctrl+D shows hint, double Ctrl+D exits, hint clears after timeout
+- New: autocomplete filter, cursor bounds, select, dismiss, tab select, empty filter, consumed keys
+- New: slash prefix commands, unimplemented command message
