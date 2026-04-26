@@ -1,30 +1,20 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Implemented 12 read-side slash commands querying real engine data (GH#434):
+Refactored all slash commands to use explicit subcommands — bare commands now show usage instead of silently doing one thing.
 
-| Command | What it does |
-|---|---|
-| `/list [type]` | List all nodes, optionally filtered (workflows, skills, prompts, etc.) |
-| `/show <name>` | Display node content, type, and description |
-| `/search <query>` | Search nodes by title |
-| `/runs` | Execution history (placeholder — needs ListExecutions in storage) |
-| `/profile [list]` | List all profiles with active indicator |
-| `/dials` | Show persona dials from active voice profile metadata |
-| `/mcp` | Show MCP server connections with status indicators |
-| `/providers` | List AI providers with connection status |
-| `/workspace` | Show workspace path, profile, and database path |
-| `/tags` | List all tags with colour indicators |
-| `/config` | Show key settings (provider, model, workspace, theme) |
-| `/hub` | List Hub imports with versions |
+**Pattern:** `/hub` shows usage, `/hub list` lists imports, `/hub search` searches. Applied across all multi-action commands:
+- `/hub list|search|import|update`
+- `/profile list|show|use`
+- `/dials show|set`
+- `/mcp list|connect|disconnect|tools`
+- `/providers list|add`
+- `/workspace show|set`
+- `/tags list`
+- `/config show|set`
+- `/runs list`
 
-### Architecture
-- `internal/app/handlers.go` — all command handlers, cleanly separated from app model
-- `internal/engine/engine.go` — added FindNodeByTitle, SearchNodes, HubImports, Setting
-- Command routing refactored: handleSlashCommand → demo views → deferred → unknown
-
-### Deferred (need execution engine)
-`/run`, `/resume`, `/stop`, `/status`, `/repos`, `/tag`, `/untag`
+Autocomplete registry updated to match — typing `/hub` shows `list`, `search`, `import`, `update` as completions.
 
 ### Tests
 - `go test ./...` — all passing

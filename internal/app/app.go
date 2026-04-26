@@ -302,18 +302,15 @@ func (m Model) View() string {
 
 func handleCommand(m Model, input string) (Model, tea.Cmd) {
 	raw := strings.TrimSpace(input)
-	normalized := strings.ToLower(raw)
-	normalized = strings.TrimPrefix(normalized, "/")
+	// Strip leading "/" if present.
+	stripped := strings.TrimPrefix(raw, "/")
 
 	// Split into command and arguments.
-	cmd := normalized
+	cmd := strings.ToLower(stripped)
 	args := ""
-	if idx := strings.Index(normalized, " "); idx > 0 {
-		cmd = normalized[:idx]
-		args = strings.TrimSpace(raw[idx+1:]) // preserve original case for args
-		if strings.HasPrefix(raw, "/") {
-			args = strings.TrimSpace(raw[idx+2:]) // account for the / prefix
-		}
+	if idx := strings.Index(stripped, " "); idx > 0 {
+		cmd = strings.ToLower(stripped[:idx])
+		args = strings.TrimSpace(stripped[idx+1:])
 	}
 
 	// Try slash command handlers first.
@@ -367,26 +364,30 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 
 func helpText() string {
 	return `Available commands:
-  /run [name]    Execute a workflow or pick from list
-  /runs          List recent executions
-  /list [type]   List nodes (workflows, skills, prompts...)
-  /search        Search nodes by title
-  /show [name]   Show node content and metadata
-  /hub           Hub status, search, import, update
-  /profile       Show or switch voice profile
-  /dials         Show or adjust persona dials
-  /mcp           Show MCP server connections
-  /providers     List configured AI providers
-  /workspace     Show or change workspace context
-  /config        Show or update configuration
-  /clear         Clear session history
-  /help          This message
+  /run <name>         Execute a workflow
+  /runs list          List recent executions
+  /list [type]        List nodes (workflows, skills, prompts...)
+  /search <query>     Search nodes by title
+  /show <name>        Show node content and metadata
+  /hub list           List imported skrpts
+  /hub search         Search community skrpts
+  /profile list       List all profiles
+  /profile show       Show active profile details
+  /profile use <name> Switch active profile
+  /dials show         Show persona dial settings
+  /mcp list           List MCP server connections
+  /providers list     List configured AI providers
+  /workspace show     Show workspace context
+  /tags list          List all tags
+  /config show        Show configuration
+  /clear              Clear session history
+  /help               This message
 
   Prototype demos:
-  /demo          Streaming step progress
-  /tree          Expandable execution tree
-  /gate          Gate approval flow
-  /diff          Diff review with accept/reject
+  /demo               Streaming step progress
+  /tree               Expandable execution tree
+  /gate               Gate approval flow
+  /diff               Diff review with accept/reject
 
   Type / to see all commands with autocomplete.`
 }

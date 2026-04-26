@@ -12,8 +12,12 @@ import (
 )
 
 // handleSlashCommand processes implemented slash commands.
-// Returns true if the command was handled.
+// cmd is the first word (e.g. "hub"), args is everything after (e.g. "list" or "search query").
+// Returns the updated model, a tea command, and whether the command was handled.
 func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool) {
+	// Split args into subcommand and remaining arguments.
+	sub, subArgs := splitFirst(args)
+
 	switch cmd {
 	case "help":
 		m.repl.AddOutput(helpText())
@@ -25,7 +29,7 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		return *m, m.repl.Init(), true
 
 	case "list":
-		handleList(m, args)
+		handleList(m, args) // args is the type filter
 		return *m, nil, true
 
 	case "show":
@@ -36,45 +40,47 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		handleSearch(m, args)
 		return *m, nil, true
 
+	case "hub":
+		return handleHub(m, sub, subArgs)
+
 	case "runs":
-		handleRuns(m)
-		return *m, nil, true
+		return handleRuns(m, sub)
 
 	case "profile":
-		handleProfile(m, args)
-		return *m, nil, true
+		return handleProfile(m, sub, subArgs)
 
 	case "dials":
-		handleDials(m)
-		return *m, nil, true
+		return handleDials(m, sub, subArgs)
 
 	case "mcp":
-		handleMCP(m)
-		return *m, nil, true
+		return handleMCPCmd(m, sub)
 
 	case "providers":
-		handleProviders(m)
-		return *m, nil, true
+		return handleProvidersCmd(m, sub)
 
 	case "workspace":
-		handleWorkspace(m)
-		return *m, nil, true
+		return handleWorkspaceCmd(m, sub)
 
 	case "tags":
-		handleTags(m)
-		return *m, nil, true
+		return handleTagsCmd(m, sub)
 
 	case "config":
-		handleConfig(m)
-		return *m, nil, true
-
-	case "hub":
-		handleHub(m, args)
-		return *m, nil, true
+		return handleConfigCmd(m, sub)
 	}
 
 	return *m, nil, false
 }
+
+// splitFirst splits a string into the first word and the rest.
+func splitFirst(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	if idx := strings.Index(s, " "); idx > 0 {
+		return strings.ToLower(s[:idx]), strings.TrimSpace(s[idx+1:])
+	}
+	return strings.ToLower(s), ""
+}
+
+// --- /list ---
 
 func handleList(m *Model, args string) {
 	if m.engine == nil {
@@ -84,7 +90,6 @@ func handleList(m *Model, args string) {
 
 	nodeType := strings.TrimSpace(strings.ToLower(args))
 
-	// Map plural/friendly names to node types.
 	typeMap := map[string]string{
 		"workflows": "workflow", "workflow": "workflow",
 		"skills": "skill", "skill": "skill",
@@ -108,7 +113,7 @@ func handleList(m *Model, args string) {
 	} else {
 		mapped, ok := typeMap[nodeType]
 		if !ok {
-			m.repl.AddOutput(theme.ErrorText.Render("Unknown node type: " + args))
+			m.repl.AddOutput(theme.ErrorText.Render("Unknown node type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
 			return
 		}
 		filtered, e := m.engine.NodesByType(mapped)
@@ -135,6 +140,8 @@ func handleList(m *Model, args string) {
 	}
 	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 }
+
+// --- /show ---
 
 func handleShow(m *Model, args string) {
 	if m.engine == nil {
@@ -170,6 +177,8 @@ func handleShow(m *Model, args string) {
 	m.repl.AddOutput(b.String())
 }
 
+// --- /search ---
+
 func handleSearch(m *Model, args string) {
 	if m.engine == nil {
 		m.repl.AddOutput(noEngineMsg())
@@ -202,233 +211,27 @@ func handleSearch(m *Model, args string) {
 	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 }
 
-func handleRuns(m *Model) {
+// --- /hub ---
+
+func handleHub(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 	if m.engine == nil {
 		m.repl.AddOutput(noEngineMsg())
-		return
+		return *m, nil, true
 	}
 
-	// The storage package doesn't have a ListExecutions yet — show what we can.
-	m.repl.AddOutput(theme.Faint.Render("/runs — execution history display coming soon."))
-}
-
-func handleProfile(m *Model, args string) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
-
-	arg := strings.TrimSpace(strings.ToLower(args))
-
-	if arg == "list" || arg == "" {
-		profiles, err := m.engine.Profiles()
-		if err != nil {
-			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return
-		}
-		if len(profiles) == 0 {
-			m.repl.AddOutput(theme.Faint.Render("No profiles configured."))
-			return
-		}
-		var b strings.Builder
-		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
-		for _, p := range profiles {
-			active := "  "
-			if p.IsActive == 1 {
-				active = theme.SuccessText.Render("● ")
-			}
-			b.WriteString(fmt.Sprintf("  %s%s %s\n", active, typeStyle.Render(p.Type), p.Name))
-		}
-		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-		return
-	}
-
-	// /profile use <name> — handled later with SetActiveProfile
-	if strings.HasPrefix(arg, "use ") {
-		name := strings.TrimSpace(args[4:])
-		m.repl.AddOutput(theme.Faint.Render("Profile switching to \"" + name + "\" — coming soon."))
-		return
-	}
-
-	m.repl.AddOutput(theme.Faint.Render("Usage: /profile [list] or /profile use <name>"))
-}
-
-func handleDials(m *Model) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
-
-	// Dials are stored in profile metadata — show what we know.
-	voice, _ := m.engine.ActiveProfile("voice")
-	if voice == nil {
-		m.repl.AddOutput(theme.Faint.Render("No active voice profile. Dials are configured per profile."))
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(theme.Title.Render("Persona Dials") + " — " + voice.Name + "\n")
-	if voice.Metadata != nil && *voice.Metadata != "" {
-		b.WriteString(theme.Faint.Render(*voice.Metadata))
-	} else {
-		b.WriteString(theme.Faint.Render("No dial configuration in profile metadata."))
-	}
-	m.repl.AddOutput(b.String())
-}
-
-func handleMCP(m *Model) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
-
-	servers, err := m.engine.MCPServers()
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-
-	if len(servers) == 0 {
-		m.repl.AddOutput(theme.Faint.Render("No MCP servers configured."))
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(theme.Title.Render("MCP Servers") + "\n")
-	for _, s := range servers {
-		indicator := theme.ErrorText.Render("●")
-		if s.Status == "connected" {
-			indicator = theme.SuccessText.Render("●")
-		}
-		b.WriteString(fmt.Sprintf("  %s %s", indicator, s.Name))
-		if s.Provider != "" {
-			b.WriteString(theme.Faint.Render(" (" + s.Provider + ")"))
-		}
-		b.WriteString("\n")
-	}
-	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-}
-
-func handleProviders(m *Model) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
-
-	providers, err := m.engine.Providers()
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-
-	if len(providers) == 0 {
-		m.repl.AddOutput(theme.Faint.Render("No AI providers configured."))
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(theme.Title.Render("AI Providers") + "\n")
-	for _, p := range providers {
-		indicator := theme.ErrorText.Render("●")
-		if p.Status == "connected" {
-			indicator = theme.SuccessText.Render("●")
-		}
-		b.WriteString(fmt.Sprintf("  %s %s", indicator, p.Name))
-		if p.Provider != "" {
-			b.WriteString(theme.Faint.Render(" (" + p.Provider + ")"))
-		}
-		b.WriteString("\n")
-	}
-	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-}
-
-func handleWorkspace(m *Model) {
-	var b strings.Builder
-	b.WriteString(theme.Title.Render("Workspace") + "\n")
-	b.WriteString("  " + theme.Faint.Render("Path: ") + m.statusBar.Workspace + "\n")
-	b.WriteString("  " + theme.Faint.Render("Profile: ") + m.statusBar.Profile)
-	if m.engine != nil {
-		b.WriteString("\n  " + theme.Faint.Render("Database: ") + m.engine.DB.Path())
-	}
-	m.repl.AddOutput(b.String())
-}
-
-func handleTags(m *Model) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
-
-	tags, err := m.engine.Tags()
-	if err != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-
-	if len(tags) == 0 {
-		m.repl.AddOutput(theme.Faint.Render("No tags defined."))
-		return
-	}
-
-	var b strings.Builder
-	b.WriteString(theme.Title.Render("Tags") + "\n")
-	for _, t := range tags {
-		colour := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Colour))
-		b.WriteString(fmt.Sprintf("  %s %s\n", colour.Render("●"), t.Name))
-	}
-	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-}
-
-func handleConfig(m *Model) {
-	var b strings.Builder
-	b.WriteString(theme.Title.Render("Configuration") + "\n")
-
-	if m.engine == nil {
-		b.WriteString(theme.Faint.Render("  No engine connection."))
-		m.repl.AddOutput(b.String())
-		return
-	}
-
-	// Show key settings.
-	keys := []struct{ key, label string }{
-		{"defaultProvider", "Default Provider"},
-		{"defaultModel", "Default Model"},
-		{"workspacePath", "Workspace Path"},
-		{"theme", "Theme"},
-	}
-
-	for _, k := range keys {
-		val := m.engine.Setting(k.key)
-		if val == "" {
-			val = theme.Faint.Render("(not set)")
-		}
-		b.WriteString(fmt.Sprintf("  %s %s\n", lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k.label+":"), val))
-	}
-	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-}
-
-func handleHub(m *Model, args string) {
-	if m.engine == nil {
-		m.repl.AddOutput(noEngineMsg())
-		return
-	}
-
-	arg := strings.TrimSpace(strings.ToLower(args))
-
-	if arg == "" {
-		// Show hub status — list imports.
+	switch sub {
+	case "list":
 		imports, err := m.engine.HubImports()
 		if err != nil {
 			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
-			return
+			return *m, nil, true
 		}
 
 		var b strings.Builder
-		b.WriteString(theme.Title.Render("Hub") + "\n")
+		b.WriteString(theme.Title.Render("Hub — Imported Skrpts") + "\n")
 		if len(imports) == 0 {
 			b.WriteString(theme.Faint.Render("  No skrpts imported from Hub."))
 		} else {
-			b.WriteString(fmt.Sprintf("  %d imported skrpts:\n", len(imports)))
 			for _, imp := range imports {
 				ver := ""
 				if imp.Version != nil {
@@ -438,15 +241,359 @@ func handleHub(m *Model, args string) {
 			}
 		}
 		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
-		return
+
+	case "search":
+		m.repl.AddOutput(theme.Faint.Render("/hub search — requires Hub API client. Coming soon."))
+
+	case "import":
+		m.repl.AddOutput(theme.Faint.Render("/hub import — requires Hub API client. Coming soon."))
+
+	case "update":
+		m.repl.AddOutput(theme.Faint.Render("/hub update — requires Hub API client. Coming soon."))
+
+	default:
+		m.repl.AddOutput(usageBlock("/hub", []string{
+			"list    — List imported skrpts",
+			"search  — Search community skrpts",
+			"import  — Import a skrpt from Hub",
+			"update  — Check for or apply updates",
+		}))
 	}
 
-	if strings.HasPrefix(arg, "search") || strings.HasPrefix(arg, "import") || strings.HasPrefix(arg, "update") {
-		m.repl.AddOutput(theme.Faint.Render("/hub " + arg + " — requires Hub API client. Coming soon."))
-		return
+	return *m, nil, true
+}
+
+// --- /runs ---
+
+func handleRuns(m *Model, sub string) (Model, tea.Cmd, bool) {
+	switch sub {
+	case "list", "":
+		m.repl.AddOutput(theme.Faint.Render("/runs list — execution history display coming soon."))
+	default:
+		m.repl.AddOutput(usageBlock("/runs", []string{
+			"list    — List recent executions",
+		}))
+	}
+	return *m, nil, true
+}
+
+// --- /profile ---
+
+func handleProfile(m *Model, sub, args string) (Model, tea.Cmd, bool) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return *m, nil, true
 	}
 
-	m.repl.AddOutput(theme.Faint.Render("Usage: /hub [search <query> | import <id> | update]"))
+	switch sub {
+	case "list":
+		profiles, err := m.engine.Profiles()
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(profiles) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No profiles configured."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Profiles") + "\n")
+		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
+		for _, p := range profiles {
+			active := "  "
+			if p.IsActive == 1 {
+				active = theme.SuccessText.Render("● ")
+			}
+			b.WriteString(fmt.Sprintf("  %s%s %s\n", active, typeStyle.Render(p.Type), p.Name))
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
+	case "show":
+		voice, _ := m.engine.ActiveProfile("voice")
+		if voice == nil {
+			m.repl.AddOutput(theme.Faint.Render("No active voice profile."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render(voice.Name) + "\n")
+		b.WriteString(theme.Faint.Render("Type: ") + voice.Type + "\n")
+		if voice.Content != "" {
+			b.WriteString("\n" + voice.Content)
+		}
+		m.repl.AddOutput(b.String())
+
+	case "use":
+		name := strings.TrimSpace(args)
+		if name == "" {
+			m.repl.AddOutput(theme.Faint.Render("Usage: /profile use <name>"))
+			return *m, nil, true
+		}
+		m.repl.AddOutput(theme.Faint.Render("Profile switching to \"" + name + "\" — coming soon."))
+
+	default:
+		m.repl.AddOutput(usageBlock("/profile", []string{
+			"list    — List all profiles",
+			"show    — Show active profile details",
+			"use     — Switch active profile",
+		}))
+	}
+
+	return *m, nil, true
+}
+
+// --- /dials ---
+
+func handleDials(m *Model, sub, args string) (Model, tea.Cmd, bool) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return *m, nil, true
+	}
+
+	switch sub {
+	case "show":
+		voice, _ := m.engine.ActiveProfile("voice")
+		if voice == nil {
+			m.repl.AddOutput(theme.Faint.Render("No active voice profile. Dials are configured per profile."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Persona Dials") + " — " + voice.Name + "\n")
+		if voice.Metadata != nil && *voice.Metadata != "" {
+			b.WriteString(theme.Faint.Render(*voice.Metadata))
+		} else {
+			b.WriteString(theme.Faint.Render("No dial configuration in profile metadata."))
+		}
+		m.repl.AddOutput(b.String())
+
+	case "set":
+		m.repl.AddOutput(theme.Faint.Render("/dials set — coming soon."))
+
+	default:
+		m.repl.AddOutput(usageBlock("/dials", []string{
+			"show    — Show current persona dial settings",
+			"set     — Adjust a persona dial value",
+		}))
+	}
+
+	return *m, nil, true
+}
+
+// --- /mcp ---
+
+func handleMCPCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return *m, nil, true
+	}
+
+	switch sub {
+	case "list":
+		servers, err := m.engine.MCPServers()
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(servers) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No MCP servers configured."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("MCP Servers") + "\n")
+		for _, s := range servers {
+			indicator := theme.ErrorText.Render("●")
+			if s.Status == "connected" {
+				indicator = theme.SuccessText.Render("●")
+			}
+			b.WriteString(fmt.Sprintf("  %s %s", indicator, s.Name))
+			if s.Provider != "" {
+				b.WriteString(theme.Faint.Render(" (" + s.Provider + ")"))
+			}
+			b.WriteString("\n")
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
+	case "connect":
+		m.repl.AddOutput(theme.Faint.Render("/mcp connect — coming soon."))
+	case "disconnect":
+		m.repl.AddOutput(theme.Faint.Render("/mcp disconnect — coming soon."))
+	case "tools":
+		m.repl.AddOutput(theme.Faint.Render("/mcp tools — coming soon."))
+
+	default:
+		m.repl.AddOutput(usageBlock("/mcp", []string{
+			"list        — List MCP server connections",
+			"connect     — Connect to an MCP server",
+			"disconnect  — Disconnect an MCP server",
+			"tools       — List available MCP tools",
+		}))
+	}
+
+	return *m, nil, true
+}
+
+// --- /providers ---
+
+func handleProvidersCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return *m, nil, true
+	}
+
+	switch sub {
+	case "list":
+		providers, err := m.engine.Providers()
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(providers) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No AI providers configured."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("AI Providers") + "\n")
+		for _, p := range providers {
+			indicator := theme.ErrorText.Render("●")
+			if p.Status == "connected" {
+				indicator = theme.SuccessText.Render("●")
+			}
+			b.WriteString(fmt.Sprintf("  %s %s", indicator, p.Name))
+			if p.Provider != "" {
+				b.WriteString(theme.Faint.Render(" (" + p.Provider + ")"))
+			}
+			b.WriteString("\n")
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
+	case "add":
+		m.repl.AddOutput(theme.Faint.Render("/providers add — coming soon."))
+
+	default:
+		m.repl.AddOutput(usageBlock("/providers", []string{
+			"list    — List configured AI providers",
+			"add     — Configure a new provider",
+		}))
+	}
+
+	return *m, nil, true
+}
+
+// --- /workspace ---
+
+func handleWorkspaceCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
+	switch sub {
+	case "show":
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Workspace") + "\n")
+		b.WriteString("  " + theme.Faint.Render("Path: ") + m.statusBar.Workspace + "\n")
+		b.WriteString("  " + theme.Faint.Render("Profile: ") + m.statusBar.Profile)
+		if m.engine != nil {
+			b.WriteString("\n  " + theme.Faint.Render("Database: ") + m.engine.DB.Path())
+		}
+		m.repl.AddOutput(b.String())
+
+	case "set":
+		m.repl.AddOutput(theme.Faint.Render("/workspace set — coming soon."))
+
+	default:
+		m.repl.AddOutput(usageBlock("/workspace", []string{
+			"show    — Show current workspace context",
+			"set     — Change workspace directory",
+		}))
+	}
+
+	return *m, nil, true
+}
+
+// --- /tags ---
+
+func handleTagsCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return *m, nil, true
+	}
+
+	switch sub {
+	case "list":
+		tags, err := m.engine.Tags()
+		if err != nil {
+			m.repl.AddOutput(theme.ErrorText.Render("Error: " + err.Error()))
+			return *m, nil, true
+		}
+		if len(tags) == 0 {
+			m.repl.AddOutput(theme.Faint.Render("No tags defined."))
+			return *m, nil, true
+		}
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Tags") + "\n")
+		for _, t := range tags {
+			colour := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Colour))
+			b.WriteString(fmt.Sprintf("  %s %s\n", colour.Render("●"), t.Name))
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
+	default:
+		m.repl.AddOutput(usageBlock("/tags", []string{
+			"list    — List all tags",
+		}))
+	}
+
+	return *m, nil, true
+}
+
+// --- /config ---
+
+func handleConfigCmd(m *Model, sub string) (Model, tea.Cmd, bool) {
+	switch sub {
+	case "show":
+		var b strings.Builder
+		b.WriteString(theme.Title.Render("Configuration") + "\n")
+
+		if m.engine == nil {
+			b.WriteString(theme.Faint.Render("  No engine connection."))
+			m.repl.AddOutput(b.String())
+			return *m, nil, true
+		}
+
+		keys := []struct{ key, label string }{
+			{"defaultProvider", "Default Provider"},
+			{"defaultModel", "Default Model"},
+			{"workspacePath", "Workspace Path"},
+			{"theme", "Theme"},
+		}
+
+		for _, k := range keys {
+			val := m.engine.Setting(k.key)
+			if val == "" {
+				val = theme.Faint.Render("(not set)")
+			}
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k.label+":"), val))
+		}
+		m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
+
+	case "set":
+		m.repl.AddOutput(theme.Faint.Render("/config set — coming soon."))
+
+	default:
+		m.repl.AddOutput(usageBlock("/config", []string{
+			"show    — Show current configuration",
+			"set     — Update a configuration value",
+		}))
+	}
+
+	return *m, nil, true
+}
+
+// --- helpers ---
+
+func usageBlock(cmd string, subcommands []string) string {
+	var b strings.Builder
+	b.WriteString(theme.Title.Render(cmd) + "\n")
+	for _, s := range subcommands {
+		b.WriteString("  " + cmd + " " + s + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func noEngineMsg() string {

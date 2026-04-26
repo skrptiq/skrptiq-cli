@@ -115,41 +115,51 @@ func BuildCommands(app *eng.App) []components.Command {
 
 		// Runs.
 		{Name: "/run", Description: "Execute a workflow", ArgProvider: nodeCompleter("workflow")},
-		{Name: "/runs", Description: "List recent executions"},
+		{Name: "/runs list", Description: "List recent executions"},
 		{Name: "/resume", Description: "Resume a paused execution"},
 		{Name: "/stop", Description: "Cancel the running workflow"},
 		{Name: "/status", Description: "Show current execution status"},
 
 		// Browse.
-		{Name: "/list", Description: "List nodes (workflows, skills, prompts...)"},
+		{Name: "/list", Description: "List nodes by type (workflows, skills, prompts...)"},
 		{Name: "/search", Description: "Search nodes by title", ArgProvider: allNodeCompleter},
 		{Name: "/show", Description: "Show node content and metadata", ArgProvider: allNodeCompleter},
 
 		// Hub.
-		{Name: "/hub", Description: "Hub status and available updates"},
+		{Name: "/hub list", Description: "List imported skrpts"},
 		{Name: "/hub search", Description: "Search community skrpts"},
 		{Name: "/hub import", Description: "Import a skrpt from Hub"},
 		{Name: "/hub update", Description: "Check for or apply updates"},
 
 		// Profiles.
-		{Name: "/profile", Description: "Show or switch voice profile", ArgProvider: profileCompleter},
-		{Name: "/dials", Description: "Show or adjust persona dials"},
+		{Name: "/profile list", Description: "List all voice profiles"},
+		{Name: "/profile use", Description: "Switch active profile", ArgProvider: profileCompleter},
+		{Name: "/profile show", Description: "Show active profile details"},
+
+		// Persona dials.
+		{Name: "/dials show", Description: "Show current persona dial settings"},
+		{Name: "/dials set", Description: "Adjust a persona dial value"},
 
 		// MCP & Services.
-		{Name: "/mcp", Description: "Show MCP server connections"},
-		{Name: "/providers", Description: "List configured AI providers"},
+		{Name: "/mcp list", Description: "List MCP server connections"},
+		{Name: "/mcp connect", Description: "Connect to an MCP server"},
+		{Name: "/mcp disconnect", Description: "Disconnect an MCP server"},
+		{Name: "/mcp tools", Description: "List available MCP tools"},
+		{Name: "/providers list", Description: "List configured AI providers"},
+		{Name: "/providers add", Description: "Configure a new provider"},
 
 		// Workspace.
-		{Name: "/workspace", Description: "Show or change workspace context"},
-		{Name: "/repos", Description: "List or add linked repositories"},
+		{Name: "/workspace show", Description: "Show current workspace context"},
+		{Name: "/workspace set", Description: "Change workspace directory"},
 
 		// Tags.
-		{Name: "/tags", Description: "List all tags"},
+		{Name: "/tags list", Description: "List all tags"},
 		{Name: "/tag", Description: "Apply a tag to a node", ArgProvider: tagCompleter},
 		{Name: "/untag", Description: "Remove a tag from a node", ArgProvider: tagCompleter},
 
 		// Config.
-		{Name: "/config", Description: "Show or update configuration"},
+		{Name: "/config show", Description: "Show current configuration"},
+		{Name: "/config set", Description: "Update a configuration value"},
 
 		// Prototype demos.
 		{Name: "/demo", Description: "Run streaming progress demo"},
