@@ -59,9 +59,20 @@ Import the engine module only. Never import app-internal Electron packages. If y
 - Test TUI components with bubbletea's test utilities
 - Report results in `.orchestrator-msg` push summary
 
-## Plan Mode Gate
+## Plan Mode Gate — MANDATORY
 
-**When entering plan mode** for any feature that touches the engine module boundary or shared storage schema, write the plan and **STOP**. Add a note to `../orchestrator/inbox.md` requesting review. Wait for approval before implementing.
+**Every plan requires orchestrator approval. No exceptions.**
+
+When you enter plan mode for ANY feature — regardless of scope — you must:
+
+1. Write the plan
+2. Add a review request to `../orchestrator/inbox.md` with: issue number, summary, what you intend to build, any cross-repo implications
+3. **STOP. Do not implement. Do not start coding. Do not approve your own plan.**
+4. Wait for an approval entry to appear in `../orchestrator/inbox.md` before proceeding
+
+You do NOT have authority to approve your own plans. Only the orchestrator approves plans. If you implement before receiving approval, the work may be rejected.
+
+This applies to all plans: new features, engine boundary changes, storage changes — everything that enters plan mode.
 
 ## Context Budget — IMPORTANT
 **At session start, read ONLY:**
