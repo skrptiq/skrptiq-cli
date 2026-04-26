@@ -1,20 +1,9 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Refactored all slash commands to use explicit subcommands — bare commands now show usage instead of silently doing one thing.
-
-**Pattern:** `/hub` shows usage, `/hub list` lists imports, `/hub search` searches. Applied across all multi-action commands:
-- `/hub list|search|import|update`
-- `/profile list|show|use`
-- `/dials show|set`
-- `/mcp list|connect|disconnect|tools`
-- `/providers list|add`
-- `/workspace show|set`
-- `/tags list`
-- `/config show|set`
-- `/runs list`
-
-Autocomplete registry updated to match — typing `/hub` shows `list`, `search`, `import`, `update` as completions.
+- Fixed tab completion for multi-word commands. `/hub l` + tab now correctly completes to `/hub list`.
+- Autocomplete filter now matches the full input against multi-word command names (e.g. typing `/hub l` filters to `/hub list`).
+- Fixed arg parsing to use `LastIndex` for space splitting so argument completers trigger at the right boundary.
 
 ### Tests
 - `go test ./...` — all passing

@@ -238,9 +238,10 @@ func (m *Model) updateAutocomplete(input string) {
 		return
 	}
 
-	// Check if input has a space — could be stage 2 (argument).
-	if spaceIdx := strings.Index(input, " "); spaceIdx > 0 {
-		cmdPart := input[:spaceIdx]
+	// Check if the full input matches a command that has an ArgProvider.
+	// e.g. "/show " or "/run " — the command is complete and we need arg completion.
+	if spaceIdx := strings.LastIndex(input, " "); spaceIdx > 0 {
+		cmdPart := strings.TrimSpace(input[:spaceIdx])
 		argPart := strings.TrimSpace(input[spaceIdx+1:])
 
 		cmd := m.autocomplete.FindCommand(cmdPart)
@@ -248,13 +249,11 @@ func (m *Model) updateAutocomplete(input string) {
 			m.autocomplete.ShowArgs(cmd, argPart)
 			return
 		}
-
-		// No arg provider for this command — no completions.
-		m.autocomplete.Hide()
-		return
+		// No exact command match with args — fall through to filter
+		// commands by the full input (e.g. "/hub l" filters to "/hub list").
 	}
 
-	// Stage 1: command completion.
+	// Filter commands by the full input text.
 	if !m.autocomplete.Visible() {
 		m.autocomplete.Show(input)
 	} else {
