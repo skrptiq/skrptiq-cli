@@ -11,12 +11,21 @@ import (
 	"github.com/skrptiq/engine/storage"
 )
 
-// DefaultDBPath returns the default database path: ~/.skrptiq/skrptiq.db
+// DefaultDBPath returns the database path, checking locations in order:
+//  1. ~/Library/Application Support/skrptiq/data/skrptiq.db (macOS app location)
+//  2. ~/.skrptiq/skrptiq.db (CLI default)
 func DefaultDBPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
+
+	// Check the desktop app's location first (shared DB).
+	appSupport := filepath.Join(home, "Library", "Application Support", "skrptiq", "data", "skrptiq.db")
+	if _, err := os.Stat(appSupport); err == nil {
+		return appSupport
+	}
+
 	return filepath.Join(home, ".skrptiq", "skrptiq.db")
 }
 

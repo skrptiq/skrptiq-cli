@@ -1,15 +1,18 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Three REPL interaction features matching Claude Code / Codex CLI conventions:
+Fixed DB path — CLI was creating an empty DB at `~/.skrptiq/skrptiq.db` instead of reading the desktop app's shared DB at `~/Library/Application Support/skrptiq/data/skrptiq.db`.
 
-1. **Command history** — up/down arrows cycle through previously submitted commands. Current input is preserved when browsing and restored when pressing down past the end.
+- `DefaultDBPath` now checks the macOS app location first, falls back to `~/.skrptiq/`
+- Startup shows the connected DB path so the user can verify
+- Engine errors are shown instead of silently swallowed
 
-2. **Escape to cancel** — escape from any overlay view (progress, tree, gate, diff) returns to the REPL input with a "Cancelled." message. Activity indicator is cleared.
+### Impact
+All slash commands now return real data: 161 nodes, 11 hub imports, 8 profiles from the shared DB. Autocomplete shows actual workflow/node/profile names.
 
-3. **Activity indicator** — spinner + text line rendered above the prompt when the engine is active. SetActivity("text") shows it, SetActivity("") clears it. Ready for engine execution wiring. Creative word prompt (word of the day etc.) to be designed later.
+### Note for cross-platform
+The macOS `~/Library/Application Support/` path is hardcoded. Will need Linux/Windows equivalents when we ship cross-platform.
 
 ### Tests
 - `go test ./...` — all passing
 - `go vet ./...` — clean
-- New tests: command history up/down, preserves partial input, activity indicator show/clear, escape cancels overlay, escape no-op in REPL

@@ -62,7 +62,7 @@ type Model struct {
 // New creates a new root app model.
 func New() Model {
 	// Open the engine (shared DB).
-	engine, _ := eng.Open("")
+	engine, engineErr := eng.Open("")
 
 	commands := BuildCommands(engine)
 
@@ -84,7 +84,7 @@ func New() Model {
 		ContextRight: "ctrl+d ctrl+d to exit",
 	}
 
-	return Model{
+	m := Model{
 		keys:       DefaultKeyMap(),
 		header:     components.NewHeader("skrptiq", "v0.1.0-prototype"),
 		statusBar:  statusBar,
@@ -93,6 +93,15 @@ func New() Model {
 		activeView: viewREPL,
 		repl:       repl.NewWithPrompt(prompt, commands),
 	}
+
+	if engineErr != nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Engine: " + engineErr.Error()))
+	} else if engine != nil {
+		dbPath := engine.DB.Path()
+		m.repl.AddOutput(theme.Faint.Render("Connected to " + dbPath))
+	}
+
+	return m
 }
 
 func buildStatusBar(engine *eng.App) components.StatusBar {
