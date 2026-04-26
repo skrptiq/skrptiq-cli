@@ -1,34 +1,21 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
+Visible mode switching for the CLI — three modes with distinct visual identity:
 
-**1. /runs show with step detail (GH#436 MVP item)**
-- `/runs show <id>` — full run detail: workflow name, status, timestamps, tokens, all steps with position/provider/duration/output size
-- `/runs show <id> step <n>` — view individual step output, provider, model, duration
-- `/runs list` now shows short IDs for use with `/runs show`
-- Short ID prefix matching — type first 4-8 chars of an ID
-- Autocomplete for run IDs — `/runs show` tab shows recent runs with status and workflow name
+**Command mode** (default) — `❯` prompt, profile name left, exit hint right. Slash commands work, bare text prompts to enter chat mode.
 
-**2. /settings consolidation**
-- `/settings about` — version, engine path, working directory
-- `/settings providers` — AI provider list
-- `/settings connections` — all connections (providers + MCP + cloud services)
-- `/settings config` — show config values
-- `/settings set <key> <value>` — update config
+**Chat mode** (`/chat`) — `💬` prompt, "chat" left context, provider name + "/exit to return" right. All bare text goes to the LLM handler (placeholder until wired). Detects default provider from settings.
 
-**3. Chat-first default mode (GH#436 direction)**
-- Bare text (no `/` prefix) goes to chat handler
-- Currently shows placeholder — LLM wiring needed
-- Welcome message updated: "Type naturally to chat, or / for commands"
-- Input placeholder: "Ask a question or type / for commands..."
-- `/` commands are the escape hatch, not the default
+**Run mode** (`/run <workflow>`) — `▶` prompt (green), "run" left context, workflow name + "/exit or esc to cancel" right. Bare text goes to gate/approval handler (placeholder until wired).
+
+**Mode transitions:**
+- `/chat` → enters chat mode
+- `/run <name>` → enters run mode
+- `/exit` → returns to command mode from any mode
+- `esc` → exits current mode (or cancels overlay)
+- Mode label, prompt symbol, and context line all update visually
 
 ### Tests
 - `go test ./...` — all passing
 - `go vet ./...` — clean
-- New tests: bare text goes to chat, slash prefix routing
-
-### What's next (requires engine execution)
-1. Wire chat mode to LLM provider
-2. Wire /run to engine.RunWorkflow with progress callbacks
-3. Wire gate approval flow to real engine gates

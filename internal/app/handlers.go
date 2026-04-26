@@ -23,6 +23,19 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		m.repl.AddOutput(helpText())
 		return *m, nil, true
 
+	case "chat":
+		handleEnterChat(m, args)
+		return *m, nil, true
+
+	case "exit":
+		if m.mode != ModeCommand {
+			m.repl.AddOutput(theme.Faint.Render("Exited " + m.mode.ModeLabel() + " mode."))
+			enterMode(m, ModeCommand)
+		} else {
+			m.repl.AddOutput(theme.Faint.Render("Already in command mode. Use ctrl+d ctrl+d to exit skrptiq."))
+		}
+		return *m, nil, true
+
 	case "clear":
 		m.repl = repl.NewWithPrompt(m.repl.Prompt(), m.commands)
 		resizeView(m)
@@ -1085,6 +1098,32 @@ func handleSettings(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 		}))
 	}
 	return *m, nil, true
+}
+
+// --- /chat ---
+
+func handleEnterChat(m *Model, args string) {
+	// Determine provider.
+	provider := "not connected"
+	if m.engine != nil {
+		defaultProvider := m.engine.Setting("defaultProvider")
+		if defaultProvider != "" {
+			provider = defaultProvider
+		} else {
+			// Check for any configured provider.
+			providers, err := m.engine.Providers()
+			if err == nil && len(providers) > 0 {
+				provider = providers[0].Name
+			}
+		}
+	}
+
+	m.chatProvider = provider
+	enterMode(m, ModeChat)
+
+	m.repl.AddOutput(theme.Title.Render("Chat Mode") + "\n" +
+		theme.Faint.Render("Provider: ") + provider + "\n" +
+		theme.Faint.Render("Type naturally. /exit to return to command mode."))
 }
 
 // --- helpers ---

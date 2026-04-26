@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/skrptiq/skrptiq-cli/internal/components"
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
@@ -36,6 +37,27 @@ const (
 	viewDiff
 )
 
+// AppMode represents the current interaction mode.
+type AppMode int
+
+const (
+	ModeCommand AppMode = iota // Default — slash commands, bare text shows chat hint
+	ModeChat                   // Chat — all input goes to LLM
+	ModeRun                    // Run — executing a workflow, input is for gates/approvals
+)
+
+// ModeLabel returns the display label for the mode.
+func (m AppMode) ModeLabel() string {
+	switch m {
+	case ModeChat:
+		return "chat"
+	case ModeRun:
+		return "run"
+	default:
+		return "command"
+	}
+}
+
 // Model is the root bubbletea model.
 type Model struct {
 	keys       KeyMap
@@ -43,10 +65,15 @@ type Model struct {
 	statusBar  components.StatusBar
 	engine     *eng.App
 	commands   []components.Command
+	mode       AppMode
 	width      int
 	height     int
 	activeView viewID
 	ready      bool
+
+	// Mode state.
+	chatProvider string // active LLM provider name in chat mode
+	runWorkflow  string // active workflow name in run mode
 
 	// Double Ctrl+D exit state.
 	lastExitPress time.Time
@@ -144,6 +171,45 @@ func (m Model) Init() tea.Cmd {
 	return m.repl.Init()
 }
 
+// enterMode switches the app to a new mode, updating the prompt visuals.
+func enterMode(m *Model, mode AppMode) {
+	m.mode = mode
+
+	cfg := m.repl.Prompt()
+	switch mode {
+	case ModeCommand:
+		cfg.Symbol = "❯ "
+		cfg.Style = theme.Prompt
+		cfg.ContextRight = "ctrl+d ctrl+d to exit"
+		// Restore profile name.
+		if m.engine != nil {
+			if p, _ := m.engine.ActiveProfile("voice"); p != nil {
+				cfg.ContextLeft = p.Name
+			} else {
+				cfg.ContextLeft = "default"
+			}
+		}
+
+	case ModeChat:
+		cfg.Symbol = "💬 "
+		cfg.Style = theme.Prompt
+		provider := m.chatProvider
+		if provider == "" {
+			provider = "not connected"
+		}
+		cfg.ContextLeft = "chat"
+		cfg.ContextRight = provider + "  /exit to return"
+
+	case ModeRun:
+		cfg.Symbol = "▶ "
+		cfg.Style = lipgloss.NewStyle().Foreground(theme.Success).Bold(true)
+		cfg.ContextLeft = "run"
+		cfg.ContextRight = m.runWorkflow + "  /exit or esc to cancel"
+	}
+
+	m.repl.SetPrompt(cfg)
+}
+
 // contentHeight returns the available height for the active view.
 func (m Model) contentHeight() int {
 	h := m.height - 2 // header + status bar
@@ -197,13 +263,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return clearExitHintMsg{}
 			})
 		}
-		// Escape cancels the active overlay and returns to REPL.
-		if key.Matches(msg, m.keys.Back) && m.activeView != viewREPL {
-			m.repl.AddOutput(theme.Faint.Render("Cancelled."))
-			m.repl.SetActivity("")
-			m.activeView = viewREPL
-			resizeView(&m)
-			return m, nil
+		// Escape cancels the active overlay or exits the current mode.
+		if key.Matches(msg, m.keys.Back) {
+			if m.activeView != viewREPL {
+				m.repl.AddOutput(theme.Faint.Render("Cancelled."))
+				m.repl.SetActivity("")
+				m.activeView = viewREPL
+				resizeView(&m)
+				return m, nil
+			}
+			if m.mode != ModeCommand {
+				m.repl.AddOutput(theme.Faint.Render("Exited " + m.mode.ModeLabel() + " mode."))
+				enterMode(&m, ModeCommand)
+				return m, nil
+			}
 		}
 
 	case clearExitHintMsg:
@@ -370,9 +443,21 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 			return m, m.diff.Init()
 		}
 
-		// Deferred commands (require engine execution runtime).
+		// Execution commands — enter run mode.
 		switch cmd {
-		case "run", "resume", "stop":
+		case "run":
+			workflowName := args
+			if workflowName == "" {
+				m.repl.AddOutput(theme.Faint.Render("Usage: /run <workflow name>"))
+				return m, nil
+			}
+			m.runWorkflow = workflowName
+			enterMode(&m, ModeRun)
+			m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + workflowName + "\n" +
+				theme.Faint.Render("Workflow execution not yet connected to engine.\n") +
+				theme.Faint.Render("Type input for the workflow, or /exit to return."))
+			return m, nil
+		case "resume", "stop":
 			m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
 			return m, nil
 		}
@@ -381,23 +466,43 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Bare text — chat mode. Send to LLM when wired.
-	return handleChat(m, raw)
+	// Bare text — behaviour depends on current mode.
+	switch m.mode {
+	case ModeChat:
+		return handleChatInput(m, raw)
+	case ModeRun:
+		return handleRunInput(m, raw)
+	default:
+		// Command mode — bare text prompts the user to enter chat mode.
+		m.repl.AddOutput(theme.Faint.Render("Type /chat to enter chat mode, or use / commands."))
+		return m, nil
+	}
 }
 
-// handleChat processes natural language input.
-// This is the default mode — bare text without "/" prefix.
-func handleChat(m Model, input string) (Model, tea.Cmd) {
+// handleChatInput processes natural language input in chat mode.
+func handleChatInput(m Model, input string) (Model, tea.Cmd) {
 	// TODO: Wire to engine LLM when execution is connected.
-	// For now, show a placeholder that acknowledges the input.
-	m.repl.AddOutput(theme.Faint.Render("Chat mode is not yet connected to an LLM provider.\n") +
-		theme.Faint.Render("Use /settings providers to check your configuration.\n") +
-		theme.Faint.Render("Use / commands for now — type /help to see what's available."))
+	m.repl.SetActivity("Thinking...")
+	m.repl.AddOutput(theme.Faint.Render("LLM provider not yet connected. Your message: ") + input)
+	m.repl.SetActivity("")
+	return m, nil
+}
+
+// handleRunInput processes input during an active workflow run (gate responses, approvals).
+func handleRunInput(m Model, input string) (Model, tea.Cmd) {
+	// TODO: Wire to engine gate/approval flow.
+	m.repl.AddOutput(theme.Faint.Render("Run mode input not yet connected. Your response: ") + input)
 	return m, nil
 }
 
 func helpText() string {
 	return `Available commands:
+
+  Modes
+  /chat                  Enter chat mode (talk to your AI team)
+  /run <name>            Enter run mode (execute a workflow)
+  /exit                  Return to command mode
+  esc                    Cancel current mode or overlay
 
   Browse & search
   /list [type]           List nodes (workflows, skills, prompts...)

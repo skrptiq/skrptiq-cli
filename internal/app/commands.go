@@ -152,6 +152,10 @@ func BuildCommands(app *eng.App) []components.Command {
 	}
 
 	return []components.Command{
+		// Modes.
+		{Name: "/chat", Description: "Enter chat mode"},
+		{Name: "/exit", Description: "Exit current mode"},
+
 		// Session.
 		{Name: "/help", Description: "List all available commands"},
 		{Name: "/clear", Description: "Clear session history"},
