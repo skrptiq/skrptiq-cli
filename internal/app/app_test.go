@@ -147,15 +147,47 @@ func TestDiffDismissReturnsToREPL(t *testing.T) {
 	}
 }
 
-func TestQuitKeyReturnsQuit(t *testing.T) {
+func TestSingleCtrlDShowsHint(t *testing.T) {
 	m := setupModel()
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(Model)
+	if !m.exitHint {
+		t.Error("expected exitHint to be true after first Ctrl+D")
+	}
 	if cmd == nil {
-		t.Fatal("expected quit command")
+		t.Error("expected tick command for clearing hint")
+	}
+}
+
+func TestDoubleCtrlDExits(t *testing.T) {
+	m := setupModel()
+	// First press.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(Model)
+	// Second press immediately.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if cmd == nil {
+		t.Fatal("expected quit command on double Ctrl+D")
 	}
 	msg := cmd()
 	if _, ok := msg.(tea.QuitMsg); !ok {
 		t.Errorf("expected QuitMsg, got %T", msg)
+	}
+}
+
+func TestExitHintClears(t *testing.T) {
+	m := setupModel()
+	// First press sets hint.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated.(Model)
+	if !m.exitHint {
+		t.Fatal("expected exitHint after first Ctrl+D")
+	}
+	// Clear hint message.
+	updated, _ = m.Update(clearExitHintMsg{})
+	m = updated.(Model)
+	if m.exitHint {
+		t.Error("expected exitHint to be cleared")
 	}
 }
 

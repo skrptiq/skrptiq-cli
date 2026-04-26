@@ -2,17 +2,25 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/skrptiq/skrptiq-cli/internal/components"
+	"github.com/skrptiq/skrptiq-cli/internal/theme"
 	"github.com/skrptiq/skrptiq-cli/internal/views/diff"
 	"github.com/skrptiq/skrptiq-cli/internal/views/gate"
 	"github.com/skrptiq/skrptiq-cli/internal/views/progress"
 	"github.com/skrptiq/skrptiq-cli/internal/views/repl"
 	"github.com/skrptiq/skrptiq-cli/internal/views/tree"
 )
+
+// exitGracePeriod is the maximum time between two Ctrl+D presses to exit.
+const exitGracePeriod = 500 * time.Millisecond
+
+// clearExitHintMsg clears the exit hint after the grace period expires.
+type clearExitHintMsg struct{}
 
 // View identifiers.
 type viewID int
@@ -35,6 +43,10 @@ type Model struct {
 	activeView viewID
 	ready      bool
 
+	// Double Ctrl+D exit state.
+	lastExitPress time.Time
+	exitHint      bool
+
 	repl     repl.Model
 	progress progress.Model
 	tree     tree.Model
@@ -44,12 +56,19 @@ type Model struct {
 
 // New creates a new root app model.
 func New() Model {
+	prompt := repl.PromptConfig{
+		Symbol:       "❯ ",
+		Style:        theme.Prompt,
+		ContextLeft:  "default",
+		ContextRight: "ctrl+d ctrl+d to exit",
+	}
+
 	return Model{
 		keys:       DefaultKeyMap(),
 		header:     components.NewHeader("skrptiq", "v0.1.0-prototype"),
 		statusBar:  components.NewStatusBar(),
 		activeView: viewREPL,
-		repl:       repl.New(),
+		repl:       repl.NewWithPrompt(prompt),
 	}
 }
 
@@ -98,9 +117,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if key.Matches(msg, m.keys.Quit) {
-			return m, tea.Quit
+		if key.Matches(msg, m.keys.Exit) {
+			now := time.Now()
+			if m.exitHint && now.Sub(m.lastExitPress) < exitGracePeriod {
+				return m, tea.Quit
+			}
+			m.lastExitPress = now
+			m.exitHint = true
+			m.repl.AddOutput(theme.Faint.Render("Press Ctrl+D again to exit."))
+			return m, tea.Tick(exitGracePeriod, func(_ time.Time) tea.Msg {
+				return clearExitHintMsg{}
+			})
 		}
+
+	case clearExitHintMsg:
+		m.exitHint = false
+		return m, nil
 
 	// REPL submitted a command.
 	case repl.SubmitMsg:

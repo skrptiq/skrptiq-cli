@@ -23,6 +23,28 @@ type OutputMsg struct {
 	Text string
 }
 
+// PromptConfig controls the appearance of the input prompt.
+type PromptConfig struct {
+	// Symbol is the prompt character(s) shown before input (e.g. ">", "$", "λ").
+	Symbol string
+	// Style is the lipgloss style applied to the prompt symbol.
+	Style lipgloss.Style
+	// ContextLeft is optional text shown to the left of the prompt
+	// (e.g. profile name, workspace).
+	ContextLeft string
+	// ContextRight is optional text shown right-aligned on the input line
+	// (e.g. mode indicator, model name).
+	ContextRight string
+}
+
+// DefaultPromptConfig returns the default prompt configuration.
+func DefaultPromptConfig() PromptConfig {
+	return PromptConfig{
+		Symbol: "> ",
+		Style:  theme.Prompt,
+	}
+}
+
 // KeyMap defines REPL-specific key bindings.
 type KeyMap struct {
 	Submit key.Binding
@@ -41,6 +63,7 @@ func DefaultKeyMap() KeyMap {
 // Model is the REPL view model.
 type Model struct {
 	keys     KeyMap
+	prompt   PromptConfig
 	input    textinput.Model
 	viewport viewport.Model
 	history  []string
@@ -51,17 +74,29 @@ type Model struct {
 
 // New creates a new REPL view model.
 func New() Model {
+	return NewWithPrompt(DefaultPromptConfig())
+}
+
+// NewWithPrompt creates a new REPL view model with a custom prompt.
+func NewWithPrompt(cfg PromptConfig) Model {
 	ti := textinput.New()
-	ti.Placeholder = "Type a command..."
-	ti.Prompt = theme.Prompt.Render("> ")
+	ti.Placeholder = "Type a command or ask a question..."
+	ti.Prompt = cfg.Style.Render(cfg.Symbol)
 	ti.Focus()
 	ti.CharLimit = 500
 
 	return Model{
 		keys:    DefaultKeyMap(),
+		prompt:  cfg,
 		input:   ti,
 		history: []string{},
 	}
+}
+
+// SetPrompt updates the prompt configuration.
+func (m *Model) SetPrompt(cfg PromptConfig) {
+	m.prompt = cfg
+	m.input.Prompt = cfg.Style.Render(cfg.Symbol)
 }
 
 // SetSize updates the REPL dimensions.
@@ -69,8 +104,12 @@ func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 
-	// Viewport gets all height except the input line (1 line + 1 padding).
-	vpHeight := height - 2
+	// Viewport gets all height except the prompt line(s).
+	promptLines := 1
+	if m.prompt.ContextLeft != "" || m.prompt.ContextRight != "" {
+		promptLines = 2 // context line + input line
+	}
+	vpHeight := height - promptLines - 1 // extra line for padding
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
@@ -85,7 +124,7 @@ func (m *Model) SetSize(width, height int) {
 		m.viewport.SetContent(m.renderHistory())
 	}
 
-	m.input.Width = width - 4 // account for prompt
+	m.input.Width = width - lipgloss.Width(m.input.Prompt) - 1
 }
 
 // AddOutput appends output to the history.
@@ -108,7 +147,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Submit) && m.input.Value() != "" {
 			input := m.input.Value()
-			m.history = append(m.history, theme.Prompt.Render("> ")+input)
+			m.history = append(m.history, m.prompt.Style.Render(m.prompt.Symbol)+input)
 			m.input.SetValue("")
 			if m.ready {
 				m.viewport.SetContent(m.renderHistory())
@@ -139,14 +178,35 @@ func (m Model) View() string {
 		return "Initialising..."
 	}
 
-	return fmt.Sprintf("%s\n%s", m.viewport.View(), m.input.View())
+	var b strings.Builder
+	b.WriteString(m.viewport.View())
+	b.WriteString("\n")
+
+	// Render context line above input if configured.
+	if m.prompt.ContextLeft != "" || m.prompt.ContextRight != "" {
+		left := theme.Faint.Render(m.prompt.ContextLeft)
+		right := theme.Faint.Render(m.prompt.ContextRight)
+
+		leftWidth := lipgloss.Width(left)
+		rightWidth := lipgloss.Width(right)
+		gap := m.width - leftWidth - rightWidth
+		if gap < 1 {
+			gap = 1
+		}
+
+		b.WriteString(left + strings.Repeat(" ", gap) + right + "\n")
+	}
+
+	b.WriteString(m.input.View())
+	return b.String()
 }
 
 func (m Model) renderHistory() string {
 	if len(m.history) == 0 {
 		welcome := lipgloss.NewStyle().
 			Foreground(theme.Muted).
-			Render("Welcome to skrptiq. Type help for available commands.")
+			Render(fmt.Sprintf("Welcome to skrptiq. Type %s for available commands.",
+				theme.ActionKey.Render("/help")))
 		return welcome
 	}
 	return strings.Join(m.history, "\n")

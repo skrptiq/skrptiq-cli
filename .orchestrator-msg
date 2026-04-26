@@ -1,0 +1,13 @@
+## Push Summary — skrptiq-cli (main)
+
+### What shipped
+- Double Ctrl+D exit (500ms grace period) — replaces Ctrl+C. Shows "Press Ctrl+D again to exit." hint on first press, clears after timeout.
+- Configurable REPL prompt via PromptConfig: custom symbol, style, context left (e.g. profile name), context right (e.g. exit hint, model name).
+- Default prompt shows "default" left context and "ctrl+d ctrl+d to exit" right context.
+- Welcome message updated to reference /help.
+- Created GH#434: CLI slash commands — comprehensive command palette aligned with desktop app UI (Runs, List, Hub, Profiles, MCP, Workspace, Tags, Config).
+
+### Tests
+- `go test ./...` — all passing
+- `go vet ./...` — clean
+- New tests: single Ctrl+D shows hint, double Ctrl+D exits, hint clears after timeout
