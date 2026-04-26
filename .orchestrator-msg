@@ -1,7 +1,6 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- All mode prompts now use consistent emoji icons: ⚡ command, 💬 chat, ▶ run
-- Same bold style across all modes — the emoji is the mode signal
-- Context left shows "mode · detail" consistently
-- /run now works without a workflow name — enters run mode and prompts to select
+Slash commands now submit directly with enter in any mode. Previously the autocomplete consumed enter when visible, requiring the user to select a completion before submitting. Now entering `/run` and pressing enter in chat mode immediately switches to run mode.
+
+Tab still navigates/selects autocomplete items. Enter on a `/` command submits it as-is.

@@ -191,16 +191,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// If autocomplete is visible, let it handle keys first.
+		// If autocomplete is visible, let it handle navigation keys.
+		// But enter/tab on a slash command submits directly — autocomplete
+		// is a convenience, not a gate.
 		if m.autocomplete.Visible() {
-			var cmd tea.Cmd
-			var consumed bool
-			m.autocomplete, cmd, consumed = m.autocomplete.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			if consumed {
-				return m, tea.Batch(cmds...)
+			// Enter submits the current input as-is if it's a slash command.
+			if key.Matches(msg, m.keys.Submit) && strings.HasPrefix(m.input.Value(), "/") {
+				m.autocomplete.Hide()
+				// Fall through to submit handler below.
+			} else {
+				var cmd tea.Cmd
+				var consumed bool
+				m.autocomplete, cmd, consumed = m.autocomplete.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				if consumed {
+					return m, tea.Batch(cmds...)
+				}
 			}
 		}
 
