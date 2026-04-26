@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -86,7 +86,7 @@ func DefaultKeyMap() KeyMap {
 type Model struct {
 	keys         KeyMap
 	prompt       PromptConfig
-	input        textinput.Model
+	input        textarea.Model
 	viewport     viewport.Model
 	autocomplete components.Autocomplete
 	history      []string   // display history (rendered output)
@@ -109,11 +109,17 @@ func New() Model {
 
 // NewWithPrompt creates a new REPL view model with a custom prompt and commands.
 func NewWithPrompt(cfg PromptConfig, commands []components.Command) Model {
-	ti := textinput.New()
+	ti := textarea.New()
 	ti.Placeholder = "Ask a question or type / for commands..."
 	ti.Prompt = cfg.Style.Render(cfg.Symbol)
+	ti.ShowLineNumbers = false
+	ti.CharLimit = 2000
+	ti.MaxHeight = 6 // wrap up to 6 lines
+	ti.SetHeight(1)
+	ti.FocusedStyle.CursorLine = lipgloss.NewStyle() // no highlight on current line
 	ti.Focus()
-	ti.CharLimit = 500
+	// Remap enter to not insert newline — we handle submit ourselves.
+	ti.KeyMap.InsertNewline.SetEnabled(false)
 
 	s := components.NewSpinner()
 
@@ -187,7 +193,7 @@ func (m *Model) SetSize(width, height int) {
 		m.viewport.SetContent(m.renderHistory())
 	}
 
-	m.input.Width = width - lipgloss.Width(m.input.Prompt) - 1
+	m.input.SetWidth(width - lipgloss.Width(m.input.Prompt) - 1)
 }
 
 // UpdateLastOutput replaces the last history entry (for streaming updates).
@@ -195,8 +201,11 @@ func (m *Model) UpdateLastOutput(text string) {
 	if len(m.history) > 0 {
 		m.history[len(m.history)-1] = text
 		if m.ready {
+			atBottom := m.viewport.AtBottom()
 			m.viewport.SetContent(m.renderHistory())
-			m.viewport.GotoBottom()
+			if atBottom {
+				m.viewport.GotoBottom()
+			}
 		}
 	}
 }
@@ -215,7 +224,7 @@ func (m *Model) AddOutput(text string) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return textinput.Blink
+	return textarea.Blink
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
