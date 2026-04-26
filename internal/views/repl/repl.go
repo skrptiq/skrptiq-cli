@@ -49,9 +49,11 @@ func DefaultPromptConfig() PromptConfig {
 
 // KeyMap defines REPL-specific key bindings.
 type KeyMap struct {
-	Submit    key.Binding
-	HistoryUp key.Binding
+	Submit      key.Binding
+	HistoryUp   key.Binding
 	HistoryDown key.Binding
+	ScrollUp    key.Binding
+	ScrollDown  key.Binding
 }
 
 // DefaultKeyMap returns default REPL key bindings.
@@ -68,6 +70,14 @@ func DefaultKeyMap() KeyMap {
 		HistoryDown: key.NewBinding(
 			key.WithKeys("down"),
 			key.WithHelp("↓", "next command"),
+		),
+		ScrollUp: key.NewBinding(
+			key.WithKeys("pgup", "shift+up"),
+			key.WithHelp("pgup", "scroll up"),
+		),
+		ScrollDown: key.NewBinding(
+			key.WithKeys("pgdown", "shift+down"),
+			key.WithHelp("pgdown", "scroll down"),
 		),
 	}
 }
@@ -177,8 +187,12 @@ func (m *Model) SetSize(width, height int) {
 func (m *Model) AddOutput(text string) {
 	m.history = append(m.history, text)
 	if m.ready {
+		// Auto-scroll only if already at or near the bottom.
+		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderHistory())
-		m.viewport.GotoBottom()
+		if atBottom {
+			m.viewport.GotoBottom()
+		}
 	}
 }
 
@@ -191,6 +205,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Scroll keys always go to the viewport — never consumed by autocomplete.
+		if key.Matches(msg, m.keys.ScrollUp) || key.Matches(msg, m.keys.ScrollDown) {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+
 		// Enter always submits — autocomplete never blocks it.
 		if key.Matches(msg, m.keys.Submit) && m.input.Value() != "" {
 			input := m.input.Value()
@@ -406,6 +427,12 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
+
+	// Show scroll indicator when not at the bottom.
+	if !m.viewport.AtBottom() {
+		scrollPct := int(m.viewport.ScrollPercent() * 100)
+		b.WriteString(theme.Faint.Render(fmt.Sprintf("  ↑ scroll — %d%%  pgup/pgdown to navigate", scrollPct)) + "\n")
+	}
 
 	// Render activity indicator above the input if engine is active.
 	if m.activity != "" {

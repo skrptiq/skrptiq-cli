@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,6 +14,7 @@ import (
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 	"github.com/skrptiq/skrptiq-cli/internal/views/repl"
 )
+
 
 // handleSlashCommand processes implemented slash commands.
 func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool) {
@@ -165,11 +167,26 @@ func handleList(m *Model, args string) {
 		return
 	}
 
+	// Sort by type then name.
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].Type != nodes[j].Type {
+			return nodes[i].Type < nodes[j].Type
+		}
+		return strings.ToLower(nodes[i].Title) < strings.ToLower(nodes[j].Title)
+	})
+
 	var b strings.Builder
+	typeFilter := ""
+	if nodeType != "" {
+		typeFilter = " (" + nodeType + ")"
+	}
+	b.WriteString(fmt.Sprintf("%s%s — %d nodes\n", theme.Title.Render("Nodes"), typeFilter, len(nodes)))
+
 	typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 	for _, n := range nodes {
 		b.WriteString(fmt.Sprintf("  %s %s\n", typeStyle.Render(n.Type), n.Title))
 	}
+
 	m.repl.AddOutput(strings.TrimRight(b.String(), "\n"))
 }
 

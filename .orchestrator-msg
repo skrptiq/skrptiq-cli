@@ -1,5 +1,9 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- **Single enter to submit** — enter always submits immediately, never blocked by autocomplete. Tab selects from autocomplete, enter submits the input as typed.
-- **Alphabetically sorted autocomplete** — all completion lists (commands, subcommands, arguments) are sorted alphabetically for easier scanning.
+General scrolling for all output — not just /list:
+
+- **pgup/pgdown and shift+up/down** scroll through all session output, always available regardless of autocomplete state
+- **Scroll indicator** shows "↑ scroll — 45% pgup/pgdown to navigate" when there's content above the viewport
+- **Smart auto-scroll** — new output only auto-scrolls to bottom if you're already at the bottom. If you've scrolled up to read, it stays put.
+- **/list** output sorted by type then name alphabetically
