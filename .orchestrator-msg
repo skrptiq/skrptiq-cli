@@ -1,4 +1,6 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Autocomplete selections that don't need more input now auto-submit immediately — no second enter needed. Selecting `/chat` from autocomplete enters chat mode in one action. Same for `/help`, `/clear`, `/exit`, and any final argument selection.
+- `/command` now returns to command mode from chat or run (alongside `/exit`)
+- `/run` moved into handleSlashCommand — works reliably from any mode, with or without a workflow name
+- All mode commands (/chat, /run, /command, /exit) are in the autocomplete registry

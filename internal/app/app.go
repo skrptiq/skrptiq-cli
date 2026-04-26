@@ -435,21 +435,8 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 			return m, m.diff.Init()
 		}
 
-		// Execution commands — enter run mode.
+		// Deferred execution commands.
 		switch cmd {
-		case "run":
-			m.runWorkflow = args // may be empty — user can select later
-			enterMode(&m, ModeRun)
-			if args != "" {
-				m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + args + "\n" +
-					theme.Faint.Render("Workflow execution not yet connected to engine.\n") +
-					theme.Faint.Render("Type input for the workflow, or /exit to return."))
-			} else {
-				m.repl.AddOutput(theme.Title.Render("Run Mode") + "\n" +
-					theme.Faint.Render("Select a workflow with /list workflows, or type a workflow name.\n") +
-					theme.Faint.Render("/exit to return to command mode."))
-			}
-			return m, nil
 		case "resume", "stop":
 			m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
 			return m, nil

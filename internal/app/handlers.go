@@ -27,6 +27,15 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		handleEnterChat(m, args)
 		return *m, nil, true
 
+	case "command":
+		if m.mode != ModeCommand {
+			m.repl.AddOutput(theme.Faint.Render("Exited " + m.mode.ModeLabel() + " mode."))
+			enterMode(m, ModeCommand)
+		} else {
+			m.repl.AddOutput(theme.Faint.Render("Already in command mode."))
+		}
+		return *m, nil, true
+
 	case "exit":
 		if m.mode != ModeCommand {
 			m.repl.AddOutput(theme.Faint.Render("Exited " + m.mode.ModeLabel() + " mode."))
@@ -34,6 +43,10 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		} else {
 			m.repl.AddOutput(theme.Faint.Render("Already in command mode. Use ctrl+d ctrl+d to exit skrptiq."))
 		}
+		return *m, nil, true
+
+	case "run":
+		handleEnterRun(m, args)
 		return *m, nil, true
 
 	case "clear":
@@ -1098,6 +1111,23 @@ func handleSettings(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 		}))
 	}
 	return *m, nil, true
+}
+
+// --- /run ---
+
+func handleEnterRun(m *Model, args string) {
+	m.runWorkflow = strings.TrimSpace(args)
+	enterMode(m, ModeRun)
+
+	if m.runWorkflow != "" {
+		m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + m.runWorkflow + "\n" +
+			theme.Faint.Render("Workflow execution not yet connected to engine.\n") +
+			theme.Faint.Render("Type input for the workflow, or /exit to return."))
+	} else {
+		m.repl.AddOutput(theme.Title.Render("Run Mode") + "\n" +
+			theme.Faint.Render("Select a workflow with /list workflows, or type a workflow name.\n") +
+			theme.Faint.Render("/command or /exit to return."))
+	}
 }
 
 // --- /chat ---

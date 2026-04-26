@@ -154,6 +154,8 @@ func BuildCommands(app *eng.App) []components.Command {
 	return []components.Command{
 		// Modes.
 		{Name: "/chat", Description: "Enter chat mode"},
+		{Name: "/run", Description: "Enter run mode", ArgProvider: nodeCompleter("workflow")},
+		{Name: "/command", Description: "Return to command mode"},
 		{Name: "/exit", Description: "Exit current mode"},
 
 		// Session.
@@ -161,7 +163,6 @@ func BuildCommands(app *eng.App) []components.Command {
 		{Name: "/clear", Description: "Clear session history"},
 
 		// Execution (deferred — needs engine runner).
-		{Name: "/run", Description: "Execute a workflow", ArgProvider: nodeCompleter("workflow")},
 		{Name: "/resume", Description: "Resume a paused execution"},
 		{Name: "/stop", Description: "Cancel the running workflow"},
 
