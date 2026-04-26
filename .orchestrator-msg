@@ -1,15 +1,4 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Workflow input collection before execution. When a workflow has required input variables (e.g. content, topic), the CLI now:
-
-1. Shows the plan steps
-2. Lists required inputs with labels, descriptions, and examples from the plan metadata
-3. Prompts for each input sequentially — user types the value and presses enter
-4. Once all inputs collected, starts execution with the full input map
-
-If no inputs are required, execution starts immediately.
-
-### Tests
-- `go test ./...` — all passing
-- `go vet ./...` — clean
+Tab-completing an argument (workflow name, profile name, node name) now sets the input text without auto-submitting. The user reviews and presses enter to confirm. Only top-level commands (/help, /chat, /exit) auto-submit on tab selection.

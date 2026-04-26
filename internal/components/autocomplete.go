@@ -49,6 +49,9 @@ type AutocompleteSelectMsg struct {
 	FullText string
 	// NeedsMore is true if the autocomplete should continue to the next stage.
 	NeedsMore bool
+	// IsArg is true if this selection is an argument value (not a command).
+	// Arg selections set the input text but don't auto-submit.
+	IsArg bool
 }
 
 // AutocompleteDismissMsg is sent when the autocomplete is dismissed.
@@ -278,16 +281,23 @@ func (a Autocomplete) Update(msg tea.Msg) (Autocomplete, tea.Cmd, bool) {
 				}, true
 
 			case stageArg:
-				prefix := a.activeCmd.Name
-				if a.activeSub != nil {
-					prefix += " " + a.activeSub.Name
+				var fullText string
+				if a.activeCmd != nil {
+					prefix := a.activeCmd.Name
+					if a.activeSub != nil {
+						prefix += " " + a.activeSub.Name
+					}
+					fullText = prefix + " " + selected.Value
+				} else {
+					// Bare completion (e.g. workflow name in run mode).
+					fullText = selected.Value
 				}
-				fullText := prefix + " " + selected.Value
 				a.Hide()
 				return a, func() tea.Msg {
 					return AutocompleteSelectMsg{
 						FullText:  fullText,
 						NeedsMore: false,
+						IsArg:     true,
 					}
 				}, true
 			}

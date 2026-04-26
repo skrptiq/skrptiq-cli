@@ -301,8 +301,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.input.CursorEnd()
 			m.prevInput = m.input.Value()
 			triggerNextStage(&m.autocomplete, msg.FullText)
+		} else if msg.IsArg {
+			// Argument selected — set input text, user presses enter to confirm.
+			m.input.SetValue(msg.FullText)
+			m.input.CursorEnd()
+			m.prevInput = m.input.Value()
 		} else {
-			// Final selection — auto-submit the completed command.
+			// Command selected (no args) — auto-submit.
 			input := msg.FullText
 			m.cmdHistory = append(m.cmdHistory, input)
 			m.cmdHistIdx = -1
