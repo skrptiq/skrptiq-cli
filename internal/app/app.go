@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 
 	exec "github.com/skrptiq/engine/execution"
 	"github.com/skrptiq/engine/llm"
@@ -208,6 +209,17 @@ func NewWithPrinter(printer *Printer) Model {
 	m.repl.SetPrinter(func(text string) {
 		printer.Println(text)
 	})
+	// Without alt screen, we may not get WindowSizeMsg.
+	// Set a default size and mark ready immediately.
+	width := 80
+	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil && w > 0 {
+		width = w
+	}
+	m.width = width
+	m.height = 24
+	m.ready = true
+	m.repl.SetSize(width, 24)
+	enterMode(&m, ModeCommand)
 	return m
 }
 
