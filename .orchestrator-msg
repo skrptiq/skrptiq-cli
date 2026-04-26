@@ -1,4 +1,7 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Command mode now shows "command · Profile Name" in the context line, matching how chat shows "chat" and run shows "run".
+- All mode prompts now use consistent emoji icons: ⚡ command, 💬 chat, ▶ run
+- Same bold style across all modes — the emoji is the mode signal
+- Context left shows "mode · detail" consistently
+- /run now works without a workflow name — enters run mode and prompts to select

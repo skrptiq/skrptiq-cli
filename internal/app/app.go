@@ -165,10 +165,12 @@ func enterMode(m *Model, mode AppMode) {
 	m.mode = mode
 
 	cfg := m.repl.Prompt()
+	// All modes use the same clean style — the emoji is the mode signal.
+	cfg.Style = lipgloss.NewStyle().Bold(true)
+
 	switch mode {
 	case ModeCommand:
-		cfg.Symbol = "❯ "
-		cfg.Style = theme.Prompt
+		cfg.Symbol = "⚡ "
 		cfg.ContextRight = "ctrl+d ctrl+d to exit"
 		profileName := "default"
 		if m.engine != nil {
@@ -180,19 +182,21 @@ func enterMode(m *Model, mode AppMode) {
 
 	case ModeChat:
 		cfg.Symbol = "💬 "
-		cfg.Style = theme.Prompt
 		provider := m.chatProvider
 		if provider == "" {
 			provider = "not connected"
 		}
-		cfg.ContextLeft = "chat"
-		cfg.ContextRight = provider + "  /exit to return"
+		cfg.ContextLeft = "chat · " + provider
+		cfg.ContextRight = "/exit to return"
 
 	case ModeRun:
 		cfg.Symbol = "▶ "
-		cfg.Style = lipgloss.NewStyle().Foreground(theme.Success).Bold(true)
-		cfg.ContextLeft = "run"
-		cfg.ContextRight = m.runWorkflow + "  /exit or esc to cancel"
+		workflow := m.runWorkflow
+		if workflow == "" {
+			workflow = "select a workflow"
+		}
+		cfg.ContextLeft = "run · " + workflow
+		cfg.ContextRight = "/exit or esc to cancel"
 	}
 
 	m.repl.SetPrompt(cfg)
@@ -434,16 +438,17 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 		// Execution commands — enter run mode.
 		switch cmd {
 		case "run":
-			workflowName := args
-			if workflowName == "" {
-				m.repl.AddOutput(theme.Faint.Render("Usage: /run <workflow name>"))
-				return m, nil
-			}
-			m.runWorkflow = workflowName
+			m.runWorkflow = args // may be empty — user can select later
 			enterMode(&m, ModeRun)
-			m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + workflowName + "\n" +
-				theme.Faint.Render("Workflow execution not yet connected to engine.\n") +
-				theme.Faint.Render("Type input for the workflow, or /exit to return."))
+			if args != "" {
+				m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + args + "\n" +
+					theme.Faint.Render("Workflow execution not yet connected to engine.\n") +
+					theme.Faint.Render("Type input for the workflow, or /exit to return."))
+			} else {
+				m.repl.AddOutput(theme.Title.Render("Run Mode") + "\n" +
+					theme.Faint.Render("Select a workflow with /list workflows, or type a workflow name.\n") +
+					theme.Faint.Render("/exit to return to command mode."))
+			}
 			return m, nil
 		case "resume", "stop":
 			m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
