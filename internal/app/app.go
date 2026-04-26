@@ -302,21 +302,28 @@ func (m Model) View() string {
 
 func handleCommand(m Model, input string) (Model, tea.Cmd) {
 	raw := strings.TrimSpace(input)
-	cmd := strings.ToLower(raw)
-	// Strip leading "/" for slash commands.
-	cmd = strings.TrimPrefix(cmd, "/")
+	normalized := strings.ToLower(raw)
+	normalized = strings.TrimPrefix(normalized, "/")
 
-	switch {
-	case cmd == "help":
-		m.repl.AddOutput(helpText())
-		return m, nil
+	// Split into command and arguments.
+	cmd := normalized
+	args := ""
+	if idx := strings.Index(normalized, " "); idx > 0 {
+		cmd = normalized[:idx]
+		args = strings.TrimSpace(raw[idx+1:]) // preserve original case for args
+		if strings.HasPrefix(raw, "/") {
+			args = strings.TrimSpace(raw[idx+2:]) // account for the / prefix
+		}
+	}
 
-	case cmd == "clear":
-		m.repl = repl.NewWithPrompt(m.repl.Prompt(), m.commands)
-		resizeView(&m)
-		return m, m.repl.Init()
+	// Try slash command handlers first.
+	if result, teaCmd, handled := handleSlashCommand(&m, cmd, args); handled {
+		return result, teaCmd
+	}
 
-	case cmd == "run" || cmd == "run demo" || cmd == "demo":
+	// Prototype demo views.
+	switch cmd {
+	case "demo":
 		m.progress = progress.New([]string{
 			"Drafting Agent",
 			"Review Agent (GPT-4)",
@@ -328,50 +335,34 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 		resizeView(&m)
 		return m, m.progress.Init()
 
-	case cmd == "tree":
+	case "tree":
 		m.tree = tree.New("Blog Post Pipeline", mockTree())
 		m.activeView = viewTree
 		resizeView(&m)
 		return m, m.tree.Init()
 
-	case cmd == "gate":
+	case "gate":
 		m.gate = gate.New("Review draft before continuing", mockGateContent())
 		m.activeView = viewGate
 		resizeView(&m)
 		return m, m.gate.Init()
 
-	case cmd == "diff":
+	case "diff":
 		m.diff = diff.New("README.md", mockDiffHunks())
 		m.activeView = viewDiff
 		resizeView(&m)
 		return m, m.diff.Init()
+	}
 
-	case strings.HasPrefix(cmd, "run ") ||
-		strings.HasPrefix(cmd, "runs") ||
-		strings.HasPrefix(cmd, "resume") ||
-		strings.HasPrefix(cmd, "stop") ||
-		strings.HasPrefix(cmd, "status") ||
-		strings.HasPrefix(cmd, "list") ||
-		strings.HasPrefix(cmd, "search") ||
-		strings.HasPrefix(cmd, "show") ||
-		strings.HasPrefix(cmd, "hub") ||
-		strings.HasPrefix(cmd, "profile") ||
-		strings.HasPrefix(cmd, "dials") ||
-		strings.HasPrefix(cmd, "mcp") ||
-		strings.HasPrefix(cmd, "providers") ||
-		strings.HasPrefix(cmd, "workspace") ||
-		strings.HasPrefix(cmd, "repos") ||
-		strings.HasPrefix(cmd, "tags") ||
-		strings.HasPrefix(cmd, "tag ") ||
-		strings.HasPrefix(cmd, "untag") ||
-		strings.HasPrefix(cmd, "config"):
-		m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — not yet implemented. Coming soon."))
-		return m, nil
-
-	default:
-		m.repl.AddOutput("Unknown command: " + raw + ". Type /help for available commands.")
+	// Deferred commands.
+	switch cmd {
+	case "run", "resume", "stop", "status", "repos", "tag", "untag":
+		m.repl.AddOutput(theme.Faint.Render("/" + cmd + " — coming soon."))
 		return m, nil
 	}
+
+	m.repl.AddOutput("Unknown command: " + raw + ". Type /help for available commands.")
+	return m, nil
 }
 
 func helpText() string {

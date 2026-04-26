@@ -1,22 +1,31 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- **Engine integration**: CLI now imports `github.com/skrptiq/engine/storage` directly (GH#435 resolved — packages moved out of internal/).
-- **`internal/engine/` package**: Opens shared DB at `~/.skrptiq/skrptiq.db`, provides typed queries for workflows, profiles, connections, MCP servers, tags.
-- **Multi-stage autocomplete**: Stage 1 = command completion (type `/`). Stage 2 = argument completion (after selecting a command with an ArgProvider). e.g. `/run` shows workflow names, `/show` shows all nodes, `/profile` shows profiles, `/tag` shows tags.
-- **Real data in status bar**: Profile name, workspace path, and MCP server connections now come from the engine DB.
-- **Real data in prompt**: Active voice profile name shown as left context.
+Implemented 12 read-side slash commands querying real engine data (GH#434):
 
-### Engine types consumed
-- `storage.Open`, `storage.DB`, `storage.Node`, `storage.Profile`, `storage.Connection`, `storage.Tag`
-- Queries: `GetAllNodes`, `GetAllProfiles`, `GetConnectionsByType`, `GetAllTags`
+| Command | What it does |
+|---|---|
+| `/list [type]` | List all nodes, optionally filtered (workflows, skills, prompts, etc.) |
+| `/show <name>` | Display node content, type, and description |
+| `/search <query>` | Search nodes by title |
+| `/runs` | Execution history (placeholder — needs ListExecutions in storage) |
+| `/profile [list]` | List all profiles with active indicator |
+| `/dials` | Show persona dials from active voice profile metadata |
+| `/mcp` | Show MCP server connections with status indicators |
+| `/providers` | List AI providers with connection status |
+| `/workspace` | Show workspace path, profile, and database path |
+| `/tags` | List all tags with colour indicators |
+| `/config` | Show key settings (provider, model, workspace, theme) |
+| `/hub` | List Hub imports with versions |
+
+### Architecture
+- `internal/app/handlers.go` — all command handlers, cleanly separated from app model
+- `internal/engine/engine.go` — added FindNodeByTitle, SearchNodes, HubImports, Setting
+- Command routing refactored: handleSlashCommand → demo views → deferred → unknown
+
+### Deferred (need execution engine)
+`/run`, `/resume`, `/stop`, `/status`, `/repos`, `/tag`, `/untag`
 
 ### Tests
-- `go test ./...` — all passing (8 test packages)
+- `go test ./...` — all passing
 - `go vet ./...` — clean
-- Updated autocomplete tests cover: stage 1 (command), stage 2 (arg), arg filtering, arg selection, FindCommand
-
-### Next
-- Wire `/run` to `engine.RunWorkflow` with real execution + progress callbacks
-- Wire `/runs` to list executions from DB
-- Wire `/list`, `/show` to display real node data

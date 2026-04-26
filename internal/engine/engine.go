@@ -6,6 +6,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/skrptiq/engine/storage"
 )
@@ -127,4 +128,45 @@ func (a *App) Providers() ([]storage.Connection, error) {
 // Tags returns all tags.
 func (a *App) Tags() ([]storage.Tag, error) {
 	return a.DB.GetAllTags()
+}
+
+// FindNodeByTitle finds a node by title (case-insensitive).
+func (a *App) FindNodeByTitle(title string) (*storage.Node, error) {
+	nodes, err := a.DB.GetAllNodes()
+	if err != nil {
+		return nil, err
+	}
+	lower := strings.ToLower(title)
+	for _, n := range nodes {
+		if strings.ToLower(n.Title) == lower {
+			return &n, nil
+		}
+	}
+	return nil, nil
+}
+
+// SearchNodes finds nodes whose title contains the query.
+func (a *App) SearchNodes(query string) ([]storage.Node, error) {
+	nodes, err := a.DB.GetAllNodes()
+	if err != nil {
+		return nil, err
+	}
+	lower := strings.ToLower(query)
+	var results []storage.Node
+	for _, n := range nodes {
+		if strings.Contains(strings.ToLower(n.Title), lower) {
+			results = append(results, n)
+		}
+	}
+	return results, nil
+}
+
+// HubImports returns all hub imports.
+func (a *App) HubImports() ([]storage.HubImport, error) {
+	return a.DB.GetAllHubImports()
+}
+
+// Setting returns a setting value by key.
+func (a *App) Setting(key string) string {
+	return a.DB.GetSetting(key)
 }

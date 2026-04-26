@@ -46,7 +46,7 @@ func TestHelpCommand(t *testing.T) {
 func TestDemoCommand(t *testing.T) {
 	m := setupModel()
 	var cmd tea.Cmd
-	m, cmd = handleCommand(m, "run demo")
+	m, cmd = handleCommand(m, "demo")
 	if m.activeView != viewProgress {
 		t.Errorf("expected progress view, got %d", m.activeView)
 	}
@@ -232,14 +232,24 @@ func TestSlashPrefixCommands(t *testing.T) {
 	}
 }
 
-func TestUnimplementedCommandShowsMessage(t *testing.T) {
+func TestImplementedCommandShowsOutput(t *testing.T) {
 	m := setupModel()
 	m, _ = handleCommand(m, "/runs")
 	if m.activeView != viewREPL {
-		t.Errorf("expected REPL view after unimplemented command, got %d", m.activeView)
+		t.Errorf("expected REPL view after /runs, got %d", m.activeView)
 	}
-	// Should have added output about not implemented.
 	if len(m.repl.History()) == 0 {
-		t.Error("expected output message for unimplemented command")
+		t.Error("expected output from /runs")
+	}
+}
+
+func TestDeferredCommandShowsMessage(t *testing.T) {
+	m := setupModel()
+	m, _ = handleCommand(m, "/resume")
+	if m.activeView != viewREPL {
+		t.Errorf("expected REPL view after deferred command, got %d", m.activeView)
+	}
+	if len(m.repl.History()) == 0 {
+		t.Error("expected output message for deferred command")
 	}
 }
