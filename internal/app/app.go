@@ -175,6 +175,9 @@ func (m Model) Init() tea.Cmd {
 func enterMode(m *Model, mode AppMode) {
 	m.mode = mode
 
+	// Clear bare completer when changing mode.
+	m.repl.SetBareCompleter(nil)
+
 	cfg := m.repl.Prompt()
 	// All modes use the same clean style — the emoji is the mode signal.
 	cfg.Style = lipgloss.NewStyle().Bold(true)
@@ -520,6 +523,26 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 	case ModeChat:
 		return handleChatInput(m, raw)
 	case ModeRun:
+		if m.runWorkflow == "" {
+			// No workflow selected yet — treat input as workflow name.
+			m.runWorkflow = raw
+			enterMode(&m, ModeRun) // update prompt with workflow name
+			// Try to start execution.
+			if m.engine != nil {
+				node, err := m.engine.FindNodeByTitle(raw)
+				if err != nil || node == nil || node.Type != "workflow" {
+					m.repl.AddOutput(theme.ErrorText.Render("Workflow not found: " + raw))
+					m.runWorkflow = ""
+					enterMode(&m, ModeRun)
+					return m, nil
+				}
+				// Re-enter run mode with the workflow name to trigger execution.
+				var cmd tea.Cmd
+				cmd = handleEnterRunExec(m.engine, &m, node)
+				return m, cmd
+			}
+			return m, nil
+		}
 		return handleRunInput(m, raw)
 	default:
 		// Command mode — bare text prompts the user to enter chat mode.

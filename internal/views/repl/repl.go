@@ -96,9 +96,10 @@ type Model struct {
 	width        int
 	height       int
 	ready        bool
-	prevInput    string     // tracks previous input value for change detection
-	activity     string     // activity indicator text (empty = idle)
+	prevInput     string     // tracks previous input value for change detection
+	activity      string     // activity indicator text (empty = idle)
 	activitySpinner spinner.Model
+	bareCompleter func(string) []components.Completion // optional completer for non-/ input
 }
 
 // New creates a new REPL view model.
@@ -136,6 +137,12 @@ func (m Model) Prompt() PromptConfig {
 // History returns the current history entries.
 func (m Model) History() []string {
 	return m.history
+}
+
+// SetBareCompleter sets a completer for non-/ input (e.g. workflow names in run mode).
+// Pass nil to clear.
+func (m *Model) SetBareCompleter(fn func(string) []components.Completion) {
+	m.bareCompleter = fn
 }
 
 // SetActivity sets the activity indicator text. Empty string clears it.
@@ -348,6 +355,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 func (m *Model) updateAutocomplete(input string) {
 	if !strings.HasPrefix(input, "/") {
+		// Check for bare text completer (e.g. workflow names in run mode).
+		if m.bareCompleter != nil && input != "" {
+			completions := m.bareCompleter(input)
+			if len(completions) > 0 {
+				m.autocomplete.ShowBare(completions)
+				return
+			}
+		}
 		m.autocomplete.Hide()
 		return
 	}

@@ -129,6 +129,16 @@ func (a *Autocomplete) Show(filter string) {
 	a.cursor = 0
 }
 
+// ShowBare shows a pre-computed list of completions (for non-/ input).
+func (a *Autocomplete) ShowBare(items []Completion) {
+	a.visible = true
+	a.stage = stageArg
+	a.activeCmd = nil
+	a.activeSub = nil
+	a.items = items
+	a.cursor = 0
+}
+
 // Hide deactivates the popup.
 func (a *Autocomplete) Hide() {
 	a.visible = false

@@ -13,6 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	exec "github.com/skrptiq/engine/execution"
+	"github.com/skrptiq/engine/storage"
+	"github.com/skrptiq/skrptiq-cli/internal/components"
+	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 	"github.com/skrptiq/skrptiq-cli/internal/views/repl"
 )
@@ -1139,9 +1142,28 @@ func handleEnterRun(m *Model, args string) tea.Cmd {
 	enterMode(m, ModeRun)
 
 	if m.runWorkflow == "" {
+		// Set bare completer for workflow names.
+		if m.engine != nil {
+			m.repl.SetBareCompleter(func(partial string) []components.Completion {
+				nodes, err := m.engine.NodesByType("workflow")
+				if err != nil {
+					return nil
+				}
+				partial = strings.ToLower(partial)
+				var results []components.Completion
+				for _, n := range nodes {
+					if strings.Contains(strings.ToLower(n.Title), partial) {
+						results = append(results, components.Completion{
+							Value:       n.Title,
+							Description: "workflow",
+						})
+					}
+				}
+				return results
+			})
+		}
 		m.repl.AddOutput(theme.Title.Render("Run Mode") + "\n" +
-			theme.Faint.Render("Select a workflow with /list workflows, or type a workflow name.\n") +
-			theme.Faint.Render("/command or /exit to return."))
+			theme.Faint.Render("Type a workflow name (tab to complete), or /exit to return."))
 		return nil
 	}
 
@@ -1157,8 +1179,12 @@ func handleEnterRun(m *Model, args string) tea.Cmd {
 		return nil
 	}
 
-	// Build the execution plan to check for required inputs.
-	plan, err := m.engine.BuildPlan(node.ID)
+	return handleEnterRunExec(m.engine, m, node)
+}
+
+// handleEnterRunExec starts execution for a resolved workflow node.
+func handleEnterRunExec(engine *eng.App, m *Model, node *storage.Node) tea.Cmd {
+	plan, err := engine.BuildPlan(node.ID)
 	if err != nil {
 		m.repl.AddOutput(theme.ErrorText.Render("Plan error: " + err.Error()))
 		return nil
@@ -1166,7 +1192,6 @@ func handleEnterRun(m *Model, args string) tea.Cmd {
 
 	m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + plan.WorkflowTitle)
 
-	// Show plan steps.
 	var b strings.Builder
 	for _, pg := range plan.PositionGroups {
 		for _, step := range pg.Steps {
@@ -1184,7 +1209,6 @@ func handleEnterRun(m *Model, args string) tea.Cmd {
 		m.repl.AddOutput(theme.Faint.Render("Input collection not yet implemented. Starting with empty inputs."))
 	}
 
-	// Start execution.
 	m.repl.SetActivity("Starting workflow...")
 	m.streamBuf = ""
 
@@ -1195,15 +1219,12 @@ func handleEnterRun(m *Model, args string) tea.Cmd {
 	m.streamCh = ch
 
 	workflowID := node.ID
-	engine := m.engine
 
 	go func() {
 		defer close(ch)
-
 		onProgress := func(evt exec.ProgressEvent) {
 			ch <- ProgressEventMsg{evt}
 		}
-
 		_, err := engine.RunWorkflow(ctx, workflowID, map[string]string{}, onProgress)
 		if err != nil {
 			ch <- ExecutionDoneMsg{Status: "failed", Error: err.Error()}

@@ -1,40 +1,8 @@
 ## Push Summary — skrptiq-cli (main)
 
-### What shipped — GH#420 MVP execution wiring
-
-**Chat mode → LLM provider:**
-- `/chat` then type naturally → streams response from configured LLM provider
-- Provider resolution: defaultProvider setting → connection auth → env vars → claude-cli fallback
-- Streaming chunks update the REPL output in real-time
-- Token usage shown after completion
-- Escape cancels mid-stream
-
-**Run mode → engine execution:**
-- `/run <workflow name>` → finds workflow, builds execution plan, shows steps, starts execution
-- Progress events stream: step started/completed/failed with providers and token counts
-- Gate steps pause execution, show instructions, accept user text input, resume via ResumeExecution
-- Escape cancels execution via context cancellation + StopExecution
-- ExecutionDone returns to command mode with completion/failure message
-
-**Streaming infrastructure:**
-- Channel-based async pattern for bubbletea — goroutine writes to channel, tea.Cmd reads one message at a time
-- StreamChunkMsg, StreamDoneMsg, StreamErrorMsg for chat
-- ProgressEventMsg, ExecutionDoneMsg for workflow execution
-- Smart cancellation: escape cancels context, stops execution, clears activity
-
-**Engine integration layer:**
-- ResolveProvider() — multi-source provider resolution
-- Chat() — wraps provider.Stream with resolved provider
-- BuildPlan() — wraps execution.BuildExecutionPlan
-- RunWorkflow() — wraps execution.RunWorkflow
-- ResumeExecution() — wraps execution.ResumeExecution
-- StopExecution() — wraps execution.StopExecution
-
-### Tests
-- `go test ./...` — all passing
-- `go vet ./...` — clean
-
-### What remains
-- Input variable collection before execution (currently starts with empty inputs)
-- Chat conversation history (currently single-turn)
-- Natural language → workflow selection (the "ask naturally" flow)
+### What shipped
+- Workflow name tab completion in run mode — type part of a workflow name, tab to complete
+- /run without a name enters run mode where bare text is treated as workflow name
+- Tab-completing a workflow name auto-submits and starts execution
+- Bare text completer system — reusable pattern for mode-specific completions
+- Refactored execution start into shared handleEnterRunExec function
