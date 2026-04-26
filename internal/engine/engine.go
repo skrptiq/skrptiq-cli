@@ -4,13 +4,16 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	exec "github.com/skrptiq/engine/execution"
 	"github.com/skrptiq/engine/hubapi"
+	"github.com/skrptiq/engine/llm"
 	"github.com/skrptiq/engine/storage"
 )
 
@@ -352,7 +355,7 @@ func formatDuration(start, end string) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-// GetSteps returns all steps for an execution.
+// GetSteps returns all steps for an exec.
 func (a *App) GetSteps(executionID string) ([]storage.ExecutionStep, error) {
 	return a.DB.GetStepsByExecution(executionID)
 }
@@ -375,4 +378,74 @@ func (a *App) FindProfileByName(name string) (*storage.Profile, error) {
 		}
 	}
 	return nil, nil
+}
+
+// ResolveProvider returns a configured LLM provider based on settings.
+// Falls back to claude-cli if no provider is configured.
+func (a *App) ResolveProvider() (llm.Provider, string, error) {
+	providerName := a.DB.GetSetting("defaultProvider")
+	if providerName == "" {
+		providerName = "claude-cli"
+	}
+
+	// Look up API key from connections.
+	apiKey := ""
+	if conn, err := a.DB.GetConnectionByProvider(providerName); err == nil && conn != nil {
+		if conn.AuthData != nil {
+			apiKey = *conn.AuthData
+		}
+	}
+
+	// Also check environment variables as fallback.
+	if apiKey == "" {
+		switch providerName {
+		case "anthropic":
+			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+		case "openai":
+			apiKey = os.Getenv("OPENAI_API_KEY")
+		case "gemini":
+			apiKey = os.Getenv("GOOGLE_AI_API_KEY")
+		}
+	}
+
+	provider, err := llm.GetProvider(providerName, apiKey, "")
+	if err != nil {
+		return nil, providerName, err
+	}
+	return provider, providerName, nil
+}
+
+// Chat sends messages to the resolved LLM provider and streams the response.
+func (a *App) Chat(ctx context.Context, messages []llm.Message, opts llm.Options, onChunk func(string)) (*llm.Response, error) {
+	provider, _, err := a.ResolveProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply default model if not set.
+	if opts.Model == "" {
+		opts.Model = a.DB.GetSetting("defaultModel")
+	}
+
+	return provider.Stream(ctx, messages, opts, onChunk)
+}
+
+// BuildPlan builds an execution plan for a workflow.
+func (a *App) BuildPlan(workflowNodeID string) (*exec.ExecutionPlan, error) {
+	return exec.BuildExecutionPlan(a.DB, workflowNodeID, nil)
+}
+
+// RunWorkflow starts a workflow execution with a progress callback.
+func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[string]string, onProgress exec.ProgressCallback) (string, error) {
+	return exec.RunWorkflow(ctx, a.DB, workflowID, inputs, onProgress, nil, nil, nil)
+}
+
+// ResumeExecution resumes a paused execution with gate input.
+func (a *App) ResumeExecution(ctx context.Context, executionID string, gateInput string, onProgress exec.ProgressCallback) (string, error) {
+	return exec.ResumeExecution(ctx, a.DB, executionID, gateInput, onProgress)
+}
+
+// StopExecution cancels a running exec.
+func (a *App) StopExecution(executionID string) bool {
+	return exec.StopExecution(executionID)
 }

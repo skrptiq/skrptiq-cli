@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	exec "github.com/skrptiq/engine/execution"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 	"github.com/skrptiq/skrptiq-cli/internal/views/repl"
 )
@@ -48,8 +50,8 @@ func handleSlashCommand(m *Model, cmd string, args string) (Model, tea.Cmd, bool
 		return *m, nil, true
 
 	case "run":
-		handleEnterRun(m, args)
-		return *m, nil, true
+		cmd := handleEnterRun(m, args)
+		return *m, cmd, true
 
 	case "clear":
 		m.repl = repl.NewWithPrompt(m.repl.Prompt(), m.commands)
@@ -1132,19 +1134,85 @@ func handleSettings(m *Model, sub, args string) (Model, tea.Cmd, bool) {
 
 // --- /run ---
 
-func handleEnterRun(m *Model, args string) {
+func handleEnterRun(m *Model, args string) tea.Cmd {
 	m.runWorkflow = strings.TrimSpace(args)
 	enterMode(m, ModeRun)
 
-	if m.runWorkflow != "" {
-		m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + m.runWorkflow + "\n" +
-			theme.Faint.Render("Workflow execution not yet connected to engine.\n") +
-			theme.Faint.Render("Type input for the workflow, or /exit to return."))
-	} else {
+	if m.runWorkflow == "" {
 		m.repl.AddOutput(theme.Title.Render("Run Mode") + "\n" +
 			theme.Faint.Render("Select a workflow with /list workflows, or type a workflow name.\n") +
 			theme.Faint.Render("/command or /exit to return."))
+		return nil
 	}
+
+	if m.engine == nil {
+		m.repl.AddOutput(noEngineMsg())
+		return nil
+	}
+
+	// Find the workflow node.
+	node, err := m.engine.FindNodeByTitle(m.runWorkflow)
+	if err != nil || node == nil || node.Type != "workflow" {
+		m.repl.AddOutput(theme.ErrorText.Render("Workflow not found: " + m.runWorkflow))
+		return nil
+	}
+
+	// Build the execution plan to check for required inputs.
+	plan, err := m.engine.BuildPlan(node.ID)
+	if err != nil {
+		m.repl.AddOutput(theme.ErrorText.Render("Plan error: " + err.Error()))
+		return nil
+	}
+
+	m.repl.AddOutput(theme.Title.Render("Run Mode") + " — " + plan.WorkflowTitle)
+
+	// Show plan steps.
+	var b strings.Builder
+	for _, pg := range plan.PositionGroups {
+		for _, step := range pg.Steps {
+			gate := ""
+			if step.IsGate {
+				gate = theme.WarningText.Render(" (gate)")
+			}
+			b.WriteString(fmt.Sprintf("  %d. %s%s\n", step.Position, step.NodeTitle, gate))
+		}
+	}
+	m.repl.AddOutput(b.String())
+
+	if len(plan.InputVariables) > 0 {
+		m.repl.AddOutput(theme.Faint.Render("Required inputs: ") + strings.Join(plan.InputVariables, ", "))
+		m.repl.AddOutput(theme.Faint.Render("Input collection not yet implemented. Starting with empty inputs."))
+	}
+
+	// Start execution.
+	m.repl.SetActivity("Starting workflow...")
+	m.streamBuf = ""
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+
+	ch := make(chan tea.Msg, 64)
+	m.streamCh = ch
+
+	workflowID := node.ID
+	engine := m.engine
+
+	go func() {
+		defer close(ch)
+
+		onProgress := func(evt exec.ProgressEvent) {
+			ch <- ProgressEventMsg{evt}
+		}
+
+		_, err := engine.RunWorkflow(ctx, workflowID, map[string]string{}, onProgress)
+		if err != nil {
+			ch <- ExecutionDoneMsg{Status: "failed", Error: err.Error()}
+			return
+		}
+		ch <- ExecutionDoneMsg{Status: "completed"}
+	}()
+
+	return readStream(ch)
 }
 
 // --- /chat ---

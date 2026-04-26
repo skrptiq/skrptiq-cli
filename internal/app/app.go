@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,9 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	exec "github.com/skrptiq/engine/execution"
+	"github.com/skrptiq/engine/llm"
 
 	"github.com/skrptiq/skrptiq-cli/internal/components"
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
@@ -74,6 +79,12 @@ type Model struct {
 	// Mode state.
 	chatProvider string // active LLM provider name in chat mode
 	runWorkflow  string // active workflow name in run mode
+
+	// Streaming state.
+	streamCh     streamChannel // active stream channel (chat or execution)
+	streamBuf    string        // accumulated streaming output for current response
+	executionID  string        // active execution ID (for gate resume)
+	cancelStream context.CancelFunc // cancels the active stream/execution
 
 	// Double Ctrl+D exit state.
 	lastExitPress time.Time
@@ -255,8 +266,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return clearExitHintMsg{}
 			})
 		}
-		// Escape cancels the active overlay or exits the current mode.
+		// Escape cancels active streams, overlay views, or exits mode.
 		if key.Matches(msg, m.keys.Back) {
+			// Cancel any active stream first.
+			if m.cancelStream != nil {
+				m.cancelStream()
+				m.cancelStream = nil
+				m.streamCh = nil
+				m.repl.SetActivity("")
+				m.repl.AddOutput(theme.Faint.Render("Cancelled."))
+				if m.executionID != "" {
+					m.engine.StopExecution(m.executionID)
+					m.executionID = ""
+				}
+				enterMode(&m, ModeCommand)
+				return m, nil
+			}
 			if m.activeView != viewREPL {
 				m.repl.AddOutput(theme.Faint.Render("Cancelled."))
 				m.repl.SetActivity("")
@@ -273,6 +298,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clearExitHintMsg:
 		m.exitHint = false
+		return m, nil
+
+	// Streaming LLM output.
+	case StreamChunkMsg:
+		m.streamBuf += msg.Text
+		// Update the last history entry with accumulated output.
+		if len(m.repl.History()) > 0 {
+			m.repl.UpdateLastOutput(m.streamBuf)
+		}
+		// Read next chunk.
+		return m, readStream(m.streamCh)
+
+	case StreamDoneMsg:
+		m.repl.SetActivity("")
+		m.streamCh = nil
+		m.cancelStream = nil
+		if msg.InputTokens > 0 || msg.OutputTokens > 0 {
+			m.repl.AddOutput(theme.Faint.Render(
+				fmt.Sprintf("  %s · %d in / %d out tokens",
+					msg.Provider, msg.InputTokens, msg.OutputTokens)))
+		}
+		return m, nil
+
+	case StreamErrorMsg:
+		m.repl.SetActivity("")
+		m.streamCh = nil
+		m.cancelStream = nil
+		m.repl.AddOutput(theme.ErrorText.Render("Error: " + msg.Err.Error()))
+		return m, nil
+
+	// Workflow execution progress.
+	case ProgressEventMsg:
+		return handleProgressEvent(m, msg)
+
+	case ExecutionDoneMsg:
+		m.repl.SetActivity("")
+		m.streamCh = nil
+		m.cancelStream = nil
+		if msg.Status == "completed" {
+			m.repl.AddOutput(theme.SuccessText.Render("Workflow completed."))
+		} else {
+			m.repl.AddOutput(theme.ErrorText.Render("Workflow failed: " + msg.Error))
+		}
+		enterMode(&m, ModeCommand)
 		return m, nil
 
 	// REPL submitted a command.
@@ -461,17 +530,147 @@ func handleCommand(m Model, input string) (Model, tea.Cmd) {
 
 // handleChatInput processes natural language input in chat mode.
 func handleChatInput(m Model, input string) (Model, tea.Cmd) {
-	// TODO: Wire to engine LLM when execution is connected.
+	if m.engine == nil {
+		m.repl.AddOutput(theme.ErrorText.Render("No engine connection."))
+		return m, nil
+	}
+
 	m.repl.SetActivity("Thinking...")
-	m.repl.AddOutput(theme.Faint.Render("LLM provider not yet connected. Your message: ") + input)
-	m.repl.SetActivity("")
-	return m, nil
+	m.repl.AddOutput("") // Empty entry for streaming output
+	m.streamBuf = ""
+
+	// Create cancellable context.
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+
+	// Create channel for streaming messages.
+	ch := make(chan tea.Msg, 64)
+	m.streamCh = ch
+
+	messages := []llm.Message{{Role: "user", Content: input}}
+
+	// Start LLM call in goroutine.
+	go func() {
+		defer close(ch)
+
+		resp, err := m.engine.Chat(ctx, messages, llm.Options{}, func(chunk string) {
+			ch <- StreamChunkMsg{Text: chunk}
+		})
+		if err != nil {
+			ch <- StreamErrorMsg{Err: err}
+			return
+		}
+
+		provider := resp.Provider
+		model := resp.Model
+		inputTokens := 0
+		outputTokens := 0
+		if resp.Usage != nil {
+			inputTokens = resp.Usage.InputTokens
+			outputTokens = resp.Usage.OutputTokens
+		}
+		ch <- StreamDoneMsg{
+			FullOutput:   resp.Content,
+			Provider:     provider + "/" + model,
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+		}
+	}()
+
+	// Start reading from the channel.
+	return m, readStream(ch)
 }
 
-// handleRunInput processes input during an active workflow run (gate responses, approvals).
+// handleRunInput processes input during an active workflow run (gate responses).
 func handleRunInput(m Model, input string) (Model, tea.Cmd) {
-	// TODO: Wire to engine gate/approval flow.
-	m.repl.AddOutput(theme.Faint.Render("Run mode input not yet connected. Your response: ") + input)
+	if m.executionID == "" || m.engine == nil {
+		m.repl.AddOutput(theme.Faint.Render("No active execution to respond to."))
+		return m, nil
+	}
+
+	m.repl.SetActivity("Resuming...")
+	m.streamBuf = ""
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+
+	ch := make(chan tea.Msg, 64)
+	m.streamCh = ch
+
+	execID := m.executionID
+	engine := m.engine
+
+	go func() {
+		defer close(ch)
+
+		onProgress := func(evt exec.ProgressEvent) {
+			ch <- ProgressEventMsg{evt}
+		}
+
+		_, err := engine.ResumeExecution(ctx, execID, input, onProgress)
+		if err != nil {
+			ch <- ExecutionDoneMsg{ExecutionID: execID, Status: "failed", Error: err.Error()}
+			return
+		}
+		ch <- ExecutionDoneMsg{ExecutionID: execID, Status: "completed"}
+	}()
+
+	return m, readStream(ch)
+}
+
+// handleProgressEvent processes a workflow execution progress event.
+func handleProgressEvent(m Model, msg ProgressEventMsg) (Model, tea.Cmd) {
+	switch msg.Type {
+	case "execution-started":
+		m.executionID = msg.ExecutionID
+		m.repl.SetActivity("Running workflow...")
+
+	case "step-started":
+		m.repl.SetActivity("Step " + fmt.Sprintf("%d", msg.Position) + ": " + msg.NodeTitle)
+		m.repl.AddOutput(theme.Faint.Render("  ◌ ") + msg.NodeTitle)
+
+	case "step-chunk":
+		m.streamBuf += msg.Chunk
+
+	case "step-completed":
+		status := theme.SuccessText.Render("  ✓ ") + msg.NodeTitle
+		if msg.Provider != "" {
+			status += theme.Faint.Render(" (" + msg.Provider + ")")
+		}
+		if msg.TokenUsage != nil {
+			status += theme.Faint.Render(fmt.Sprintf(" %d tokens", msg.TokenUsage.Total))
+		}
+		m.repl.AddOutput(status)
+		m.streamBuf = ""
+
+	case "step-failed":
+		m.repl.AddOutput(theme.ErrorText.Render("  ✗ " + msg.NodeTitle + ": " + msg.Error))
+
+	case "step-awaiting-input":
+		m.repl.SetActivity("")
+		m.repl.AddOutput(theme.WarningText.Render("⏸ Gate: ") + msg.NodeTitle)
+		if msg.GateInstructions != "" {
+			m.repl.AddOutput(msg.GateInstructions)
+		}
+		m.repl.AddOutput(theme.Faint.Render("Type your response and press enter to continue."))
+		// Don't read next from channel — wait for user input via handleRunInput.
+		return m, nil
+
+	case "execution-paused":
+		// Already handled by step-awaiting-input.
+		return m, nil
+
+	case "execution-completed":
+		return m, nil // Handled by ExecutionDoneMsg.
+
+	case "execution-failed":
+		return m, nil // Handled by ExecutionDoneMsg.
+	}
+
+	// Continue reading from the stream.
+	if m.streamCh != nil {
+		return m, readStream(m.streamCh)
+	}
 	return m, nil
 }
 

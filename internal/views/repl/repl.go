@@ -183,6 +183,17 @@ func (m *Model) SetSize(width, height int) {
 	m.input.Width = width - lipgloss.Width(m.input.Prompt) - 1
 }
 
+// UpdateLastOutput replaces the last history entry (for streaming updates).
+func (m *Model) UpdateLastOutput(text string) {
+	if len(m.history) > 0 {
+		m.history[len(m.history)-1] = text
+		if m.ready {
+			m.viewport.SetContent(m.renderHistory())
+			m.viewport.GotoBottom()
+		}
+	}
+}
+
 // AddOutput appends output to the history.
 func (m *Model) AddOutput(text string) {
 	m.history = append(m.history, text)
