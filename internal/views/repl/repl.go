@@ -271,10 +271,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.prevInput = m.input.Value()
 			triggerNextStage(&m.autocomplete, msg.FullText)
 		} else {
-			// Final selection — set input text.
-			m.input.SetValue(msg.FullText)
-			m.input.CursorEnd()
-			m.prevInput = m.input.Value()
+			// Final selection — auto-submit the completed command.
+			input := msg.FullText
+			m.cmdHistory = append(m.cmdHistory, input)
+			m.cmdHistIdx = -1
+			m.savedInput = ""
+			m.history = append(m.history, m.prompt.Style.Render(m.prompt.Symbol)+input)
+			m.input.SetValue("")
+			m.prevInput = ""
+			if m.ready {
+				m.viewport.SetContent(m.renderHistory())
+				m.viewport.GotoBottom()
+			}
+			return m, func() tea.Msg { return SubmitMsg{Input: input} }
 		}
 		return m, nil
 

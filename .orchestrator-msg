@@ -1,6 +1,4 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Slash commands now submit directly with enter in any mode. Previously the autocomplete consumed enter when visible, requiring the user to select a completion before submitting. Now entering `/run` and pressing enter in chat mode immediately switches to run mode.
-
-Tab still navigates/selects autocomplete items. Enter on a `/` command submits it as-is.
+Autocomplete selections that don't need more input now auto-submit immediately — no second enter needed. Selecting `/chat` from autocomplete enters chat mode in one action. Same for `/help`, `/clear`, `/exit`, and any final argument selection.
