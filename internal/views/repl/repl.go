@@ -100,6 +100,7 @@ type Model struct {
 	activity      string     // activity indicator text (empty = idle)
 	activitySpinner spinner.Model
 	bareCompleter func(string) []components.Completion // optional completer for non-/ input
+	printer       func(string)                         // prints to terminal scrollback
 }
 
 // New creates a new REPL view model.
@@ -146,9 +147,14 @@ func (m Model) History() []string {
 }
 
 // SetBareCompleter sets a completer for non-/ input (e.g. workflow names in run mode).
-// Pass nil to clear.
 func (m *Model) SetBareCompleter(fn func(string) []components.Completion) {
 	m.bareCompleter = fn
+}
+
+// SetPrinter sets the function used to print output to terminal scrollback.
+// When set, AddOutput prints to scrollback instead of the internal viewport.
+func (m *Model) SetPrinter(fn func(string)) {
+	m.printer = fn
 }
 
 // SetActivity sets the activity indicator text. Empty string clears it.
@@ -197,7 +203,12 @@ func (m *Model) SetSize(width, height int) {
 }
 
 // UpdateLastOutput replaces the last history entry (for streaming updates).
+// When using terminal scrollback, this appends instead (scrollback is immutable).
 func (m *Model) UpdateLastOutput(text string) {
+	if m.printer != nil {
+		// Can't update in-place in scrollback — handled by streaming chunk display.
+		return
+	}
 	if len(m.history) > 0 {
 		m.history[len(m.history)-1] = text
 		if m.ready {
@@ -211,10 +222,14 @@ func (m *Model) UpdateLastOutput(text string) {
 }
 
 // AddOutput appends output to the history.
+// When a printer is set, output goes to terminal scrollback.
 func (m *Model) AddOutput(text string) {
+	if m.printer != nil {
+		m.printer(text)
+		return
+	}
 	m.history = append(m.history, text)
 	if m.ready {
-		// Auto-scroll only if already at or near the bottom.
 		atBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(m.renderHistory())
 		if atBottom {
@@ -465,13 +480,16 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(m.viewport.View())
-	b.WriteString("\n")
 
-	// Show scroll indicator when not at the bottom.
-	if !m.viewport.AtBottom() {
-		scrollPct := int(m.viewport.ScrollPercent() * 100)
-		b.WriteString(theme.Faint.Render(fmt.Sprintf("  ↑ scroll — %d%%  pgup/pgdown to navigate", scrollPct)) + "\n")
+	// Only render viewport if not using terminal scrollback.
+	if m.printer == nil {
+		b.WriteString(m.viewport.View())
+		b.WriteString("\n")
+
+		if !m.viewport.AtBottom() {
+			scrollPct := int(m.viewport.ScrollPercent() * 100)
+			b.WriteString(theme.Faint.Render(fmt.Sprintf("  ↑ scroll — %d%%  pgup/pgdown to navigate", scrollPct)) + "\n")
+		}
 	}
 
 	// Render activity indicator above the input if engine is active.

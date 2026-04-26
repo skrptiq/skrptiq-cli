@@ -100,6 +100,10 @@ type Model struct {
 	executionID  string        // active execution ID (for gate resume)
 	cancelStream context.CancelFunc // cancels the active stream/execution
 
+	// Program reference for Println (terminal scrollback output).
+	program    *tea.Program
+	startupMsg string // printed once when program starts
+
 	// Double Ctrl+D exit state.
 	lastExitPress time.Time
 	exitHint      bool
@@ -135,11 +139,14 @@ func New() Model {
 	// Set the prompt via enterMode so it's always consistent.
 	enterMode(&m, ModeCommand)
 
+	// Store startup messages to print once program is running.
 	if engineErr != nil {
-		m.repl.AddOutput(theme.ErrorText.Render("Engine: " + engineErr.Error()))
+		m.startupMsg = theme.ErrorText.Render("Engine: " + engineErr.Error())
 	} else if engine != nil {
-		dbPath := engine.DB.Path()
-		m.repl.AddOutput(theme.Faint.Render("Connected to " + dbPath))
+		m.startupMsg = theme.Title.Render("skrptiq") + " " + theme.Faint.Render("v0.1.0-prototype") + "\n" +
+			theme.Faint.Render("  Profile: ") + statusBar.Profile + "\n" +
+			theme.Faint.Render("  Workspace: ") + statusBar.Workspace + "\n" +
+			theme.Faint.Render("  Database: ") + engine.DB.Path()
 	}
 
 	return m
@@ -181,6 +188,21 @@ func buildStatusBar(engine *eng.App) components.StatusBar {
 	return sb
 }
 
+// SetProgram stores the tea.Program reference for Println output.
+func (m *Model) SetProgram(p *tea.Program) {
+	m.program = p
+	m.repl.SetPrinter(func(text string) {
+		p.Println(text)
+	})
+}
+
+// PrintOutput prints a line to the terminal scrollback (persists above the TUI).
+func (m *Model) PrintOutput(text string) {
+	if m.program != nil {
+		m.program.Println(text)
+	}
+}
+
 func (m Model) Init() tea.Cmd {
 	return m.repl.Init()
 }
@@ -199,7 +221,6 @@ func enterMode(m *Model, mode AppMode) {
 	switch mode {
 	case ModeCommand:
 		cfg.Symbol = "⚡ "
-		cfg.ContextRight = "ctrl+d ctrl+d to exit"
 		profileName := "default"
 		if m.engine != nil {
 			if p, _ := m.engine.ActiveProfile("voice"); p != nil {
@@ -207,6 +228,8 @@ func enterMode(m *Model, mode AppMode) {
 			}
 		}
 		cfg.ContextLeft = "command · " + profileName
+		cfg.ContextRight = "Profile: " + m.statusBar.Profile +
+			"  Workspace: " + m.statusBar.Workspace
 
 	case ModeChat:
 		cfg.Symbol = "💬 "
@@ -268,6 +291,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusBar.Width = msg.Width
 		m.ready = true
 		resizeView(&m)
+		// Print startup message on first render.
+		if m.startupMsg != "" {
+			m.PrintOutput(m.startupMsg)
+			m.startupMsg = ""
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -446,28 +474,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	if !m.ready {
-		return "Loading..."
-	}
-
-	header := m.header.View()
-	status := m.statusBar.View()
-
-	var content string
-	switch m.activeView {
-	case viewREPL:
-		content = m.repl.View()
-	case viewProgress:
-		content = m.progress.View()
-	case viewTree:
-		content = m.tree.View()
-	case viewGate:
-		content = m.gate.View()
-	case viewDiff:
-		content = m.diff.View()
-	}
-
-	return header + "\n" + content + "\n" + status
+	// Without alt screen, only render the input area.
+	// Output goes to terminal scrollback via Println.
+	return m.repl.View()
 }
 
 func handleCommand(m Model, input string) (Model, tea.Cmd) {

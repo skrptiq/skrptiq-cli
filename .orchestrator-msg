@@ -1,5 +1,10 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-1. **Input text wrapping** — switched from textinput (single-line, no wrap) to textarea (wraps up to 6 lines). Long input text is now visible. Enter still submits (newline insertion disabled).
-2. **Scroll during execution** — UpdateLastOutput now respects scroll position. If the user has scrolled up with pgup, new output doesn't yank them back to bottom. pgup/pgdown always work, even during active streaming.
+Major rendering change — removed alt screen, output now goes to terminal scrollback.
+
+- **Terminal scrollback works** — all command output, execution progress, and chat responses are printed via `tea.Println()` and persist in the terminal's native scrollback buffer. Scroll up with your terminal to see previous content.
+- **Removed alt screen** — bubbletea no longer takes over the terminal. The TUI only renders the input area (activity indicator, autocomplete popup, context line, input).
+- **Header prints once at startup** — shows version, profile, workspace, database path.
+- **Status bar info moved to context line** — profile and workspace shown in the prompt area.
+- **Streaming respects scrollback** — `UpdateLastOutput` is a no-op when using scrollback (can't update in-place). `AddOutput` prints to scrollback via `Println`.
