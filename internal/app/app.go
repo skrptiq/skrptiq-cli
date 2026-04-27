@@ -141,11 +141,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 
 	case prompt.SubmitMsg:
-		// Print user's input to scrollback.
-		m.Print("")
-		m.Print("  " + theme.Faint.Render(">") + " " + msg.Text)
-		m.Print("")
-		// Handle the command.
 		m.handleInput(msg.Text)
 		return m, m.flushOutput()
 
