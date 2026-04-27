@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 	"github.com/chzyer/readline"
 
 	exec "github.com/skrptiq/engine/execution"
@@ -136,12 +137,30 @@ func (a *App) Print(text string) {
 }
 
 func (a *App) printBanner(engine *eng.App, engineErr error) {
-	// Get terminal width for separator lines.
 	width := 60
+
+	// Clear screen and move cursor to top — fresh start like Claude Code.
+	fmt.Print("\033[2J\033[H")
+
+	// Get terminal dimensions.
+	_, rows, err := term.GetSize(os.Stdout.Fd())
+	if err != nil || rows < 10 {
+		rows = 24
+	}
+
+	// Push content to the bottom — banner + prompt appear near the bottom
+	// with empty space above, matching the Claude Code startup feel.
+	bannerLines := 12
+	padding := rows - bannerLines
+	if padding < 0 {
+		padding = 0
+	}
+	for i := 0; i < padding; i++ {
+		fmt.Println()
+	}
 
 	sep := theme.Faint.Render(strings.Repeat("─", width))
 
-	fmt.Println()
 	fmt.Println(sep)
 	fmt.Println()
 	fmt.Println("  " + theme.Title.Render("skrptiq") + "  " + theme.Faint.Render("v0.1.0-prototype"))
