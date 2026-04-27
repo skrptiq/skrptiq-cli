@@ -116,10 +116,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.handleTab()
 				return m, nil
 			}
+		case tea.KeyUp:
+			if len(m.tabMatches) > 0 {
+				m.tabIndex--
+				if m.tabIndex < 0 {
+					m.tabIndex = len(m.tabMatches) - 1
+				}
+				m.selectMatch()
+				return m, nil
+			}
+		case tea.KeyDown:
+			if len(m.tabMatches) > 0 {
+				m.tabIndex++
+				if m.tabIndex >= len(m.tabMatches) {
+					m.tabIndex = 0
+				}
+				m.selectMatch()
+				return m, nil
+			}
 		}
 
-		// Any non-tab key clears tab cycling state.
-		if msg.Type != tea.KeyTab {
+		// Any non-navigation key clears completion state.
+		if msg.Type != tea.KeyTab && msg.Type != tea.KeyUp && msg.Type != tea.KeyDown {
 			m.tabMatches = nil
 			m.tabIndex = 0
 		}
@@ -162,7 +180,13 @@ func (m *Model) handleTab() {
 		m.tabIndex = 0
 	}
 
-	// Insert the match.
+	m.selectMatch()
+}
+
+func (m *Model) selectMatch() {
+	if m.tabIndex < 0 || m.tabIndex >= len(m.tabMatches) {
+		return
+	}
 	m.textarea.Reset()
 	m.textarea.SetValue(m.tabMatches[m.tabIndex])
 	m.textarea.SetCursor(len(m.tabMatches[m.tabIndex]))
@@ -178,24 +202,24 @@ func (m Model) View() string {
 		Width(m.width).
 		Render(" " + m.status)
 
-	// Show completion matches above the textarea when active.
+	// Show completion matches as a vertical list.
 	completionView := ""
 	if len(m.tabMatches) > 0 {
 		matchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF"))
 		selectedStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F9FAFB")).
 			Background(lipgloss.Color("#374151")).
-			Padding(0, 1)
+			Width(m.width)
 
-		var items []string
+		var lines []string
 		for i, match := range m.tabMatches {
 			if i == m.tabIndex {
-				items = append(items, selectedStyle.Render(match))
+				lines = append(lines, selectedStyle.Render(" › "+match))
 			} else {
-				items = append(items, matchStyle.Render(" "+match+" "))
+				lines = append(lines, matchStyle.Render("   "+match))
 			}
 		}
-		completionView = strings.Join(items, " ") + "\n"
+		completionView = strings.Join(lines, "\n") + "\n"
 	}
 
 	return sep + "\n" + m.textarea.View() + "\n" + sep + "\n" + completionView + statusBar
