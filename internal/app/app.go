@@ -19,6 +19,7 @@ import (
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 	"github.com/skrptiq/skrptiq-cli/internal/prompt"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
+	"github.com/skrptiq/skrptiq-cli/internal/version"
 )
 
 // AppMode represents the current interaction mode.
@@ -546,7 +547,7 @@ func printBanner(engine *eng.App, engineErr error) {
 	sep := theme.Faint.Render(strings.Repeat("─", w))
 	fmt.Println(sep)
 	fmt.Println()
-	fmt.Println("  " + theme.Title.Render("skrptiq") + "  " + theme.Faint.Render("v0.1.0-prototype"))
+	fmt.Println("  " + theme.Title.Render("skrptiq") + "  " + theme.Faint.Render(version.Full()))
 	fmt.Println("  " + theme.Faint.Render("Interactive terminal for personalised AI agents"))
 	fmt.Println()
 

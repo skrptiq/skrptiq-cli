@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
+	"github.com/skrptiq/skrptiq-cli/internal/version"
 )
 
 // handleSlashCommand processes slash commands. Returns true if handled.
@@ -581,7 +582,7 @@ func (m *Model) handleConfigCmd(sub, args string) {
 func (m *Model) handleSettings(sub, args string) {
 	switch sub {
 	case "about":
-		m.Print(theme.Title.Render("skrptiq") + " v0.1.0-prototype")
+		m.Print(theme.Title.Render("skrptiq") + " " + version.Full())
 		m.Print(theme.Faint.Render("Interactive terminal for personalised AI agents"))
 		if m.engine != nil { m.Print(theme.Faint.Render("Engine: ") + m.engine.DB.Path()) } else { m.Print(theme.Faint.Render("Engine: not connected")) }
 		cwd, _ := os.Getwd()

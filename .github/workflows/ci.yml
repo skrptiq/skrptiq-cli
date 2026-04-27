@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout CLI
+        uses: actions/checkout@v4
+        with:
+          path: skrptiq-cli
+
+      - name: Checkout engine (app repo)
+        uses: actions/checkout@v4
+        with:
+          repository: skrptiq/skrptiq-app
+          path: skrptiq-app
+          token: ${{ secrets.ENGINE_ACCESS_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: skrptiq-cli/go.mod
+
+      - name: Build
+        working-directory: skrptiq-cli
+        run: go build ./...
+
+      - name: Test
+        working-directory: skrptiq-cli
+        run: go test ./...
+
+      - name: Vet
+        working-directory: skrptiq-cli
+        run: go vet ./...
