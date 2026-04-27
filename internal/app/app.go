@@ -77,8 +77,9 @@ type Model struct {
 	inputMeta       map[string]inputMetaInfo
 	pendingNode     *storage.Node
 
-	lastEOF time.Time
-	ready   bool
+	pendingOutput []string
+	lastEOF       time.Time
+	ready         bool
 }
 
 // New creates a new Model.
@@ -103,14 +104,32 @@ func (m *Model) SetProgram(p *tea.Program) {
 	m.program = p
 }
 
-// Print outputs text to terminal scrollback above the managed region.
-// Uses tea.Println which coordinates with the renderer.
-func (m Model) Print(text string) {
-	// tea.Println must not be called from within Update (deadlock).
-	// Use fmt.Println — in inline mode, stdout writes appear above the
-	// managed region. Bubbletea redraws its region on next render.
-	fmt.Println(text)
+// Print queues text for printing to scrollback above the managed region.
+// The actual printing happens via a tea.Cmd after Update returns.
+func (m *Model) Print(text string) {
+	m.pendingOutput = append(m.pendingOutput, text)
 }
+
+// flushOutput returns a tea.Cmd that prints all queued output via Program.Println.
+// This runs in a goroutine outside the renderer lock, avoiding deadlock.
+func (m *Model) flushOutput() tea.Cmd {
+	if len(m.pendingOutput) == 0 {
+		return nil
+	}
+	lines := make([]string, len(m.pendingOutput))
+	copy(lines, m.pendingOutput)
+	m.pendingOutput = nil
+	p := m.program
+
+	return func() tea.Msg {
+		for _, line := range lines {
+			p.Println(line)
+		}
+		return flushDoneMsg{}
+	}
+}
+
+type flushDoneMsg struct{}
 
 func (m Model) Init() tea.Cmd {
 	return m.prompt.Init()
@@ -128,7 +147,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Print("")
 		// Handle the command.
 		m.handleInput(msg.Text)
-		return m, nil
+		return m, m.flushOutput()
 
 	case prompt.CtrlCMsg:
 		if m.cancelStream != nil {
@@ -140,19 +159,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.executionID = ""
 			}
 			m.setMode(ModeCommand)
-			return m, nil
 		}
-		return m, nil
+		return m, m.flushOutput()
 
 	case prompt.CtrlDMsg:
 		now := time.Now()
 		if now.Sub(m.lastEOF) < 500*time.Millisecond {
 			m.Print(theme.Faint.Render("Goodbye."))
-			return m, tea.Quit
+			return m, tea.Sequence(m.flushOutput(), tea.Quit)
 		}
 		m.lastEOF = now
 		m.Print(theme.Faint.Render("Press Ctrl+D again to exit."))
-		return m, nil
+		return m, m.flushOutput()
 
 	case prompt.EscMsg:
 		if m.cancelStream != nil {
@@ -164,7 +182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Print(theme.Faint.Render("Exited " + m.mode.Label() + " mode."))
 			m.setMode(ModeCommand)
 		}
-		return m, nil
+		return m, m.flushOutput()
 	}
 
 	// Pass to prompt model.
