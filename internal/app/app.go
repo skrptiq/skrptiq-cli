@@ -320,6 +320,11 @@ func (a *App) Run() {
 			continue
 		}
 
+		// Echo the submitted input as a styled block in scrollback.
+		fmt.Println()
+		fmt.Println("  " + theme.Bold.Render(a.mode.Symbol()+" ›") + " " + line)
+		fmt.Println()
+
 		a.handleInput(line)
 	}
 }
