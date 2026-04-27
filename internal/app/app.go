@@ -93,15 +93,7 @@ func New() (*App, error) {
 	// Build readline completer from command registry.
 	completer := a.buildCompleter()
 
-	// Determine initial prompt.
-	profileName := "default"
-	if engine != nil {
-		if p, _ := engine.ActiveProfile("voice"); p != nil {
-			profileName = p.Name
-		}
-	}
-
-	prompt := "⚡ " + theme.Faint.Render("command · "+profileName) + " › "
+	prompt := "⚡ › "
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          prompt,
@@ -316,45 +308,42 @@ func (a *App) handleInput(input string) {
 func (a *App) setMode(mode AppMode) {
 	a.mode = mode
 	a.updatePrompt()
+	a.printStatus()
 }
 
 func (a *App) updatePrompt() {
-	var left, right string
-
-	switch a.mode {
-	case ModeCommand:
-		profileName := "default"
-		if a.engine != nil {
-			if p, _ := a.engine.ActiveProfile("voice"); p != nil {
-				profileName = p.Name
-			}
-		}
-		left = "command · " + profileName
-		right = ""
-	case ModeChat:
-		provider := a.chatProvider
-		if provider == "" {
-			provider = "not connected"
-		}
-		left = "chat · " + provider
-		right = "/exit to return"
-	case ModeRun:
-		workflow := a.runWorkflow
-		if workflow == "" {
-			workflow = "select a workflow"
-		}
-		left = "run · " + workflow
-		right = "/exit or esc to cancel"
-	}
-
-	prompt := a.mode.Symbol() + " " + theme.Faint.Render(left)
-	if right != "" {
-		prompt += "  " + theme.Faint.Render(right)
-	}
-	prompt += " › "
+	// Prompt is just the mode symbol — clean and minimal.
+	prompt := a.mode.Symbol() + " › "
 	if a.rl != nil {
 		a.rl.SetPrompt(prompt)
 	}
+}
+
+// printStatus prints a subtle status line below command output.
+// Shows mode, profile, timing, and other contextual info.
+func (a *App) printStatus() {
+	var parts []string
+
+	parts = append(parts, a.mode.Label())
+
+	if a.engine != nil {
+		if p, _ := a.engine.ActiveProfile("voice"); p != nil {
+			parts = append(parts, p.Name)
+		}
+	}
+
+	switch a.mode {
+	case ModeChat:
+		if a.chatProvider != "" {
+			parts = append(parts, a.chatProvider)
+		}
+	case ModeRun:
+		if a.runWorkflow != "" {
+			parts = append(parts, a.runWorkflow)
+		}
+	}
+
+	fmt.Println(theme.Faint.Render(strings.Join(parts, " · ")))
 }
 
 // handleChatInput sends input to the LLM.
