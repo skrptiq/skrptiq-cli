@@ -149,17 +149,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 
+	// Track value before textarea processes the key.
+	prevVal := m.textarea.Value()
+
 	// Pass everything else to textarea.
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
 
-	// Auto-show completions when input changes and starts with /.
-	if m.tabComplete != nil {
-		val := m.textarea.Value()
-		if strings.HasPrefix(val, "/") {
-			newMatches := m.tabComplete(val)
-			m.tabMatches = newMatches
-			// Reset selection when matches change from typing.
+	// Auto-show completions ONLY when the value actually changed (user typed something).
+	newVal := m.textarea.Value()
+	if m.tabComplete != nil && newVal != prevVal {
+		if strings.HasPrefix(newVal, "/") {
+			m.tabMatches = m.tabComplete(newVal)
 			m.tabIndex = -1
 		} else {
 			m.tabMatches = nil
