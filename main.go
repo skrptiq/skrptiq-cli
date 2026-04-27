@@ -5,14 +5,16 @@ import (
 	"os"
 
 	"github.com/skrptiq/skrptiq-cli/internal/app"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	a, err := app.New()
-	if err != nil {
+	model := app.New()
+	p := tea.NewProgram(&model, tea.WithInputTTY())
+	model.SetProgram(p)
+	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	defer a.Close()
-	a.Run()
 }

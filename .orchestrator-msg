@@ -1,15 +1,22 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Switched from chzyer/readline to lmorg/readline v4 — native HintText support shows status bar BELOW the prompt.
+Replaced readline with bubbletea inline mode for the prompt. This gives us the Claude Code-style layout:
 
-**Stack:** lmorg/readline for input + hints + history, lipgloss for styled output, plain stdout for scrollback. Matches the Claude Code terminal pattern.
+- **Managed region at bottom**: separator + textarea + separator + status bar (4+ lines)
+- **tea.Println() for scrollback**: all output goes above the managed region permanently
+- **Separators only around active prompt**: they're part of the bubbletea View(), redrawn each frame, never in scrollback
+- **Status bar below prompt**: mode, profile, provider — always visible
+- **tea.WithInputTTY()**: reliable key input
+- **Ctrl+C/D/Esc**: intercepted before textarea sees them
+- **Multi-line wrapping**: textarea expands up to 8 lines
 
-**lmorg/readline features used:**
-- `HintText` callback — returns status text (mode, profile, provider) displayed below the input
-- `TabCompleter` — two-stage completion (commands → subcommands)
-- `SetPrompt` — just the mode symbol, clean
-- Built-in history, Ctrl+C (ErrCtrlC), Ctrl+D (EOF)
+### Architecture
+```
+internal/prompt/prompt.go — minimal bubbletea model (separator + textarea + separator + status)
+internal/app/app.go       — top-level model wrapping prompt, all command handlers
+main.go                   — creates program with tea.WithInputTTY(), no alt screen
+```
 
 ### Tests
 - `go test ./...` — all passing

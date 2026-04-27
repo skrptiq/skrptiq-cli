@@ -14,60 +14,60 @@ import (
 )
 
 // handleSlashCommand processes slash commands. Returns true if handled.
-func (a *App) handleSlashCommand(cmd string, args string) bool {
+func (m *Model) handleSlashCommand(cmd string, args string) bool {
 	sub, subArgs := splitFirst(args)
 
 	switch cmd {
 	case "help":
-		a.Print(helpText())
+		m.Print(helpText())
 	case "chat":
-		a.handleEnterChat(args)
+		m.handleEnterChat(args)
 	case "command":
-		if a.mode != ModeCommand {
-			a.Print(theme.Faint.Render("Exited " + a.mode.Label() + " mode."))
-			a.setMode(ModeCommand)
+		if m.mode != ModeCommand {
+			m.Print(theme.Faint.Render("Exited " + m.mode.Label() + " mode."))
+			m.setMode(ModeCommand)
 		} else {
-			a.Print(theme.Faint.Render("Already in command mode."))
+			m.Print(theme.Faint.Render("Already in command mode."))
 		}
 	case "exit":
-		if a.mode != ModeCommand {
-			a.Print(theme.Faint.Render("Exited " + a.mode.Label() + " mode."))
-			a.setMode(ModeCommand)
+		if m.mode != ModeCommand {
+			m.Print(theme.Faint.Render("Exited " + m.mode.Label() + " mode."))
+			m.setMode(ModeCommand)
 		} else {
-			a.Print(theme.Faint.Render("Already in command mode. Use ctrl+d to exit skrptiq."))
+			m.Print(theme.Faint.Render("Already in command mode. Use ctrl+d to exit skrptiq."))
 		}
 	case "run":
-		a.handleEnterRun(args)
+		m.handleEnterRun(args)
 	case "clear":
 		fmt.Print("\033[2J\033[H") // ANSI clear screen
 	case "list":
-		a.handleList(args)
+		m.handleList(args)
 	case "show":
-		a.handleShow(args)
+		m.handleShow(args)
 	case "search":
-		a.handleSearch(args)
+		m.handleSearch(args)
 	case "hub":
-		a.handleHub(sub, subArgs)
+		m.handleHub(sub, subArgs)
 	case "runs":
-		a.handleRuns(sub, subArgs)
+		m.handleRuns(sub, subArgs)
 	case "profile":
-		a.handleProfile(sub, subArgs)
+		m.handleProfile(sub, subArgs)
 	case "mcp":
-		a.handleMCPCmd(sub)
+		m.handleMCPCmd(sub)
 	case "providers":
-		a.handleProvidersCmd(sub)
+		m.handleProvidersCmd(sub)
 	case "workspace":
-		a.handleWorkspaceCmd(sub, subArgs)
+		m.handleWorkspaceCmd(sub, subArgs)
 	case "tags":
-		a.handleTagsCmd(sub)
+		m.handleTagsCmd(sub)
 	case "tag":
-		a.handleTagNode(args)
+		m.handleTagNode(args)
 	case "untag":
-		a.handleUntagNode(args)
+		m.handleUntagNode(args)
 	case "config":
-		a.handleConfigCmd(sub, subArgs)
+		m.handleConfigCmd(sub, subArgs)
 	case "settings":
-		a.handleSettings(sub, subArgs)
+		m.handleSettings(sub, subArgs)
 	default:
 		return false
 	}
@@ -84,9 +84,9 @@ func splitFirst(s string) (string, string) {
 
 // --- /list ---
 
-func (a *App) handleList(args string) {
-	if a.engine == nil {
-		a.Print(noEngineMsg())
+func (m *Model) handleList(args string) {
+	if m.engine == nil {
+		m.Print(noEngineMsg())
 		return
 	}
 	nodeType := strings.TrimSpace(strings.ToLower(args))
@@ -104,7 +104,7 @@ func (a *App) handleList(args string) {
 	var nodes []struct{ Title, Type string }
 	var err error
 	if nodeType == "" {
-		all, e := a.engine.DB.GetAllNodes()
+		all, e := m.engine.DB.GetAllNodes()
 		err = e
 		for _, n := range all {
 			nodes = append(nodes, struct{ Title, Type string }{n.Title, n.Type})
@@ -112,21 +112,21 @@ func (a *App) handleList(args string) {
 	} else {
 		mapped, ok := typeMap[nodeType]
 		if !ok {
-			a.Print(theme.ErrorText.Render("Unknown type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
+			m.Print(theme.ErrorText.Render("Unknown type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
 			return
 		}
-		filtered, e := a.engine.NodesByType(mapped)
+		filtered, e := m.engine.NodesByType(mapped)
 		err = e
 		for _, n := range filtered {
 			nodes = append(nodes, struct{ Title, Type string }{n.Title, n.Type})
 		}
 	}
 	if err != nil {
-		a.Print(theme.ErrorText.Render("Error: " + err.Error()))
+		m.Print(theme.ErrorText.Render("Error: " + err.Error()))
 		return
 	}
 	if len(nodes) == 0 {
-		a.Print(theme.Faint.Render("No nodes found."))
+		m.Print(theme.Faint.Render("No nodes found."))
 		return
 	}
 	sort.Slice(nodes, func(i, j int) bool {
@@ -139,152 +139,152 @@ func (a *App) handleList(args string) {
 	if nodeType != "" {
 		typeFilter = " (" + nodeType + ")"
 	}
-	a.Print(fmt.Sprintf("%s%s — %d nodes", theme.Title.Render("Nodes"), typeFilter, len(nodes)))
+	m.Print(fmt.Sprintf("%s%s — %d nodes", theme.Title.Render("Nodes"), typeFilter, len(nodes)))
 	typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 	for _, n := range nodes {
-		a.Print(fmt.Sprintf("  %s %s", typeStyle.Render(n.Type), n.Title))
+		m.Print(fmt.Sprintf("  %s %s", typeStyle.Render(n.Type), n.Title))
 	}
 }
 
 // --- /show ---
 
-func (a *App) handleShow(args string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleShow(args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	title := strings.TrimSpace(args)
-	if title == "" { a.Print(theme.Faint.Render("Usage: /show <node name>")); return }
-	node, err := a.engine.FindNodeByTitle(title)
-	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-	if node == nil { a.Print(theme.Faint.Render("No node found: " + title)); return }
-	a.Print(theme.Title.Render(node.Title))
-	a.Print(theme.Faint.Render("Type: ") + node.Type)
+	if title == "" { m.Print(theme.Faint.Render("Usage: /show <node name>")); return }
+	node, err := m.engine.FindNodeByTitle(title)
+	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	if node == nil { m.Print(theme.Faint.Render("No node found: " + title)); return }
+	m.Print(theme.Title.Render(node.Title))
+	m.Print(theme.Faint.Render("Type: ") + node.Type)
 	if node.Description != nil && *node.Description != "" {
-		a.Print(theme.Faint.Render("Description: ") + *node.Description)
+		m.Print(theme.Faint.Render("Description: ") + *node.Description)
 	}
 	if node.Content != nil && *node.Content != "" {
-		a.Print("\n" + *node.Content)
+		m.Print("\n" + *node.Content)
 	}
 }
 
 // --- /search ---
 
-func (a *App) handleSearch(args string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleSearch(args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	query := strings.TrimSpace(args)
-	if query == "" { a.Print(theme.Faint.Render("Usage: /search <query>")); return }
-	nodes, err := a.engine.SearchNodes(query)
-	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-	if len(nodes) == 0 { a.Print(theme.Faint.Render("No results for: " + query)); return }
-	a.Print(fmt.Sprintf("%d results for %q:", len(nodes), query))
+	if query == "" { m.Print(theme.Faint.Render("Usage: /search <query>")); return }
+	nodes, err := m.engine.SearchNodes(query)
+	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	if len(nodes) == 0 { m.Print(theme.Faint.Render("No results for: " + query)); return }
+	m.Print(fmt.Sprintf("%d results for %q:", len(nodes), query))
 	typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 	for _, n := range nodes {
-		a.Print(fmt.Sprintf("  %s %s", typeStyle.Render(n.Type), n.Title))
+		m.Print(fmt.Sprintf("  %s %s", typeStyle.Render(n.Type), n.Title))
 	}
 }
 
 // --- /hub ---
 
-func (a *App) handleHub(sub, args string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleHub(sub, args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		imports, err := a.engine.HubImports()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		a.Print(theme.Title.Render("Hub — Imported Skrpts"))
+		imports, err := m.engine.HubImports()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		m.Print(theme.Title.Render("Hub — Imported Skrpts"))
 		if len(imports) == 0 {
-			a.Print(theme.Faint.Render("  No skrpts imported from Hub."))
+			m.Print(theme.Faint.Render("  No skrpts imported from Hub."))
 		} else {
 			for _, imp := range imports {
 				ver := ""
 				if imp.Version != nil { ver = theme.Faint.Render(" v" + *imp.Version) }
-				a.Print(fmt.Sprintf("  %s%s", imp.Name, ver))
+				m.Print(fmt.Sprintf("  %s%s", imp.Name, ver))
 			}
 		}
 	case "search":
 		query := strings.TrimSpace(args)
-		if query == "" { a.Print(theme.Faint.Render("Usage: /hub search <query>")); return }
-		results, err := a.engine.Hub.Search(query)
-		if err != nil { a.Print(theme.ErrorText.Render("Hub search error: " + err.Error())); return }
-		if len(results) == 0 { a.Print(theme.Faint.Render("No results for: " + query)); return }
-		a.Print(fmt.Sprintf("%d results for %q:", len(results), query))
+		if query == "" { m.Print(theme.Faint.Render("Usage: /hub search <query>")); return }
+		results, err := m.engine.Hub.Search(query)
+		if err != nil { m.Print(theme.ErrorText.Render("Hub search error: " + err.Error())); return }
+		if len(results) == 0 { m.Print(theme.Faint.Render("No results for: " + query)); return }
+		m.Print(fmt.Sprintf("%d results for %q:", len(results), query))
 		for _, r := range results {
 			line := fmt.Sprintf("  %s", theme.Bold.Render(r.Name))
 			if r.Category != "" { line += theme.Faint.Render(" [" + r.Category + "]") }
-			a.Print(line)
-			if r.Description != "" { a.Print("    " + theme.Faint.Render(r.Description)) }
+			m.Print(line)
+			if r.Description != "" { m.Print("    " + theme.Faint.Render(r.Description)) }
 		}
 	case "import":
 		slug := strings.TrimSpace(args)
-		if slug == "" { a.Print(theme.Faint.Render("Usage: /hub import <slug>")); return }
-		skrpt, err := a.engine.Hub.GetSkrpt(slug)
-		if err != nil { a.Print(theme.ErrorText.Render("Hub error: " + err.Error())); return }
-		if skrpt == nil { a.Print(theme.ErrorText.Render("Skrpt not found: " + slug)); return }
-		a.Print(fmt.Sprintf("Found: %s v%s (%d nodes)\nImport download not yet wired.", theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
+		if slug == "" { m.Print(theme.Faint.Render("Usage: /hub import <slug>")); return }
+		skrpt, err := m.engine.Hub.GetSkrpt(slug)
+		if err != nil { m.Print(theme.ErrorText.Render("Hub error: " + err.Error())); return }
+		if skrpt == nil { m.Print(theme.ErrorText.Render("Skrpt not found: " + slug)); return }
+		m.Print(fmt.Sprintf("Found: %s v%s (%d nodes)\nImport download not yet wired.", theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
 	case "update":
-		imports, err := a.engine.HubImports()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(imports) == 0 { a.Print(theme.Faint.Render("No imported skrpts to update.")); return }
-		a.Print(theme.Title.Render("Hub — Update Check"))
+		imports, err := m.engine.HubImports()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(imports) == 0 { m.Print(theme.Faint.Render("No imported skrpts to update.")); return }
+		m.Print(theme.Title.Render("Hub — Update Check"))
 		for _, imp := range imports {
-			versions, err := a.engine.Hub.GetVersions(imp.Slug)
-			if err != nil { a.Print(fmt.Sprintf("  %s — %s", imp.Name, theme.ErrorText.Render("check failed"))); continue }
+			versions, err := m.engine.Hub.GetVersions(imp.Slug)
+			if err != nil { m.Print(fmt.Sprintf("  %s — %s", imp.Name, theme.ErrorText.Render("check failed"))); continue }
 			currentVer := "(unknown)"
 			if imp.Version != nil { currentVer = *imp.Version }
 			if len(versions) > 0 && versions[0].Version != currentVer {
-				a.Print(fmt.Sprintf("  %s %s → %s", theme.WarningText.Render("⬆"), imp.Name, theme.Bold.Render(versions[0].Version)))
+				m.Print(fmt.Sprintf("  %s %s → %s", theme.WarningText.Render("⬆"), imp.Name, theme.Bold.Render(versions[0].Version)))
 			} else {
-				a.Print(fmt.Sprintf("  %s %s %s", theme.SuccessText.Render("✓"), imp.Name, theme.Faint.Render("up to date")))
+				m.Print(fmt.Sprintf("  %s %s %s", theme.SuccessText.Render("✓"), imp.Name, theme.Faint.Render("up to date")))
 			}
 		}
 	default:
-		a.Print(usageBlock("/hub", []string{"list", "search", "import", "update"}))
+		m.Print(usageBlock("/hub", []string{"list", "search", "import", "update"}))
 	}
 }
 
 // --- /runs ---
 
-func (a *App) handleRuns(sub, args string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleRuns(sub, args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		runs, err := a.engine.ListExecutions(20)
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(runs) == 0 { a.Print(theme.Faint.Render("No executions found.")); return }
-		a.Print(theme.Title.Render("Recent Runs"))
+		runs, err := m.engine.ListExecutions(20)
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(runs) == 0 { m.Print(theme.Faint.Render("No executions found.")); return }
+		m.Print(theme.Title.Render("Recent Runs"))
 		for _, r := range runs {
 			shortID := r.ID
 			if len(shortID) > 8 { shortID = shortID[:8] }
 			line := fmt.Sprintf("  %s  %s  %s  %s", statusIcon(r.Status), theme.Faint.Render(shortID), r.WorkflowTitle, theme.Faint.Render(r.StartedAt))
 			if r.TotalTokens > 0 { line += theme.Faint.Render(fmt.Sprintf("  %d tokens", r.TotalTokens)) }
-			a.Print(line)
-			if r.Error != nil && *r.Error != "" { a.Print("         " + theme.ErrorText.Render(*r.Error)) }
+			m.Print(line)
+			if r.Error != nil && *r.Error != "" { m.Print("         " + theme.ErrorText.Render(*r.Error)) }
 		}
 	case "status":
-		runs, err := a.engine.ListExecutions(10)
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		runs, err := m.engine.ListExecutions(10)
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 		var active []string
 		for _, r := range runs {
 			if r.Status == "running" || r.Status == "paused" {
 				active = append(active, fmt.Sprintf("  %s  %s  %s", statusIcon(r.Status), r.WorkflowTitle, theme.Faint.Render(r.StartedAt)))
 			}
 		}
-		if len(active) == 0 { a.Print(theme.Faint.Render("No active executions.")) } else {
-			a.Print(theme.Title.Render("Active Runs"))
-			for _, line := range active { a.Print(line) }
+		if len(active) == 0 { m.Print(theme.Faint.Render("No active executions.")) } else {
+			m.Print(theme.Title.Render("Active Runs"))
+			for _, line := range active { m.Print(line) }
 		}
 	case "show":
-		a.handleRunShow(args)
+		m.handleRunShow(args)
 	default:
-		a.Print(usageBlock("/runs", []string{"list", "status", "show <id>"}))
+		m.Print(usageBlock("/runs", []string{"list", "status", "show <id>"}))
 	}
 }
 
-func (a *App) handleRunShow(args string) {
+func (m *Model) handleRunShow(args string) {
 	idArg, stepArg := splitFirst(args)
-	if idArg == "" { a.Print(theme.Faint.Render("Usage: /runs show <id> [step <n>]")); return }
-	fullID, err := a.engine.FindRunByPrefix(idArg)
-	if err != nil || fullID == nil { a.Print(theme.ErrorText.Render("Run not found: " + idArg)); return }
-	run, err := a.engine.GetRunDetail(*fullID)
-	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	if idArg == "" { m.Print(theme.Faint.Render("Usage: /runs show <id> [step <n>]")); return }
+	fullID, err := m.engine.FindRunByPrefix(idArg)
+	if err != nil || fullID == nil { m.Print(theme.ErrorText.Render("Run not found: " + idArg)); return }
+	run, err := m.engine.GetRunDetail(*fullID)
+	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 
 	if stepArg != "" {
 		stepKey, stepNum := splitFirst(stepArg)
@@ -293,41 +293,41 @@ func (a *App) handleRunShow(args string) {
 			fmt.Sscanf(stepNum, "%d", &n)
 			for _, s := range run.Steps {
 				if s.Position == n {
-					a.Print(theme.Title.Render(s.NodeTitle) + " — step " + fmt.Sprintf("%d", s.Position))
-					a.Print(theme.Faint.Render("Status: ") + statusIcon(s.Status) + " " + s.Status)
+					m.Print(theme.Title.Render(s.NodeTitle) + " — step " + fmt.Sprintf("%d", s.Position))
+					m.Print(theme.Faint.Render("Status: ") + statusIcon(s.Status) + " " + s.Status)
 					if s.Provider != "" {
 						p := s.Provider
 						if s.Model != "" { p += " / " + s.Model }
-						a.Print(theme.Faint.Render("Provider: ") + p)
+						m.Print(theme.Faint.Render("Provider: ") + p)
 					}
-					if s.Duration != "" { a.Print(theme.Faint.Render("Duration: ") + s.Duration) }
-					if s.Error != "" { a.Print(theme.ErrorText.Render("Error: ") + s.Error) }
-					if s.Output != "" { a.Print("\n" + s.Output) } else { a.Print(theme.Faint.Render("\n(no output)")) }
+					if s.Duration != "" { m.Print(theme.Faint.Render("Duration: ") + s.Duration) }
+					if s.Error != "" { m.Print(theme.ErrorText.Render("Error: ") + s.Error) }
+					if s.Output != "" { m.Print("\n" + s.Output) } else { m.Print(theme.Faint.Render("\n(no output)")) }
 					return
 				}
 			}
-			a.Print(theme.ErrorText.Render(fmt.Sprintf("Step %d not found.", n)))
+			m.Print(theme.ErrorText.Render(fmt.Sprintf("Step %d not found.", n)))
 			return
 		}
 	}
 
-	a.Print(theme.Title.Render(run.WorkflowTitle))
-	a.Print(theme.Faint.Render("ID: ") + run.ID)
-	a.Print(theme.Faint.Render("Status: ") + statusIcon(run.Status) + " " + run.Status)
-	a.Print(theme.Faint.Render("Started: ") + run.StartedAt)
-	if run.CompletedAt != nil { a.Print(theme.Faint.Render("Completed: ") + *run.CompletedAt) }
-	if run.TotalTokens > 0 { a.Print(theme.Faint.Render("Tokens: ") + fmt.Sprintf("%d", run.TotalTokens)) }
-	if run.Error != nil && *run.Error != "" { a.Print(theme.ErrorText.Render("Error: ") + *run.Error) }
+	m.Print(theme.Title.Render(run.WorkflowTitle))
+	m.Print(theme.Faint.Render("ID: ") + run.ID)
+	m.Print(theme.Faint.Render("Status: ") + statusIcon(run.Status) + " " + run.Status)
+	m.Print(theme.Faint.Render("Started: ") + run.StartedAt)
+	if run.CompletedAt != nil { m.Print(theme.Faint.Render("Completed: ") + *run.CompletedAt) }
+	if run.TotalTokens > 0 { m.Print(theme.Faint.Render("Tokens: ") + fmt.Sprintf("%d", run.TotalTokens)) }
+	if run.Error != nil && *run.Error != "" { m.Print(theme.ErrorText.Render("Error: ") + *run.Error) }
 	if len(run.Steps) > 0 {
-		a.Print("\n" + theme.Bold.Render("Steps"))
+		m.Print("\n" + theme.Bold.Render("Steps"))
 		for _, s := range run.Steps {
 			line := fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, s.NodeTitle)
 			if s.Provider != "" { line += theme.Faint.Render(" (" + s.Provider + ")") }
 			if s.Duration != "" { line += theme.Faint.Render(" " + s.Duration) }
 			if len(s.Output) > 0 { line += theme.Faint.Render(fmt.Sprintf(" %d chars", len(s.Output))) }
-			a.Print(line)
+			m.Print(line)
 		}
-		a.Print(theme.Faint.Render("\nUse /runs show " + run.ID[:8] + " step <n> to view step output."))
+		m.Print(theme.Faint.Render("\nUse /runs show " + run.ID[:8] + " step <n> to view step output."))
 	}
 }
 
@@ -343,171 +343,171 @@ func statusIcon(status string) string {
 
 // --- /profile ---
 
-func (a *App) handleProfile(sub, args string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleProfile(sub, args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		profiles, err := a.engine.Profiles()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(profiles) == 0 { a.Print(theme.Faint.Render("No profiles configured.")); return }
-		a.Print(theme.Title.Render("Profiles"))
+		profiles, err := m.engine.Profiles()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(profiles) == 0 { m.Print(theme.Faint.Render("No profiles configured.")); return }
+		m.Print(theme.Title.Render("Profiles"))
 		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 		for _, p := range profiles {
 			active := "  "
 			if p.IsActive == 1 { active = theme.SuccessText.Render("● ") }
-			a.Print(fmt.Sprintf("  %s%s %s", active, typeStyle.Render(p.Type), p.Name))
+			m.Print(fmt.Sprintf("  %s%s %s", active, typeStyle.Render(p.Type), p.Name))
 		}
 	case "show":
-		voice, _ := a.engine.ActiveProfile("voice")
-		if voice == nil { a.Print(theme.Faint.Render("No active voice profile.")); return }
-		a.Print(theme.Title.Render(voice.Name))
-		a.Print(theme.Faint.Render("Type: ") + voice.Type)
-		if voice.Content != "" { a.Print("\n" + voice.Content) }
+		voice, _ := m.engine.ActiveProfile("voice")
+		if voice == nil { m.Print(theme.Faint.Render("No active voice profile.")); return }
+		m.Print(theme.Title.Render(voice.Name))
+		m.Print(theme.Faint.Render("Type: ") + voice.Type)
+		if voice.Content != "" { m.Print("\n" + voice.Content) }
 	case "use":
 		name := strings.TrimSpace(args)
-		if name == "" { a.Print(theme.Faint.Render("Usage: /profile use <name>")); return }
-		profile, err := a.engine.FindProfileByName(name)
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if profile == nil { a.Print(theme.ErrorText.Render("Profile not found: " + name)); return }
-		if err := a.engine.SetActiveProfile(profile.ID, profile.Type); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		a.Print(theme.SuccessText.Render("Switched to profile: ") + profile.Name)
-		a.setMode(a.mode) // refresh prompt
+		if name == "" { m.Print(theme.Faint.Render("Usage: /profile use <name>")); return }
+		profile, err := m.engine.FindProfileByName(name)
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if profile == nil { m.Print(theme.ErrorText.Render("Profile not found: " + name)); return }
+		if err := m.engine.SetActiveProfile(profile.ID, profile.Type); err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		m.Print(theme.SuccessText.Render("Switched to profile: ") + profile.Name)
+		m.setMode(m.mode) // refresh prompt
 	case "controls":
-		voice, _ := a.engine.ActiveProfile("voice")
-		if voice == nil { a.Print(theme.Faint.Render("No active voice profile.")); return }
-		a.Print(theme.Title.Render("Quality Controls") + " — " + voice.Name)
+		voice, _ := m.engine.ActiveProfile("voice")
+		if voice == nil { m.Print(theme.Faint.Render("No active voice profile.")); return }
+		m.Print(theme.Title.Render("Quality Controls") + " — " + voice.Name)
 		if voice.Metadata != nil && *voice.Metadata != "" {
 			var parsed map[string]any
 			if err := json.Unmarshal([]byte(*voice.Metadata), &parsed); err == nil {
 				for k, v := range parsed {
-					a.Print(fmt.Sprintf("  %s %v", lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k+":"), v))
+					m.Print(fmt.Sprintf("  %s %v", lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k+":"), v))
 				}
 			} else {
-				a.Print(theme.Faint.Render(*voice.Metadata))
+				m.Print(theme.Faint.Render(*voice.Metadata))
 			}
 		} else {
-			a.Print(theme.Faint.Render("No control settings in profile metadata."))
+			m.Print(theme.Faint.Render("No control settings in profile metadata."))
 		}
 	default:
-		a.Print(usageBlock("/profile", []string{"list", "show", "use", "controls"}))
+		m.Print(usageBlock("/profile", []string{"list", "show", "use", "controls"}))
 	}
 }
 
 // --- /mcp ---
 
-func (a *App) handleMCPCmd(sub string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleMCPCmd(sub string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		servers, err := a.engine.MCPServers()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(servers) == 0 { a.Print(theme.Faint.Render("No MCP servers configured.")); return }
-		a.Print(theme.Title.Render("MCP Servers"))
+		servers, err := m.engine.MCPServers()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(servers) == 0 { m.Print(theme.Faint.Render("No MCP servers configured.")); return }
+		m.Print(theme.Title.Render("MCP Servers"))
 		for _, s := range servers {
 			indicator := theme.ErrorText.Render("●")
 			if s.Status == "connected" { indicator = theme.SuccessText.Render("●") }
 			line := fmt.Sprintf("  %s %s", indicator, s.Name)
 			if s.Provider != "" { line += theme.Faint.Render(" (" + s.Provider + ")") }
-			a.Print(line)
+			m.Print(line)
 		}
 	case "tools":
-		servers, err := a.engine.MCPServers()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(servers) == 0 { a.Print(theme.Faint.Render("No MCP servers configured.")); return }
-		a.Print(theme.Title.Render("MCP Tools"))
+		servers, err := m.engine.MCPServers()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(servers) == 0 { m.Print(theme.Faint.Render("No MCP servers configured.")); return }
+		m.Print(theme.Title.Render("MCP Tools"))
 		for _, s := range servers {
-			a.Print("\n  " + theme.Bold.Render(s.Name))
+			m.Print("\n  " + theme.Bold.Render(s.Name))
 			if s.Capabilities != nil && *s.Capabilities != "" {
 				var caps []string
 				if err := json.Unmarshal([]byte(*s.Capabilities), &caps); err == nil {
-					for _, cap := range caps { a.Print("    " + cap) }
-				} else { a.Print("    " + theme.Faint.Render(*s.Capabilities)) }
-			} else { a.Print("    " + theme.Faint.Render("No tools listed.")) }
+					for _, cap := range caps { m.Print("    " + cap) }
+				} else { m.Print("    " + theme.Faint.Render(*s.Capabilities)) }
+			} else { m.Print("    " + theme.Faint.Render("No tools listed.")) }
 		}
-	case "connect": a.Print(theme.Faint.Render("/mcp connect — requires MCP client runtime."))
-	case "disconnect": a.Print(theme.Faint.Render("/mcp disconnect — requires MCP client runtime."))
+	case "connect": m.Print(theme.Faint.Render("/mcp connect — requires MCP client runtime."))
+	case "disconnect": m.Print(theme.Faint.Render("/mcp disconnect — requires MCP client runtime."))
 	default:
-		a.Print(usageBlock("/mcp", []string{"list", "tools", "connect", "disconnect"}))
+		m.Print(usageBlock("/mcp", []string{"list", "tools", "connect", "disconnect"}))
 	}
 }
 
 // --- /providers ---
 
-func (a *App) handleProvidersCmd(sub string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleProvidersCmd(sub string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		providers, err := a.engine.Providers()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(providers) == 0 { a.Print(theme.Faint.Render("No AI providers configured.")); return }
-		a.Print(theme.Title.Render("AI Providers"))
+		providers, err := m.engine.Providers()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(providers) == 0 { m.Print(theme.Faint.Render("No AI providers configured.")); return }
+		m.Print(theme.Title.Render("AI Providers"))
 		for _, p := range providers {
 			indicator := theme.ErrorText.Render("●")
 			if p.Status == "connected" { indicator = theme.SuccessText.Render("●") }
 			line := fmt.Sprintf("  %s %s", indicator, p.Name)
 			if p.Provider != "" { line += theme.Faint.Render(" (" + p.Provider + ")") }
-			a.Print(line)
+			m.Print(line)
 		}
-	case "add": a.Print(theme.Faint.Render("/providers add — requires interactive setup."))
+	case "add": m.Print(theme.Faint.Render("/providers add — requires interactive setup."))
 	default:
-		a.Print(usageBlock("/providers", []string{"list", "add"}))
+		m.Print(usageBlock("/providers", []string{"list", "add"}))
 	}
 }
 
 // --- /workspace ---
 
-func (a *App) handleWorkspaceCmd(sub, args string) {
+func (m *Model) handleWorkspaceCmd(sub, args string) {
 	switch sub {
 	case "show":
-		a.Print(theme.Title.Render("Workspace"))
+		m.Print(theme.Title.Render("Workspace"))
 		cwd, _ := os.Getwd()
-		a.Print("  " + theme.Faint.Render("Path: ") + cwd)
-		if a.engine != nil { a.Print("  " + theme.Faint.Render("Database: ") + a.engine.DB.Path()) }
+		m.Print("  " + theme.Faint.Render("Path: ") + cwd)
+		if m.engine != nil { m.Print("  " + theme.Faint.Render("Database: ") + m.engine.DB.Path()) }
 	case "set":
 		path := strings.TrimSpace(args)
-		if path == "" { a.Print(theme.Faint.Render("Usage: /workspace set <path>")); return }
+		if path == "" { m.Print(theme.Faint.Render("Usage: /workspace set <path>")); return }
 		if strings.HasPrefix(path, "~") {
 			home, _ := os.UserHomeDir()
 			path = filepath.Join(home, path[1:])
 		}
 		absPath, err := filepath.Abs(path)
-		if err != nil { a.Print(theme.ErrorText.Render("Invalid path: " + err.Error())); return }
+		if err != nil { m.Print(theme.ErrorText.Render("Invalid path: " + err.Error())); return }
 		info, err := os.Stat(absPath)
-		if err != nil || !info.IsDir() { a.Print(theme.ErrorText.Render("Not a directory: " + absPath)); return }
-		if err := os.Chdir(absPath); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		a.Print(theme.SuccessText.Render("Workspace: ") + absPath)
+		if err != nil || !info.IsDir() { m.Print(theme.ErrorText.Render("Not a directory: " + absPath)); return }
+		if err := os.Chdir(absPath); err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		m.Print(theme.SuccessText.Render("Workspace: ") + absPath)
 	default:
-		a.Print(usageBlock("/workspace", []string{"show", "set"}))
+		m.Print(usageBlock("/workspace", []string{"show", "set"}))
 	}
 }
 
 // --- /tags ---
 
-func (a *App) handleTagsCmd(sub string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleTagsCmd(sub string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
-		tags, err := a.engine.Tags()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(tags) == 0 { a.Print(theme.Faint.Render("No tags defined.")); return }
-		a.Print(theme.Title.Render("Tags"))
+		tags, err := m.engine.Tags()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(tags) == 0 { m.Print(theme.Faint.Render("No tags defined.")); return }
+		m.Print(theme.Title.Render("Tags"))
 		for _, t := range tags {
 			colour := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Colour))
-			a.Print(fmt.Sprintf("  %s %s", colour.Render("●"), t.Name))
+			m.Print(fmt.Sprintf("  %s %s", colour.Render("●"), t.Name))
 		}
 	default:
-		a.Print(usageBlock("/tags", []string{"list"}))
+		m.Print(usageBlock("/tags", []string{"list"}))
 	}
 }
 
 // --- /tag and /untag ---
 
-func (a *App) handleTagNode(args string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleTagNode(args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	args = strings.TrimSpace(args)
-	if args == "" { a.Print(theme.Faint.Render("Usage: /tag <node title> <tag name>")); return }
-	tags, err := a.engine.Tags()
-	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	if args == "" { m.Print(theme.Faint.Render("Usage: /tag <node title> <tag name>")); return }
+	tags, err := m.engine.Tags()
+	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 	var matchedTag, matchedTagID, nodeTitle string
 	for _, t := range tags {
 		if strings.HasSuffix(strings.ToLower(args), strings.ToLower(t.Name)) {
@@ -517,19 +517,19 @@ func (a *App) handleTagNode(args string) {
 			break
 		}
 	}
-	if matchedTag == "" { a.Print(theme.ErrorText.Render("Could not identify tag. Use /tags list.")); return }
-	node, err := a.engine.FindNodeByTitle(nodeTitle)
-	if err != nil || node == nil { a.Print(theme.ErrorText.Render("Node not found: " + nodeTitle)); return }
-	if err := a.engine.DB.AssignTag(node.ID, matchedTagID); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-	a.Print(theme.SuccessText.Render("Tagged ") + node.Title + " with " + matchedTag)
+	if matchedTag == "" { m.Print(theme.ErrorText.Render("Could not identify tag. Use /tags list.")); return }
+	node, err := m.engine.FindNodeByTitle(nodeTitle)
+	if err != nil || node == nil { m.Print(theme.ErrorText.Render("Node not found: " + nodeTitle)); return }
+	if err := m.engine.DB.AssignTag(node.ID, matchedTagID); err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	m.Print(theme.SuccessText.Render("Tagged ") + node.Title + " with " + matchedTag)
 }
 
-func (a *App) handleUntagNode(args string) {
-	if a.engine == nil { a.Print(noEngineMsg()); return }
+func (m *Model) handleUntagNode(args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
 	args = strings.TrimSpace(args)
-	if args == "" { a.Print(theme.Faint.Render("Usage: /untag <node title> <tag name>")); return }
-	tags, err := a.engine.Tags()
-	if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	if args == "" { m.Print(theme.Faint.Render("Usage: /untag <node title> <tag name>")); return }
+	tags, err := m.engine.Tags()
+	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 	var matchedTag, matchedTagID, nodeTitle string
 	for _, t := range tags {
 		if strings.HasSuffix(strings.ToLower(args), strings.ToLower(t.Name)) {
@@ -539,20 +539,20 @@ func (a *App) handleUntagNode(args string) {
 			break
 		}
 	}
-	if matchedTag == "" { a.Print(theme.ErrorText.Render("Could not identify tag. Use /tags list.")); return }
-	node, err := a.engine.FindNodeByTitle(nodeTitle)
-	if err != nil || node == nil { a.Print(theme.ErrorText.Render("Node not found: " + nodeTitle)); return }
-	if err := a.engine.DB.UnassignTag(node.ID, matchedTagID); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-	a.Print(theme.SuccessText.Render("Removed ") + matchedTag + " from " + node.Title)
+	if matchedTag == "" { m.Print(theme.ErrorText.Render("Could not identify tag. Use /tags list.")); return }
+	node, err := m.engine.FindNodeByTitle(nodeTitle)
+	if err != nil || node == nil { m.Print(theme.ErrorText.Render("Node not found: " + nodeTitle)); return }
+	if err := m.engine.DB.UnassignTag(node.ID, matchedTagID); err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	m.Print(theme.SuccessText.Render("Removed ") + matchedTag + " from " + node.Title)
 }
 
 // --- /config ---
 
-func (a *App) handleConfigCmd(sub, args string) {
+func (m *Model) handleConfigCmd(sub, args string) {
 	switch sub {
 	case "show":
-		a.Print(theme.Title.Render("Configuration"))
-		if a.engine == nil { a.Print(theme.Faint.Render("  No engine connection.")); return }
+		m.Print(theme.Title.Render("Configuration"))
+		if m.engine == nil { m.Print(theme.Faint.Render("  No engine connection.")); return }
 		keys := []struct{ key, label string }{
 			{"defaultProvider", "Default Provider"},
 			{"defaultModel", "Default Model"},
@@ -560,91 +560,91 @@ func (a *App) handleConfigCmd(sub, args string) {
 			{"theme", "Theme"},
 		}
 		for _, k := range keys {
-			val := a.engine.Setting(k.key)
+			val := m.engine.Setting(k.key)
 			if val == "" { val = theme.Faint.Render("(not set)") }
-			a.Print(fmt.Sprintf("  %s %s", lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k.label+":"), val))
+			m.Print(fmt.Sprintf("  %s %s", lipgloss.NewStyle().Foreground(theme.Muted).Width(20).Render(k.label+":"), val))
 		}
 	case "set":
-		if a.engine == nil { a.Print(noEngineMsg()); return }
+		if m.engine == nil { m.Print(noEngineMsg()); return }
 		parts := strings.SplitN(args, " ", 2)
-		if len(parts) < 2 { a.Print(theme.Faint.Render("Usage: /config set <key> <value>")); return }
+		if len(parts) < 2 { m.Print(theme.Faint.Render("Usage: /config set <key> <value>")); return }
 		key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-		if err := a.engine.DB.SetSetting(key, value); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		a.Print(theme.SuccessText.Render("Set ") + key + " = " + value)
+		if err := m.engine.DB.SetSetting(key, value); err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		m.Print(theme.SuccessText.Render("Set ") + key + " = " + value)
 	default:
-		a.Print(usageBlock("/config", []string{"show", "set"}))
+		m.Print(usageBlock("/config", []string{"show", "set"}))
 	}
 }
 
 // --- /settings ---
 
-func (a *App) handleSettings(sub, args string) {
+func (m *Model) handleSettings(sub, args string) {
 	switch sub {
 	case "about":
-		a.Print(theme.Title.Render("skrptiq") + " v0.1.0-prototype")
-		a.Print(theme.Faint.Render("Interactive terminal for personalised AI agents"))
-		if a.engine != nil { a.Print(theme.Faint.Render("Engine: ") + a.engine.DB.Path()) } else { a.Print(theme.Faint.Render("Engine: not connected")) }
+		m.Print(theme.Title.Render("skrptiq") + " v0.1.0-prototype")
+		m.Print(theme.Faint.Render("Interactive terminal for personalised AI agents"))
+		if m.engine != nil { m.Print(theme.Faint.Render("Engine: ") + m.engine.DB.Path()) } else { m.Print(theme.Faint.Render("Engine: not connected")) }
 		cwd, _ := os.Getwd()
-		a.Print(theme.Faint.Render("Working directory: ") + cwd)
-	case "providers": a.handleProvidersCmd("list")
+		m.Print(theme.Faint.Render("Working directory: ") + cwd)
+	case "providers": m.handleProvidersCmd("list")
 	case "connections":
-		if a.engine == nil { a.Print(noEngineMsg()); return }
-		conns, err := a.engine.Connections()
-		if err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
-		if len(conns) == 0 { a.Print(theme.Faint.Render("No connections configured.")); return }
-		a.Print(theme.Title.Render("Connections"))
+		if m.engine == nil { m.Print(noEngineMsg()); return }
+		conns, err := m.engine.Connections()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if len(conns) == 0 { m.Print(theme.Faint.Render("No connections configured.")); return }
+		m.Print(theme.Title.Render("Connections"))
 		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(16)
 		for _, c := range conns {
 			indicator := theme.ErrorText.Render("●")
 			if c.Status == "connected" { indicator = theme.SuccessText.Render("●") }
 			line := fmt.Sprintf("  %s %s %s", indicator, typeStyle.Render(c.Type), c.Name)
 			if c.Provider != "" { line += theme.Faint.Render(" (" + c.Provider + ")") }
-			a.Print(line)
+			m.Print(line)
 		}
-	case "config": a.handleConfigCmd("show", "")
-	case "set": a.handleConfigCmd("set", args)
+	case "config": m.handleConfigCmd("show", "")
+	case "set": m.handleConfigCmd("set", args)
 	default:
-		a.Print(usageBlock("/settings", []string{"about", "providers", "connections", "config", "set"}))
+		m.Print(usageBlock("/settings", []string{"about", "providers", "connections", "config", "set"}))
 	}
 }
 
 // --- /run ---
 
-func (a *App) handleEnterRun(args string) {
-	a.runWorkflow = strings.TrimSpace(args)
-	a.setMode(ModeRun)
-	if a.runWorkflow == "" {
-		a.Print(theme.Title.Render("Run Mode"))
-		a.Print(theme.Faint.Render("Type a workflow name (tab to complete), or /exit to return."))
+func (m *Model) handleEnterRun(args string) {
+	m.runWorkflow = strings.TrimSpace(args)
+	m.setMode(ModeRun)
+	if m.runWorkflow == "" {
+		m.Print(theme.Title.Render("Run Mode"))
+		m.Print(theme.Faint.Render("Type a workflow name (tab to complete), or /exit to return."))
 		return
 	}
-	if a.engine == nil { a.Print(noEngineMsg()); return }
-	node, err := a.engine.FindNodeByTitle(a.runWorkflow)
+	if m.engine == nil { m.Print(noEngineMsg()); return }
+	node, err := m.engine.FindNodeByTitle(m.runWorkflow)
 	if err != nil || node == nil || node.Type != "workflow" {
-		a.Print(theme.ErrorText.Render("Workflow not found: " + a.runWorkflow))
+		m.Print(theme.ErrorText.Render("Workflow not found: " + m.runWorkflow))
 		return
 	}
-	a.startExecution(node)
+	m.startExecution(node)
 }
 
 // --- /chat ---
 
-func (a *App) handleEnterChat(args string) {
+func (m *Model) handleEnterChat(args string) {
 	provider := "not connected"
-	if a.engine != nil {
-		defaultProvider := a.engine.Setting("defaultProvider")
+	if m.engine != nil {
+		defaultProvider := m.engine.Setting("defaultProvider")
 		if defaultProvider != "" {
 			provider = defaultProvider
 		} else {
-			providers, err := a.engine.Providers()
+			providers, err := m.engine.Providers()
 			if err == nil && len(providers) > 0 { provider = providers[0].Name }
 		}
 	}
-	a.chatProvider = provider
-	a.setMode(ModeChat)
-	a.Print(theme.Title.Render("Chat Mode"))
-	a.Print(theme.Faint.Render("Provider: ") + provider)
-	a.Print(theme.Faint.Render("Type naturally. /exit to return to command mode."))
+	m.chatProvider = provider
+	m.setMode(ModeChat)
+	m.Print(theme.Title.Render("Chat Mode"))
+	m.Print(theme.Faint.Render("Provider: ") + provider)
+	m.Print(theme.Faint.Render("Type naturally. /exit to return to command mode."))
 }
 
 // --- helpers ---

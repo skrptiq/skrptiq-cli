@@ -2,23 +2,22 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
-	"github.com/lmorg/readline/v4"
 
 	exec "github.com/skrptiq/engine/execution"
 	"github.com/skrptiq/engine/llm"
 	"github.com/skrptiq/engine/storage"
 
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
+	"github.com/skrptiq/skrptiq-cli/internal/prompt"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 )
 
@@ -53,110 +52,388 @@ func (m AppMode) Symbol() string {
 	}
 }
 
-// App is the main application.
-type App struct {
-	engine   *eng.App
-	rl       *readline.Instance
-	commands []Command
-	mode     AppMode
-
-	// Mode state.
-	chatProvider string
-	runWorkflow  string
-
-	// Execution state.
-	executionID  string
-	cancelStream context.CancelFunc
-
-	// Input collection state.
-	pendingInputs   []string
-	collectedInputs map[string]string
-	inputMeta       map[string]inputMetaInfo
-	pendingNode     *storage.Node
-}
-
 type inputMetaInfo struct {
 	Label       string
 	Description string
 	Example     string
 }
 
-// New creates a new App.
-func New() (*App, error) {
+// Model is the top-level bubbletea model.
+type Model struct {
+	prompt   prompt.Model
+	program  *tea.Program
+	engine   *eng.App
+	commands []Command
+	mode     AppMode
+
+	chatProvider string
+	runWorkflow  string
+
+	executionID  string
+	cancelStream context.CancelFunc
+
+	pendingInputs   []string
+	collectedInputs map[string]string
+	inputMeta       map[string]inputMetaInfo
+	pendingNode     *storage.Node
+
+	lastEOF time.Time
+	ready   bool
+}
+
+// New creates a new Model.
+func New() Model {
 	engine, engineErr := eng.Open("")
 
-	a := &App{
+	m := Model{
 		engine: engine,
 		mode:   ModeCommand,
 	}
+	m.commands = BuildCommands(engine)
+	m.prompt = prompt.New(m.mode.Symbol(), m.statusText())
 
-	a.commands = BuildCommands(engine)
+	// Print banner before bubbletea starts.
+	printBanner(engine, engineErr)
 
-	rl := readline.NewInstance()
-	rl.SetPrompt(a.mode.Symbol() + " › ")
-
-	// Hint text — shows the status bar BELOW the prompt.
-	rl.HintText = func(line []rune, pos int) []rune {
-		return []rune(a.hintText())
-	}
-	rl.HintFormatting = "\033[2m" // dim
-
-	// Tab completion.
-	rl.TabCompleter = a.tabCompleter
-
-	// History.
-	rl.History = new(readline.ExampleHistory)
-
-	a.rl = rl
-
-	// Print startup banner.
-	a.printBanner(engine, engineErr)
-
-	return a, nil
+	return m
 }
 
-// Close cleans up resources.
-func (a *App) Close() {
-	if a.engine != nil {
-		a.engine.Close()
+// SetProgram stores the program reference for Println.
+func (m *Model) SetProgram(p *tea.Program) {
+	m.program = p
+}
+
+// Print outputs text to terminal scrollback above the managed region.
+func (m Model) Print(text string) {
+	if m.program != nil {
+		m.program.Println(text)
+	} else {
+		fmt.Println(text)
 	}
 }
 
-// Print prints a line to the terminal (persists in scrollback).
-func (a *App) Print(text string) {
-	fmt.Println(text)
+func (m Model) Init() tea.Cmd {
+	return m.prompt.Init()
 }
 
-func (a *App) termWidth() int {
-	w, _, err := term.GetSize(os.Stdout.Fd())
-	if err != nil || w < 20 {
-		return 60
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.ready = true
+
+	case prompt.SubmitMsg:
+		// Print user's input to scrollback.
+		m.Print("")
+		m.Print("  " + theme.Faint.Render(">") + " " + msg.Text)
+		m.Print("")
+		// Handle the command.
+		m.handleInput(msg.Text)
+		return m, nil
+
+	case prompt.CtrlCMsg:
+		if m.cancelStream != nil {
+			m.cancelStream()
+			m.cancelStream = nil
+			m.Print(theme.Faint.Render("Cancelled."))
+			if m.executionID != "" && m.engine != nil {
+				m.engine.StopExecution(m.executionID)
+				m.executionID = ""
+			}
+			m.setMode(ModeCommand)
+			return m, nil
+		}
+		return m, nil
+
+	case prompt.CtrlDMsg:
+		now := time.Now()
+		if now.Sub(m.lastEOF) < 500*time.Millisecond {
+			m.Print(theme.Faint.Render("Goodbye."))
+			return m, tea.Quit
+		}
+		m.lastEOF = now
+		m.Print(theme.Faint.Render("Press Ctrl+D again to exit."))
+		return m, nil
+
+	case prompt.EscMsg:
+		if m.cancelStream != nil {
+			m.cancelStream()
+			m.cancelStream = nil
+			m.Print(theme.Faint.Render("Cancelled."))
+		}
+		if m.mode != ModeCommand {
+			m.Print(theme.Faint.Render("Exited " + m.mode.Label() + " mode."))
+			m.setMode(ModeCommand)
+		}
+		return m, nil
 	}
-	return w
+
+	// Pass to prompt model.
+	var cmd tea.Cmd
+	m.prompt, cmd = m.prompt.Update(msg)
+	return m, cmd
 }
 
-func (a *App) printBanner(engine *eng.App, engineErr error) {
-	w := a.termWidth()
+func (m Model) View() string {
+	return m.prompt.View()
+}
 
-	// Clear screen and push content to bottom.
+func (m *Model) setMode(mode AppMode) {
+	m.mode = mode
+	m.prompt.SetSymbol(m.mode.Symbol())
+	m.prompt.SetStatus(m.statusText())
+}
+
+func (m Model) statusText() string {
+	var parts []string
+	parts = append(parts, m.mode.Label())
+	if m.engine != nil {
+		if p, _ := m.engine.ActiveProfile("voice"); p != nil {
+			parts = append(parts, p.Name)
+		}
+	}
+	switch m.mode {
+	case ModeChat:
+		if m.chatProvider != "" {
+			parts = append(parts, m.chatProvider)
+		}
+	case ModeRun:
+		if m.runWorkflow != "" {
+			parts = append(parts, m.runWorkflow)
+		}
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m *Model) handleInput(input string) {
+	if input == "/" {
+		m.listCommands()
+		return
+	}
+
+	if strings.HasPrefix(input, "/") {
+		stripped := input[1:]
+		cmd := strings.ToLower(stripped)
+		args := ""
+		if idx := strings.Index(stripped, " "); idx > 0 {
+			cmd = strings.ToLower(stripped[:idx])
+			args = strings.TrimSpace(stripped[idx+1:])
+		}
+
+		if m.handleSlashCommand(cmd, args) {
+			return
+		}
+
+		switch cmd {
+		case "demo", "tree", "gate", "diff":
+			m.Print(theme.Faint.Render("/" + cmd + " — prototype TUI views not available."))
+			return
+		case "resume", "stop":
+			m.Print(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
+			return
+		}
+
+		m.Print(theme.ErrorText.Render("Unknown command: /"+cmd) + " — type /help for available commands.")
+		return
+	}
+
+	switch m.mode {
+	case ModeChat:
+		m.handleChatInput(input)
+	case ModeRun:
+		if m.runWorkflow == "" {
+			m.handleRunWorkflowSelect(input)
+		} else if len(m.pendingInputs) > 0 {
+			m.handleInputCollection(input)
+		} else {
+			m.handleRunInput(input)
+		}
+	default:
+		m.Print(theme.Faint.Render("Use /chat for chat mode or / for commands."))
+	}
+}
+
+func (m *Model) listCommands() {
+	nameStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#F9FAFB")).
+		Background(lipgloss.Color("#374151")).
+		Padding(0, 1)
+	descStyle := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	for _, cmd := range m.commands {
+		desc := cmd.Description
+		if cmd.HasSubcommands() {
+			var subs []string
+			for _, sub := range cmd.Subcommands {
+				subs = append(subs, sub.Name)
+			}
+			desc += " (" + strings.Join(subs, ", ") + ")"
+		}
+		m.Print(nameStyle.Render(cmd.Name) + " " + descStyle.Render(desc))
+	}
+}
+
+func (m *Model) handleChatInput(input string) {
+	if m.engine == nil {
+		m.Print(theme.ErrorText.Render("No engine connection."))
+		return
+	}
+	m.Print(theme.Faint.Render("Thinking..."))
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+	defer func() { m.cancelStream = nil }()
+
+	messages := []llm.Message{{Role: "user", Content: input}}
+	resp, err := m.engine.Chat(ctx, messages, llm.Options{}, func(chunk string) {
+		fmt.Print(chunk) // stream directly
+	})
+	fmt.Println()
+	if err != nil {
+		m.Print(theme.ErrorText.Render("Error: " + err.Error()))
+		return
+	}
+	if resp.Usage != nil {
+		m.Print(theme.Faint.Render(fmt.Sprintf("  %s/%s · %d in / %d out tokens",
+			resp.Provider, resp.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens)))
+	}
+}
+
+func (m *Model) handleRunWorkflowSelect(input string) {
+	if m.engine == nil { m.Print(theme.ErrorText.Render("No engine connection.")); return }
+	node, err := m.engine.FindNodeByTitle(input)
+	if err != nil || node == nil || node.Type != "workflow" {
+		m.Print(theme.ErrorText.Render("Workflow not found: " + input)); return
+	}
+	m.runWorkflow = node.Title
+	m.setMode(ModeRun)
+	m.startExecution(node)
+}
+
+func (m *Model) handleInputCollection(input string) {
+	currentVar := m.pendingInputs[0]
+	m.collectedInputs[currentVar] = input
+	m.pendingInputs = m.pendingInputs[1:]
+	if len(m.pendingInputs) > 0 { m.promptForInput(); return }
+	m.Print(theme.Faint.Render("All inputs collected. Starting execution..."))
+	m.startExecutionWithInputs(m.pendingNode, m.collectedInputs)
+	m.pendingNode = nil
+}
+
+func (m *Model) promptForInput() {
+	if len(m.pendingInputs) == 0 { return }
+	varName := m.pendingInputs[0]
+	label, desc, example := varName, "", ""
+	if meta, ok := m.inputMeta[varName]; ok {
+		if meta.Label != "" { label = meta.Label }
+		desc = meta.Description
+		example = meta.Example
+	}
+	p := theme.Bold.Render(label) + ":"
+	if desc != "" { p += " " + theme.Faint.Render(desc) }
+	if example != "" { p += "\n  " + theme.Faint.Render("Example: "+example) }
+	m.Print(p)
+}
+
+func (m *Model) handleRunInput(input string) {
+	if m.executionID == "" || m.engine == nil {
+		m.Print(theme.Faint.Render("No active execution.")); return
+	}
+	m.Print(theme.Faint.Render("Resuming..."))
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+	defer func() { m.cancelStream = nil }()
+	_, err := m.engine.ResumeExecution(ctx, m.executionID, input, func(evt exec.ProgressEvent) {
+		m.handleProgressEvent(evt)
+	})
+	if err != nil {
+		m.Print(theme.ErrorText.Render("Execution failed: " + err.Error()))
+	} else {
+		m.Print(theme.SuccessText.Render("Workflow completed."))
+	}
+	m.setMode(ModeCommand)
+}
+
+func (m *Model) startExecution(node *storage.Node) {
+	plan, err := m.engine.BuildPlan(node.ID)
+	if err != nil { m.Print(theme.ErrorText.Render("Plan error: " + err.Error())); return }
+	m.Print(theme.Title.Render("Run Mode") + " — " + plan.WorkflowTitle)
+	var b strings.Builder
+	for _, pg := range plan.PositionGroups {
+		for _, step := range pg.Steps {
+			gate := ""
+			if step.IsGate { gate = theme.WarningText.Render(" (gate)") }
+			b.WriteString(fmt.Sprintf("  %d. %s%s\n", step.Position, step.NodeTitle, gate))
+		}
+	}
+	m.Print(b.String())
+	if len(plan.InputVariables) > 0 {
+		m.pendingInputs = plan.InputVariables
+		m.collectedInputs = make(map[string]string)
+		m.pendingNode = node
+		m.inputMeta = make(map[string]inputMetaInfo)
+		for varName, meta := range plan.InputMeta {
+			m.inputMeta[varName] = inputMetaInfo{Label: meta.Label, Description: meta.Description, Example: meta.Example}
+		}
+		m.Print(theme.Faint.Render(fmt.Sprintf("%d input(s) required.", len(plan.InputVariables))))
+		m.promptForInput()
+		return
+	}
+	m.startExecutionWithInputs(node, map[string]string{})
+}
+
+func (m *Model) startExecutionWithInputs(node *storage.Node, inputs map[string]string) {
+	m.Print(theme.Faint.Render("Starting execution..."))
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelStream = cancel
+	defer func() { m.cancelStream = nil }()
+	_, err := m.engine.RunWorkflow(ctx, node.ID, inputs, func(evt exec.ProgressEvent) {
+		m.handleProgressEvent(evt)
+	})
+	if err != nil {
+		m.Print(theme.ErrorText.Render("Execution failed: " + err.Error()))
+		m.setMode(ModeCommand)
+		return
+	}
+	if m.executionID != "" {
+		m.Print(theme.Faint.Render("Workflow paused at gate. Type your response."))
+	} else {
+		m.Print(theme.SuccessText.Render("Workflow completed."))
+		m.setMode(ModeCommand)
+	}
+}
+
+func (m *Model) handleProgressEvent(evt exec.ProgressEvent) {
+	switch evt.Type {
+	case "execution-started":
+		m.executionID = evt.ExecutionID
+	case "step-started":
+		m.Print(theme.Faint.Render("  ◌ ") + evt.NodeTitle)
+	case "step-chunk":
+		fmt.Print(evt.Chunk)
+	case "step-completed":
+		s := theme.SuccessText.Render("  ✓ ") + evt.NodeTitle
+		if evt.Provider != "" { s += theme.Faint.Render(" (" + evt.Provider + ")") }
+		if evt.TokenUsage != nil { s += theme.Faint.Render(fmt.Sprintf(" %d tokens", evt.TokenUsage.Total)) }
+		m.Print(s)
+	case "step-failed":
+		m.Print(theme.ErrorText.Render("  ✗ " + evt.NodeTitle + ": " + evt.Error))
+	case "step-awaiting-input":
+		m.Print(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
+		if evt.GateInstructions != "" { m.Print(evt.GateInstructions) }
+		m.Print(theme.Faint.Render("Type your response and press enter."))
+	}
+}
+
+func printBanner(engine *eng.App, engineErr error) {
+	w, _, _ := term.GetSize(os.Stdout.Fd())
+	if w < 20 { w = 60 }
+	_, rows, _ := term.GetSize(os.Stdout.Fd())
+	if rows < 10 { rows = 24 }
+
 	fmt.Print("\033[2J\033[H")
-
-	_, rows, err := term.GetSize(os.Stdout.Fd())
-	if err != nil || rows < 10 {
-		rows = 24
-	}
-
 	bannerLines := 12
-	padding := rows - bannerLines
-	if padding < 0 {
-		padding = 0
-	}
-	for i := 0; i < padding; i++ {
-		fmt.Println()
-	}
+	for i := 0; i < rows-bannerLines; i++ { fmt.Println() }
 
 	sep := theme.Faint.Render(strings.Repeat("─", w))
-
 	fmt.Println(sep)
 	fmt.Println()
 	fmt.Println("  " + theme.Title.Render("skrptiq") + "  " + theme.Faint.Render("v0.1.0-prototype"))
@@ -171,481 +448,18 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 			home, _ := os.UserHomeDir()
 			if home != "" && strings.HasPrefix(cwd, home) {
 				workspace = "~" + cwd[len(home):]
-			} else {
-				workspace = filepath.Base(cwd)
-			}
+			} else { workspace = filepath.Base(cwd) }
 		}
-
 		profile := "default"
-		if p, _ := engine.ActiveProfile("voice"); p != nil {
-			profile = p.Name
-		}
-
-		mcpStatus := ""
-		if servers, err := engine.MCPServers(); err == nil && len(servers) > 0 {
-			var parts []string
-			for _, s := range servers {
-				indicator := theme.ErrorText.Render("●")
-				if s.Status == "connected" {
-					indicator = theme.SuccessText.Render("●")
-				}
-				parts = append(parts, s.Name+" "+indicator)
-			}
-			mcpStatus = strings.Join(parts, "  ")
-		}
-
+		if p, _ := engine.ActiveProfile("voice"); p != nil { profile = p.Name }
 		labelStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(14)
 		fmt.Println("  " + labelStyle.Render("Profile:") + profile)
 		fmt.Println("  " + labelStyle.Render("Workspace:") + workspace)
-		if mcpStatus != "" {
-			fmt.Println("  " + labelStyle.Render("MCP:") + mcpStatus)
-		}
 	}
-
 	fmt.Println()
-	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or "+theme.ActionKey.Render("/")+" for commands. "+theme.ActionKey.Render("/help")+" for the full list."))
+	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or / for commands. /help for the full list."))
 	fmt.Println()
-	fmt.Println(sep)
 }
 
-// hintText returns the separator + status shown below the prompt.
-func (a *App) hintText() string {
-	w := a.termWidth()
-
-	var parts []string
-	parts = append(parts, a.mode.Label())
-
-	if a.engine != nil {
-		if p, _ := a.engine.ActiveProfile("voice"); p != nil {
-			parts = append(parts, p.Name)
-		}
-	}
-
-	switch a.mode {
-	case ModeChat:
-		if a.chatProvider != "" {
-			parts = append(parts, a.chatProvider)
-		}
-	case ModeRun:
-		if a.runWorkflow != "" {
-			parts = append(parts, a.runWorkflow)
-		}
-	}
-
-	sep := strings.Repeat("─", w)
-	status := strings.Join(parts, " · ")
-
-	return sep + "\n" + status
-}
-
-// tabCompleter provides tab completion for commands.
-func (a *App) tabCompleter(line []rune, pos int, _ readline.DelayedTabContext) *readline.TabCompleterReturnT {
-	input := string(line[:pos])
-
-	if !strings.HasPrefix(input, "/") {
-		return nil
-	}
-
-	var items []string
-	parts := strings.SplitN(input, " ", 2)
-	cmdName := parts[0]
-
-	if len(parts) == 1 {
-		// Stage 1: match command names.
-		for _, cmd := range a.commands {
-			if strings.HasPrefix(strings.ToLower(cmd.Name), strings.ToLower(input)) {
-				items = append(items, cmd.Name)
-			}
-		}
-	} else {
-		// Stage 2: match subcommands.
-		subInput := ""
-		if len(parts) > 1 {
-			subInput = parts[1]
-		}
-		for _, cmd := range a.commands {
-			if strings.EqualFold(cmd.Name, cmdName) {
-				for _, sub := range cmd.Subcommands {
-					if subInput == "" || strings.HasPrefix(strings.ToLower(sub.Name), strings.ToLower(subInput)) {
-						items = append(items, cmd.Name+" "+sub.Name)
-					}
-				}
-				break
-			}
-		}
-	}
-
-	if len(items) == 0 {
-		return nil
-	}
-
-	return &readline.TabCompleterReturnT{
-		Prefix:      input,
-		Suggestions: items,
-	}
-}
-
-// Run is the main input loop.
-func (a *App) Run() {
-	var lastEOF time.Time
-
-	for {
-		// Print the top separator — this is the upper boundary of the input area.
-		w := a.termWidth()
-		fmt.Println(theme.Faint.Render(strings.Repeat("─", w)))
-
-		line, err := a.rl.Readline()
-		if err != nil {
-			if errors.Is(err, readline.ErrCtrlC) || err.Error() == "Ctrl+C" {
-				if a.cancelStream != nil {
-					a.cancelStream()
-					a.cancelStream = nil
-					a.Print(theme.Faint.Render("Cancelled."))
-					if a.executionID != "" && a.engine != nil {
-						a.engine.StopExecution(a.executionID)
-						a.executionID = ""
-					}
-					a.setMode(ModeCommand)
-					continue
-				}
-				fmt.Println()
-				continue
-			}
-			if errors.Is(err, io.EOF) || errors.Is(err, readline.ErrEOF) || err.Error() == "EOF" {
-				now := time.Now()
-				if now.Sub(lastEOF) < 500*time.Millisecond {
-					fmt.Println()
-					a.Print(theme.Faint.Render("Goodbye."))
-					return
-				}
-				lastEOF = now
-				a.Print(theme.Faint.Render("Press Ctrl+D again to exit."))
-				continue
-			}
-			return
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		// Clear the separator + prompt from terminal.
-		// After enter, cursor is on line below prompt. Move up 2 to separator, clear down.
-		fmt.Print("\033[2A") // up to separator line
-		fmt.Print("\033[J")  // clear separator + prompt line + anything below
-		// Reprint just the user's text cleanly in scrollback.
-		fmt.Println("  " + theme.Faint.Render(">") + " " + line)
-		fmt.Println()
-
-		a.handleInput(line)
-	}
-}
-
-func (a *App) handleInput(input string) {
-	// Bare "/" shows the command list.
-	if input == "/" {
-		a.listCommands()
-		return
-	}
-
-	// Slash commands work in any mode.
-	if strings.HasPrefix(input, "/") {
-		stripped := input[1:]
-		cmd := strings.ToLower(stripped)
-		args := ""
-		if idx := strings.Index(stripped, " "); idx > 0 {
-			cmd = strings.ToLower(stripped[:idx])
-			args = strings.TrimSpace(stripped[idx+1:])
-		}
-
-		if a.handleSlashCommand(cmd, args) {
-			return
-		}
-
-		switch cmd {
-		case "demo", "tree", "gate", "diff":
-			a.Print(theme.Faint.Render("/" + cmd + " — prototype TUI views not available in readline mode."))
-			return
-		case "resume", "stop":
-			a.Print(theme.Faint.Render("/" + cmd + " — requires engine execution wiring."))
-			return
-		}
-
-		a.Print(theme.ErrorText.Render("Unknown command: /"+cmd) + " — type /help for available commands.")
-		return
-	}
-
-	// Bare text — depends on mode.
-	switch a.mode {
-	case ModeChat:
-		a.handleChatInput(input)
-	case ModeRun:
-		if a.runWorkflow == "" {
-			a.handleRunWorkflowSelect(input)
-		} else if len(a.pendingInputs) > 0 {
-			a.handleInputCollection(input)
-		} else {
-			a.handleRunInput(input)
-		}
-	default:
-		a.Print(theme.Faint.Render("Use /chat for chat mode or / for commands."))
-	}
-}
-
-func (a *App) setMode(mode AppMode) {
-	a.mode = mode
-	if a.rl != nil {
-		a.rl.SetPrompt(a.mode.Symbol() + " › ")
-	}
-}
-
-// listCommands prints all available commands with descriptions.
-func (a *App) listCommands() {
-	nameStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#F9FAFB")).
-		Background(lipgloss.Color("#374151")).
-		Padding(0, 1)
-
-	descStyle := lipgloss.NewStyle().Foreground(theme.Muted)
-
-	for _, cmd := range a.commands {
-		desc := cmd.Description
-		if cmd.HasSubcommands() {
-			var subs []string
-			for _, sub := range cmd.Subcommands {
-				subs = append(subs, sub.Name)
-			}
-			desc += " (" + strings.Join(subs, ", ") + ")"
-		}
-		fmt.Println(nameStyle.Render(cmd.Name) + " " + descStyle.Render(desc))
-	}
-}
-
-// handleChatInput sends input to the LLM.
-func (a *App) handleChatInput(input string) {
-	if a.engine == nil {
-		a.Print(theme.ErrorText.Render("No engine connection."))
-		return
-	}
-
-	a.Print(theme.Faint.Render("Thinking..."))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.cancelStream = cancel
-	defer func() { a.cancelStream = nil }()
-
-	messages := []llm.Message{{Role: "user", Content: input}}
-
-	resp, err := a.engine.Chat(ctx, messages, llm.Options{}, func(chunk string) {
-		fmt.Print(chunk)
-	})
-	fmt.Println()
-
-	if err != nil {
-		a.Print(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-
-	if resp.Usage != nil {
-		a.Print(theme.Faint.Render(fmt.Sprintf("  %s/%s · %d in / %d out tokens",
-			resp.Provider, resp.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens)))
-	}
-}
-
-// handleRunWorkflowSelect treats input as a workflow name in run mode.
-func (a *App) handleRunWorkflowSelect(input string) {
-	if a.engine == nil {
-		a.Print(theme.ErrorText.Render("No engine connection."))
-		return
-	}
-
-	node, err := a.engine.FindNodeByTitle(input)
-	if err != nil || node == nil || node.Type != "workflow" {
-		a.Print(theme.ErrorText.Render("Workflow not found: " + input))
-		return
-	}
-
-	a.runWorkflow = node.Title
-	a.setMode(ModeRun)
-	a.startExecution(node)
-}
-
-func (a *App) handleInputCollection(input string) {
-	currentVar := a.pendingInputs[0]
-	a.collectedInputs[currentVar] = input
-	a.pendingInputs = a.pendingInputs[1:]
-
-	if len(a.pendingInputs) > 0 {
-		a.promptForInput()
-		return
-	}
-
-	a.Print(theme.Faint.Render("All inputs collected. Starting execution..."))
-	a.startExecutionWithInputs(a.pendingNode, a.collectedInputs)
-	a.pendingNode = nil
-}
-
-func (a *App) promptForInput() {
-	if len(a.pendingInputs) == 0 {
-		return
-	}
-	varName := a.pendingInputs[0]
-	label := varName
-	desc := ""
-	example := ""
-	if meta, ok := a.inputMeta[varName]; ok {
-		if meta.Label != "" {
-			label = meta.Label
-		}
-		desc = meta.Description
-		example = meta.Example
-	}
-
-	prompt := theme.Bold.Render(label) + ":"
-	if desc != "" {
-		prompt += " " + theme.Faint.Render(desc)
-	}
-	if example != "" {
-		prompt += "\n  " + theme.Faint.Render("Example: "+example)
-	}
-	a.Print(prompt)
-}
-
-func (a *App) handleRunInput(input string) {
-	if a.executionID == "" || a.engine == nil {
-		a.Print(theme.Faint.Render("No active execution to respond to."))
-		return
-	}
-
-	a.Print(theme.Faint.Render("Resuming..."))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.cancelStream = cancel
-	defer func() { a.cancelStream = nil }()
-
-	execID := a.executionID
-
-	onProgress := func(evt exec.ProgressEvent) {
-		a.handleProgressEvent(evt)
-	}
-
-	_, err := a.engine.ResumeExecution(ctx, execID, input, onProgress)
-	if err != nil {
-		a.Print(theme.ErrorText.Render("Execution failed: " + err.Error()))
-	} else {
-		a.Print(theme.SuccessText.Render("Workflow completed."))
-	}
-	a.setMode(ModeCommand)
-}
-
-func (a *App) startExecution(node *storage.Node) {
-	plan, err := a.engine.BuildPlan(node.ID)
-	if err != nil {
-		a.Print(theme.ErrorText.Render("Plan error: " + err.Error()))
-		return
-	}
-
-	a.Print(theme.Title.Render("Run Mode") + " — " + plan.WorkflowTitle)
-
-	var b strings.Builder
-	for _, pg := range plan.PositionGroups {
-		for _, step := range pg.Steps {
-			gate := ""
-			if step.IsGate {
-				gate = theme.WarningText.Render(" (gate)")
-			}
-			b.WriteString(fmt.Sprintf("  %d. %s%s\n", step.Position, step.NodeTitle, gate))
-		}
-	}
-	a.Print(b.String())
-
-	if len(plan.InputVariables) > 0 {
-		a.pendingInputs = plan.InputVariables
-		a.collectedInputs = make(map[string]string)
-		a.pendingNode = node
-
-		a.inputMeta = make(map[string]inputMetaInfo)
-		for varName, meta := range plan.InputMeta {
-			a.inputMeta[varName] = inputMetaInfo{
-				Label:       meta.Label,
-				Description: meta.Description,
-				Example:     meta.Example,
-			}
-		}
-
-		a.Print(theme.Faint.Render(fmt.Sprintf(
-			"%d input(s) required. Enter each value and press enter.", len(plan.InputVariables))))
-		a.promptForInput()
-		return
-	}
-
-	a.startExecutionWithInputs(node, map[string]string{})
-}
-
-func (a *App) startExecutionWithInputs(node *storage.Node, inputs map[string]string) {
-	a.Print(theme.Faint.Render("Starting execution..."))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	a.cancelStream = cancel
-	defer func() { a.cancelStream = nil }()
-
-	onProgress := func(evt exec.ProgressEvent) {
-		a.handleProgressEvent(evt)
-	}
-
-	_, err := a.engine.RunWorkflow(ctx, node.ID, inputs, onProgress)
-	if err != nil {
-		a.Print(theme.ErrorText.Render("Execution failed: " + err.Error()))
-		a.setMode(ModeCommand)
-		return
-	}
-
-	if a.executionID != "" {
-		a.Print(theme.Faint.Render("Workflow paused at gate. Type your response."))
-	} else {
-		a.Print(theme.SuccessText.Render("Workflow completed."))
-		a.setMode(ModeCommand)
-	}
-}
-
-func (a *App) handleProgressEvent(evt exec.ProgressEvent) {
-	switch evt.Type {
-	case "execution-started":
-		a.executionID = evt.ExecutionID
-	case "step-started":
-		a.Print(theme.Faint.Render("  ◌ ") + evt.NodeTitle)
-	case "step-chunk":
-		fmt.Print(evt.Chunk)
-	case "step-completed":
-		status := theme.SuccessText.Render("  ✓ ") + evt.NodeTitle
-		if evt.Provider != "" {
-			status += theme.Faint.Render(" (" + evt.Provider + ")")
-		}
-		if evt.TokenUsage != nil {
-			status += theme.Faint.Render(fmt.Sprintf(" %d tokens", evt.TokenUsage.Total))
-		}
-		a.Print(status)
-	case "step-failed":
-		a.Print(theme.ErrorText.Render("  ✗ " + evt.NodeTitle + ": " + evt.Error))
-	case "step-awaiting-input":
-		a.Print(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
-		if evt.GateInstructions != "" {
-			a.Print(evt.GateInstructions)
-		}
-		a.Print(theme.Faint.Render("Type your response and press enter to continue."))
-	}
-}
-
-func historyPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	dir := filepath.Join(home, ".skrptiq")
-	os.MkdirAll(dir, 0755)
-	return filepath.Join(dir, "cli_history")
-}
-
-// lipgloss is used by handlers.go in this package.
+// lipgloss is used by handlers.go.
 var _ = lipgloss.NewStyle

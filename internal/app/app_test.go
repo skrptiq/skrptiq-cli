@@ -93,18 +93,18 @@ func TestHelpTextContainsAllCommands(t *testing.T) {
 
 // --- Command routing tests ---
 
-// testApp creates a minimal App for testing command handlers.
+// testModel creates a minimal Model for testing command handlers.
 // Engine is nil — handlers should handle that gracefully.
-func testApp() *App {
-	a := &App{
+func testModel() *Model {
+	m := &Model{
 		mode:     ModeCommand,
 		commands: BuildCommands(nil),
 	}
-	return a
+	return m
 }
 
 func TestHandleSlashCommandRouting(t *testing.T) {
-	a := testApp()
+	m := testModel()
 
 	// Commands that should be handled.
 	handled := []string{
@@ -116,7 +116,7 @@ func TestHandleSlashCommandRouting(t *testing.T) {
 	}
 
 	for _, cmd := range handled {
-		if !a.handleSlashCommand(cmd, "") {
+		if !m.handleSlashCommand(cmd, "") {
 			t.Errorf("expected %q to be handled", cmd)
 		}
 	}
@@ -127,50 +127,50 @@ func TestHandleSlashCommandRouting(t *testing.T) {
 	}
 
 	for _, cmd := range unhandled {
-		if a.handleSlashCommand(cmd, "") {
+		if m.handleSlashCommand(cmd, "") {
 			t.Errorf("expected %q to NOT be handled", cmd)
 		}
 	}
 }
 
 func TestHandleSlashCommandModeSwitch(t *testing.T) {
-	a := testApp()
+	m := testModel()
 
 	// Enter chat mode.
-	a.handleSlashCommand("chat", "")
-	if a.mode != ModeChat {
-		t.Errorf("expected ModeChat, got %d", a.mode)
+	m.handleSlashCommand("chat", "")
+	if m.mode != ModeChat {
+		t.Errorf("expected ModeChat, got %d", m.mode)
 	}
 
 	// Enter run mode.
-	a.handleSlashCommand("run", "")
-	if a.mode != ModeRun {
-		t.Errorf("expected ModeRun, got %d", a.mode)
+	m.handleSlashCommand("run", "")
+	if m.mode != ModeRun {
+		t.Errorf("expected ModeRun, got %d", m.mode)
 	}
 
 	// Exit to command mode.
-	a.handleSlashCommand("exit", "")
-	if a.mode != ModeCommand {
-		t.Errorf("expected ModeCommand, got %d", a.mode)
+	m.handleSlashCommand("exit", "")
+	if m.mode != ModeCommand {
+		t.Errorf("expected ModeCommand, got %d", m.mode)
 	}
 
 	// /command also returns to command mode.
-	a.handleSlashCommand("chat", "")
-	a.handleSlashCommand("command", "")
-	if a.mode != ModeCommand {
-		t.Errorf("expected ModeCommand from /command, got %d", a.mode)
+	m.handleSlashCommand("chat", "")
+	m.handleSlashCommand("command", "")
+	if m.mode != ModeCommand {
+		t.Errorf("expected ModeCommand from /command, got %d", m.mode)
 	}
 }
 
 func TestHandleSlashCommandRunWithWorkflow(t *testing.T) {
-	a := testApp()
+	m := testModel()
 
-	a.handleSlashCommand("run", "Blog Post Pipeline")
-	if a.mode != ModeRun {
-		t.Errorf("expected ModeRun, got %d", a.mode)
+	m.handleSlashCommand("run", "Blog Post Pipeline")
+	if m.mode != ModeRun {
+		t.Errorf("expected ModeRun, got %d", m.mode)
 	}
-	if a.runWorkflow != "Blog Post Pipeline" {
-		t.Errorf("expected runWorkflow to be set, got %q", a.runWorkflow)
+	if m.runWorkflow != "Blog Post Pipeline" {
+		t.Errorf("expected runWorkflow to be set, got %q", m.runWorkflow)
 	}
 }
 
@@ -178,22 +178,22 @@ func TestHandleSlashCommandRunWithWorkflow(t *testing.T) {
 // Verify handlers don't panic when engine is nil.
 
 func TestHandlersWithNilEngine(t *testing.T) {
-	a := testApp()
+	m := testModel()
 
 	// These should all print an error message but not panic.
-	a.handleSlashCommand("list", "")
-	a.handleSlashCommand("show", "test")
-	a.handleSlashCommand("search", "test")
-	a.handleSlashCommand("hub", "list")
-	a.handleSlashCommand("runs", "list")
-	a.handleSlashCommand("profile", "list")
-	a.handleSlashCommand("mcp", "list")
-	a.handleSlashCommand("providers", "list")
-	a.handleSlashCommand("tags", "list")
-	a.handleSlashCommand("tag", "node tag")
-	a.handleSlashCommand("untag", "node tag")
-	a.handleSlashCommand("config", "show")
-	a.handleSlashCommand("settings", "connections")
+	m.handleSlashCommand("list", "")
+	m.handleSlashCommand("show", "test")
+	m.handleSlashCommand("search", "test")
+	m.handleSlashCommand("hub", "list")
+	m.handleSlashCommand("runs", "list")
+	m.handleSlashCommand("profile", "list")
+	m.handleSlashCommand("mcp", "list")
+	m.handleSlashCommand("providers", "list")
+	m.handleSlashCommand("tags", "list")
+	m.handleSlashCommand("tag", "node tag")
+	m.handleSlashCommand("untag", "node tag")
+	m.handleSlashCommand("config", "show")
+	m.handleSlashCommand("settings", "connections")
 }
 
 // --- Usage block tests ---
@@ -305,25 +305,25 @@ func TestBuildCommandsRunHasArgProvider(t *testing.T) {
 // --- handleInput bare text tests ---
 
 func TestHandleInputBareTextInCommandMode(t *testing.T) {
-	a := testApp()
-	a.mode = ModeCommand
+	m := testModel()
+	m.mode = ModeCommand
 	// Bare text in command mode should not panic.
-	a.handleInput("some random text")
+	m.handleInput("some random text")
 }
 
 func TestHandleInputSlashInAnyMode(t *testing.T) {
-	a := testApp()
+	m := testModel()
 
 	// Slash commands work in chat mode.
-	a.mode = ModeChat
-	a.handleInput("/help")
+	m.mode = ModeChat
+	m.handleInput("/help")
 	// Should still be handled (help prints, no crash).
 
 	// Slash commands work in run mode.
-	a.mode = ModeRun
-	a.handleInput("/exit")
-	if a.mode != ModeCommand {
-		t.Errorf("expected ModeCommand after /exit in run mode, got %d", a.mode)
+	m.mode = ModeRun
+	m.handleInput("/exit")
+	if m.mode != ModeCommand {
+		t.Errorf("expected ModeCommand after /exit in run mode, got %d", m.mode)
 	}
 }
 
@@ -336,17 +336,3 @@ func TestNoEngineMsg(t *testing.T) {
 	}
 }
 
-// --- historyPath tests ---
-
-func TestHistoryPath(t *testing.T) {
-	path := historyPath()
-	if path == "" {
-		t.Error("expected non-empty history path")
-	}
-	if !strings.Contains(path, ".skrptiq") {
-		t.Errorf("expected path to contain .skrptiq, got %q", path)
-	}
-	if !strings.HasSuffix(path, "cli_history") {
-		t.Errorf("expected path to end with cli_history, got %q", path)
-	}
-}
