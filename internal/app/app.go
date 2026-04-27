@@ -243,6 +243,12 @@ func (a *App) Run() {
 }
 
 func (a *App) handleInput(input string) {
+	// Bare "/" shows the command list with descriptions.
+	if input == "/" {
+		a.listCommands()
+		return
+	}
+
 	// Slash commands work in any mode.
 	if strings.HasPrefix(input, "/") {
 		stripped := input[1:]
@@ -575,6 +581,25 @@ func (a *App) buildCompleter() *readline.PrefixCompleter {
 	}
 
 	return readline.NewPrefixCompleter(items...)
+}
+
+// listCommands prints all available commands with descriptions.
+// Called when user types "/" and presses enter.
+func (a *App) listCommands() {
+	labelStyle := lipgloss.NewStyle().Foreground(theme.Primary).Width(16)
+	descStyle := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	a.Print("")
+	a.Print(theme.Title.Render("Commands"))
+	a.Print("")
+	for _, cmd := range a.commands {
+		line := "  " + labelStyle.Render(cmd.Name) + descStyle.Render(cmd.Description)
+		a.Print(line)
+		for _, sub := range cmd.Subcommands {
+			a.Print("    " + labelStyle.Render(sub.Name) + descStyle.Render(sub.Description))
+		}
+	}
+	a.Print("")
 }
 
 func historyPath() string {

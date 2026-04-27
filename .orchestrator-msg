@@ -1,7 +1,5 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- Proper startup banner with visual hierarchy: separator lines, app name, version, tagline, profile, workspace, MCP status
-- Single-line prompt: `⚡ command · Profile Name ›`
-- Double Ctrl+D to exit (500ms window, shows hint on first press)
-- Hint text at startup: "Type naturally to chat, or / for commands."
+- Typing `/` and enter shows a formatted command list with descriptions and subcommands (replaces the flat readline completion display)
+- Tab still works for inline completion, but `/` gives the readable reference
