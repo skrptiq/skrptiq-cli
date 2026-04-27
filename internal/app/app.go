@@ -99,11 +99,7 @@ func New() (*App, error) {
 		}
 	}
 
-	prompt := fmt.Sprintf("%s %s · %s\n%s ",
-		theme.Faint.Render("command"),
-		theme.Faint.Render("·"),
-		theme.Faint.Render(profileName),
-		theme.Bold.Render("⚡"))
+	prompt := "⚡ " + theme.Faint.Render("command · "+profileName) + " › "
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          prompt,
@@ -278,12 +274,11 @@ func (a *App) updatePrompt() {
 		right = "/exit or esc to cancel"
 	}
 
-	contextLine := theme.Faint.Render(left)
+	prompt := a.mode.Symbol() + " " + theme.Faint.Render(left)
 	if right != "" {
-		contextLine += "  " + theme.Faint.Render(right)
+		prompt += "  " + theme.Faint.Render(right)
 	}
-
-	prompt := contextLine + "\n" + theme.Bold.Render(a.mode.Symbol()) + " "
+	prompt += " › "
 	if a.rl != nil {
 		a.rl.SetPrompt(prompt)
 	}

@@ -1,15 +1,4 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- 40 tests across engine and app packages
-- CLAUDE.md updated: testing is mandatory, write tests alongside code, no mocks unless unavoidable
-- Tech stack section updated to reflect readline architecture
-
-### Test coverage
-**Engine (22 tests):** DefaultDBPath, Open valid/invalid, all query methods with empty DB, node CRUD + search, profile CRUD + find, formatDuration, hub imports, MCP servers, providers, connections, settings, executions, run prefix search.
-
-**App (18 tests):** Type methods (HasSubcommands, ModeLabel, ModeSymbol), splitFirst parsing, helpText completeness, command routing for all commands, mode switching (chat/run/command/exit), nil engine graceful handling, usage block formatting, status icons, BuildCommands registry validation, subcommand structure, ArgProvider with nil engine, bare text handling, slash commands in any mode, historyPath, noEngineMsg.
-
-### Tests
-- `go test ./...` — 40 tests, all passing
-- `go vet ./...` — clean
+Single-line prompt — no more duplicate context on empty returns. Format: `⚡ command · Profile Name ›`
