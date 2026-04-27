@@ -209,7 +209,7 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 	fmt.Println()
 	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or "+theme.ActionKey.Render("/")+" for commands. "+theme.ActionKey.Render("/help")+" for the full list."))
 	fmt.Println()
-	fmt.Println(sep)
+	fmt.Println(a.statusBar())
 }
 
 // Run is the main input loop.
@@ -256,6 +256,7 @@ func (a *App) Run() {
 		}
 
 		a.handleInput(line)
+		fmt.Println(a.statusBar())
 	}
 }
 
@@ -320,7 +321,17 @@ func (a *App) updatePrompt() {
 	w := a.termWidth()
 	sep := theme.Faint.Render(strings.Repeat("─", w))
 
-	// Build status parts.
+	// Prompt: top separator + input symbol only.
+	prompt := sep + "\n" + a.mode.Symbol() + " › "
+	if a.rl != nil {
+		a.rl.SetPrompt(prompt)
+	}
+}
+
+// statusBar returns the status line shown below the input area.
+func (a *App) statusBar() string {
+	w := a.termWidth()
+
 	var parts []string
 	parts = append(parts, a.mode.Label())
 
@@ -341,12 +352,20 @@ func (a *App) updatePrompt() {
 		}
 	}
 
-	status := theme.Faint.Render(strings.Join(parts, " · "))
+	text := " " + strings.Join(parts, " · ") + " "
 
-	prompt := sep + "\n" + status + "\n" + a.mode.Symbol() + " › "
-	if a.rl != nil {
-		a.rl.SetPrompt(prompt)
+	// Pad to full width.
+	pad := w - len(text)
+	if pad > 0 {
+		text += strings.Repeat(" ", pad)
 	}
+
+	bar := lipgloss.NewStyle().
+		Background(lipgloss.Color("#1F2937")).
+		Foreground(lipgloss.Color("#9CA3AF")).
+		Render(text)
+
+	return bar
 }
 
 // handleChatInput sends input to the LLM.
