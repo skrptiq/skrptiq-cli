@@ -306,7 +306,7 @@ func (a *App) Run() {
 				fmt.Println()
 				continue
 			}
-			if err == io.EOF {
+			if err == io.EOF || err == readline.ErrEOF {
 				now := time.Now()
 				if now.Sub(lastEOF) < 500*time.Millisecond {
 					fmt.Println()
