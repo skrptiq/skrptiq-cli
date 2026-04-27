@@ -9,8 +9,10 @@ dist/
 *.out
 *.prof
 
-# Claude
+# Claude / orchestrator
 .claude/settings.local.json
+.orchestrator-msg
+docs/BRIEFING.md
 
 # IDE
 .idea/
