@@ -1,23 +1,7 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Replaced readline with bubbletea inline mode for the prompt. This gives us the Claude Code-style layout:
-
-- **Managed region at bottom**: separator + textarea + separator + status bar (4+ lines)
-- **tea.Println() for scrollback**: all output goes above the managed region permanently
-- **Separators only around active prompt**: they're part of the bubbletea View(), redrawn each frame, never in scrollback
-- **Status bar below prompt**: mode, profile, provider — always visible
-- **tea.WithInputTTY()**: reliable key input
-- **Ctrl+C/D/Esc**: intercepted before textarea sees them
-- **Multi-line wrapping**: textarea expands up to 8 lines
-
-### Architecture
-```
-internal/prompt/prompt.go — minimal bubbletea model (separator + textarea + separator + status)
-internal/app/app.go       — top-level model wrapping prompt, all command handlers
-main.go                   — creates program with tea.WithInputTTY(), no alt screen
-```
-
-### Tests
-- `go test ./...` — all passing
-- `go build ./...` — clean
+- Execution now runs in goroutines — no longer blocks bubbletea's render loop
+- Chat streaming, workflow execution, and gate resume all run async
+- Progress events print via Program.Println from goroutines (safe — outside renderer lock)
+- Prompt stays responsive during execution

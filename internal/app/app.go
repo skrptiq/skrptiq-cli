@@ -362,24 +362,28 @@ func (m *Model) handleChatInput(input string) {
 		m.Print(theme.ErrorText.Render("No engine connection."))
 		return
 	}
-	m.Print(theme.Faint.Render("Thinking..."))
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelStream = cancel
-	defer func() { m.cancelStream = nil }()
+	p := m.program
+	engine := m.engine
 
-	messages := []llm.Message{{Role: "user", Content: input}}
-	resp, err := m.engine.Chat(ctx, messages, llm.Options{}, func(chunk string) {
-		fmt.Print(chunk) // stream directly
-	})
-	fmt.Println()
-	if err != nil {
-		m.Print(theme.ErrorText.Render("Error: " + err.Error()))
-		return
-	}
-	if resp.Usage != nil {
-		m.Print(theme.Faint.Render(fmt.Sprintf("  %s/%s · %d in / %d out tokens",
-			resp.Provider, resp.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens)))
-	}
+	go func() {
+		p.Println(theme.Faint.Render("Thinking..."))
+		messages := []llm.Message{{Role: "user", Content: input}}
+		resp, err := engine.Chat(ctx, messages, llm.Options{}, func(chunk string) {
+			fmt.Print(chunk)
+		})
+		fmt.Println()
+		cancel()
+		if err != nil {
+			p.Println(theme.ErrorText.Render("Error: " + err.Error()))
+			return
+		}
+		if resp.Usage != nil {
+			p.Println(theme.Faint.Render(fmt.Sprintf("  %s/%s · %d in / %d out tokens",
+				resp.Provider, resp.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens)))
+		}
+	}()
 }
 
 func (m *Model) handleRunWorkflowSelect(input string) {
@@ -422,19 +426,39 @@ func (m *Model) handleRunInput(input string) {
 	if m.executionID == "" || m.engine == nil {
 		m.Print(theme.Faint.Render("No active execution.")); return
 	}
-	m.Print(theme.Faint.Render("Resuming..."))
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelStream = cancel
-	defer func() { m.cancelStream = nil }()
-	_, err := m.engine.ResumeExecution(ctx, m.executionID, input, func(evt exec.ProgressEvent) {
-		m.handleProgressEvent(evt)
-	})
-	if err != nil {
-		m.Print(theme.ErrorText.Render("Execution failed: " + err.Error()))
-	} else {
-		m.Print(theme.SuccessText.Render("Workflow completed."))
-	}
-	m.setMode(ModeCommand)
+	p := m.program
+	engine := m.engine
+	execID := m.executionID
+
+	go func() {
+		p.Println(theme.Faint.Render("Resuming..."))
+		_, err := engine.ResumeExecution(ctx, execID, input, func(evt exec.ProgressEvent) {
+			switch evt.Type {
+			case "step-started":
+				p.Println(theme.Faint.Render("  ◌ ") + evt.NodeTitle)
+			case "step-chunk":
+				fmt.Print(evt.Chunk)
+			case "step-completed":
+				s := theme.SuccessText.Render("  ✓ ") + evt.NodeTitle
+				if evt.Provider != "" { s += theme.Faint.Render(" (" + evt.Provider + ")") }
+				p.Println(s)
+			case "step-failed":
+				p.Println(theme.ErrorText.Render("  ✗ " + evt.NodeTitle + ": " + evt.Error))
+			case "step-awaiting-input":
+				p.Println(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
+				if evt.GateInstructions != "" { p.Println(evt.GateInstructions) }
+				p.Println(theme.Faint.Render("Type your response and press enter."))
+			}
+		})
+		cancel()
+		if err != nil {
+			p.Println(theme.ErrorText.Render("Execution failed: " + err.Error()))
+		} else {
+			p.Println(theme.SuccessText.Render("Workflow completed."))
+		}
+	}()
 }
 
 func (m *Model) startExecution(node *storage.Node) {
@@ -466,47 +490,48 @@ func (m *Model) startExecution(node *storage.Node) {
 }
 
 func (m *Model) startExecutionWithInputs(node *storage.Node, inputs map[string]string) {
-	m.Print(theme.Faint.Render("Starting execution..."))
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelStream = cancel
-	defer func() { m.cancelStream = nil }()
-	_, err := m.engine.RunWorkflow(ctx, node.ID, inputs, func(evt exec.ProgressEvent) {
-		m.handleProgressEvent(evt)
-	})
-	if err != nil {
-		m.Print(theme.ErrorText.Render("Execution failed: " + err.Error()))
-		m.setMode(ModeCommand)
-		return
-	}
-	if m.executionID != "" {
-		m.Print(theme.Faint.Render("Workflow paused at gate. Type your response."))
-	} else {
-		m.Print(theme.SuccessText.Render("Workflow completed."))
-		m.setMode(ModeCommand)
-	}
+	p := m.program
+	engine := m.engine
+	nodeID := node.ID
+
+	go func() {
+		p.Println(theme.Faint.Render("Starting execution..."))
+		_, err := engine.RunWorkflow(ctx, nodeID, inputs, func(evt exec.ProgressEvent) {
+			switch evt.Type {
+			case "execution-started":
+				m.executionID = evt.ExecutionID
+			case "step-started":
+				p.Println(theme.Faint.Render("  ◌ ") + evt.NodeTitle)
+			case "step-chunk":
+				fmt.Print(evt.Chunk)
+			case "step-completed":
+				s := theme.SuccessText.Render("  ✓ ") + evt.NodeTitle
+				if evt.Provider != "" { s += theme.Faint.Render(" (" + evt.Provider + ")") }
+				if evt.TokenUsage != nil { s += theme.Faint.Render(fmt.Sprintf(" %d tokens", evt.TokenUsage.Total)) }
+				p.Println(s)
+			case "step-failed":
+				p.Println(theme.ErrorText.Render("  ✗ " + evt.NodeTitle + ": " + evt.Error))
+			case "step-awaiting-input":
+				p.Println(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
+				if evt.GateInstructions != "" { p.Println(evt.GateInstructions) }
+				p.Println(theme.Faint.Render("Type your response and press enter."))
+			}
+		})
+		cancel()
+		if err != nil {
+			p.Println(theme.ErrorText.Render("Execution failed: " + err.Error()))
+			return
+		}
+		if m.executionID != "" {
+			p.Println(theme.Faint.Render("Workflow paused at gate. Type your response."))
+		} else {
+			p.Println(theme.SuccessText.Render("Workflow completed."))
+		}
+	}()
 }
 
-func (m *Model) handleProgressEvent(evt exec.ProgressEvent) {
-	switch evt.Type {
-	case "execution-started":
-		m.executionID = evt.ExecutionID
-	case "step-started":
-		m.Print(theme.Faint.Render("  ◌ ") + evt.NodeTitle)
-	case "step-chunk":
-		fmt.Print(evt.Chunk)
-	case "step-completed":
-		s := theme.SuccessText.Render("  ✓ ") + evt.NodeTitle
-		if evt.Provider != "" { s += theme.Faint.Render(" (" + evt.Provider + ")") }
-		if evt.TokenUsage != nil { s += theme.Faint.Render(fmt.Sprintf(" %d tokens", evt.TokenUsage.Total)) }
-		m.Print(s)
-	case "step-failed":
-		m.Print(theme.ErrorText.Render("  ✗ " + evt.NodeTitle + ": " + evt.Error))
-	case "step-awaiting-input":
-		m.Print(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
-		if evt.GateInstructions != "" { m.Print(evt.GateInstructions) }
-		m.Print(theme.Faint.Render("Type your response and press enter."))
-	}
-}
 
 func printBanner(engine *eng.App, engineErr error) {
 	w, _, _ := term.GetSize(os.Stdout.Fd())
