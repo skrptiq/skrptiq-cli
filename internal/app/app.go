@@ -584,22 +584,25 @@ func (a *App) buildCompleter() *readline.PrefixCompleter {
 }
 
 // listCommands prints all available commands with descriptions.
-// Called when user types "/" and presses enter.
 func (a *App) listCommands() {
-	labelStyle := lipgloss.NewStyle().Foreground(theme.Primary).Width(16)
+	nameStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#F9FAFB")).
+		Background(lipgloss.Color("#374151")).
+		Padding(0, 1)
+
 	descStyle := lipgloss.NewStyle().Foreground(theme.Muted)
 
-	a.Print("")
-	a.Print(theme.Title.Render("Commands"))
-	a.Print("")
 	for _, cmd := range a.commands {
-		line := "  " + labelStyle.Render(cmd.Name) + descStyle.Render(cmd.Description)
-		a.Print(line)
-		for _, sub := range cmd.Subcommands {
-			a.Print("    " + labelStyle.Render(sub.Name) + descStyle.Render(sub.Description))
+		desc := cmd.Description
+		if cmd.HasSubcommands() {
+			var subs []string
+			for _, sub := range cmd.Subcommands {
+				subs = append(subs, sub.Name)
+			}
+			desc += " (" + strings.Join(subs, ", ") + ")"
 		}
+		fmt.Println(nameStyle.Render(cmd.Name) + " " + descStyle.Render(desc))
 	}
-	a.Print("")
 }
 
 func historyPath() string {
