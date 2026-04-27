@@ -108,6 +108,9 @@ func New() (*App, error) {
 	}
 	a.rl = rl
 
+	// Set up fixed status bar at bottom of terminal.
+	a.setupStatusBar()
+
 	// Print startup banner.
 	a.printBanner(engine, engineErr)
 
@@ -116,6 +119,7 @@ func New() (*App, error) {
 
 // Close cleans up resources.
 func (a *App) Close() {
+	a.resetTerminal()
 	if a.rl != nil {
 		a.rl.Close()
 	}
@@ -127,6 +131,71 @@ func (a *App) Close() {
 // Print prints a line to the terminal (persists in scrollback).
 func (a *App) Print(text string) {
 	fmt.Println(text)
+}
+
+// setupStatusBar reserves the bottom row for a persistent status bar
+// by setting the terminal's scroll region.
+func (a *App) setupStatusBar() {
+	_, rows, err := term.GetSize(os.Stdout.Fd())
+	if err != nil || rows < 5 {
+		return
+	}
+	// Set scroll region to rows 1..(rows-1), reserving the last row.
+	fmt.Printf("\033[1;%dr", rows-1)
+	// Move cursor to top of scroll region.
+	fmt.Print("\033[H")
+	// Render the status bar on the reserved bottom row.
+	a.renderStatusBar()
+}
+
+// renderStatusBar draws the status bar on the last terminal row.
+func (a *App) renderStatusBar() {
+	_, rows, err := term.GetSize(os.Stdout.Fd())
+	if err != nil || rows < 5 {
+		return
+	}
+	w := a.termWidth()
+
+	// Build status text.
+	var parts []string
+	parts = append(parts, a.mode.Label())
+	if a.engine != nil {
+		if p, _ := a.engine.ActiveProfile("voice"); p != nil {
+			parts = append(parts, p.Name)
+		}
+	}
+	switch a.mode {
+	case ModeChat:
+		if a.chatProvider != "" {
+			parts = append(parts, a.chatProvider)
+		}
+	case ModeRun:
+		if a.runWorkflow != "" {
+			parts = append(parts, a.runWorkflow)
+		}
+	}
+
+	text := " " + strings.Join(parts, " · ")
+	// Pad to full width.
+	if len(text) < w {
+		text += strings.Repeat(" ", w-len(text))
+	}
+
+	bar := lipgloss.NewStyle().
+		Background(lipgloss.Color("#1F2937")).
+		Foreground(lipgloss.Color("#9CA3AF")).
+		Render(text)
+
+	// Save cursor, move to last row, print, restore cursor.
+	fmt.Printf("\033[s\033[%d;1H%s\033[u", rows, bar)
+}
+
+// resetTerminal restores the terminal scroll region on exit.
+func (a *App) resetTerminal() {
+	// Reset scroll region to full terminal.
+	fmt.Print("\033[r")
+	// Move cursor to bottom.
+	fmt.Print("\033[999;1H\n")
 }
 
 func (a *App) termWidth() int {
@@ -209,7 +278,7 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 	fmt.Println()
 	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or "+theme.ActionKey.Render("/")+" for commands. "+theme.ActionKey.Render("/help")+" for the full list."))
 	fmt.Println()
-	fmt.Println(a.statusBar())
+	a.renderStatusBar()
 }
 
 // Run is the main input loop.
@@ -256,7 +325,7 @@ func (a *App) Run() {
 		}
 
 		a.handleInput(line)
-		fmt.Println(a.statusBar())
+		a.renderStatusBar()
 	}
 }
 
@@ -315,6 +384,7 @@ func (a *App) handleInput(input string) {
 func (a *App) setMode(mode AppMode) {
 	a.mode = mode
 	a.updatePrompt()
+	a.renderStatusBar()
 }
 
 func (a *App) updatePrompt() {
@@ -328,45 +398,6 @@ func (a *App) updatePrompt() {
 	}
 }
 
-// statusBar returns the status line shown below the input area.
-func (a *App) statusBar() string {
-	w := a.termWidth()
-
-	var parts []string
-	parts = append(parts, a.mode.Label())
-
-	if a.engine != nil {
-		if p, _ := a.engine.ActiveProfile("voice"); p != nil {
-			parts = append(parts, p.Name)
-		}
-	}
-
-	switch a.mode {
-	case ModeChat:
-		if a.chatProvider != "" {
-			parts = append(parts, a.chatProvider)
-		}
-	case ModeRun:
-		if a.runWorkflow != "" {
-			parts = append(parts, a.runWorkflow)
-		}
-	}
-
-	text := " " + strings.Join(parts, " · ") + " "
-
-	// Pad to full width.
-	pad := w - len(text)
-	if pad > 0 {
-		text += strings.Repeat(" ", pad)
-	}
-
-	bar := lipgloss.NewStyle().
-		Background(lipgloss.Color("#1F2937")).
-		Foreground(lipgloss.Color("#9CA3AF")).
-		Render(text)
-
-	return bar
-}
 
 // handleChatInput sends input to the LLM.
 func (a *App) handleChatInput(input string) {
