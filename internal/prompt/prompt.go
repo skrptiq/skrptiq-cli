@@ -3,6 +3,7 @@
 package prompt
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -202,22 +203,40 @@ func (m Model) View() string {
 		Width(m.width).
 		Render(" " + m.status)
 
-	// Show completion matches as a vertical list.
+	// Show completion matches as a vertical list, max 5 visible.
 	completionView := ""
 	if len(m.tabMatches) > 0 {
+		const maxVisible = 5
 		matchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF"))
 		selectedStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F9FAFB")).
 			Background(lipgloss.Color("#374151")).
 			Width(m.width)
 
-		var lines []string
-		for i, match := range m.tabMatches {
-			if i == m.tabIndex {
-				lines = append(lines, selectedStyle.Render(" › "+match))
-			} else {
-				lines = append(lines, matchStyle.Render("   "+match))
+		// Calculate visible window around the selected item.
+		start := 0
+		if m.tabIndex >= maxVisible {
+			start = m.tabIndex - maxVisible + 1
+		}
+		end := start + maxVisible
+		if end > len(m.tabMatches) {
+			end = len(m.tabMatches)
+			start = end - maxVisible
+			if start < 0 {
+				start = 0
 			}
+		}
+
+		var lines []string
+		for i := start; i < end; i++ {
+			if i == m.tabIndex {
+				lines = append(lines, selectedStyle.Render(" › "+m.tabMatches[i]))
+			} else {
+				lines = append(lines, matchStyle.Render("   "+m.tabMatches[i]))
+			}
+		}
+		if len(m.tabMatches) > maxVisible {
+			lines = append(lines, matchStyle.Render(fmt.Sprintf("   %d/%d", m.tabIndex+1, len(m.tabMatches))))
 		}
 		completionView = strings.Join(lines, "\n") + "\n"
 	}
