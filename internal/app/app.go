@@ -93,6 +93,40 @@ func New() Model {
 	m.commands = BuildCommands(engine)
 	m.prompt = prompt.New(m.mode.Symbol(), m.statusText())
 
+	// Wire tab completion.
+	m.prompt.SetTabComplete(func(input string) []string {
+		if !strings.HasPrefix(input, "/") {
+			return nil
+		}
+		var matches []string
+		parts := strings.SplitN(input, " ", 2)
+		cmdName := parts[0]
+
+		if len(parts) == 1 {
+			// Match command names.
+			for _, cmd := range m.commands {
+				if strings.HasPrefix(strings.ToLower(cmd.Name), strings.ToLower(input)) {
+					matches = append(matches, cmd.Name)
+				}
+			}
+		} else {
+			// Match subcommands.
+			for _, cmd := range m.commands {
+				if strings.EqualFold(cmd.Name, cmdName) {
+					sub := parts[1]
+					for _, s := range cmd.Subcommands {
+						full := cmd.Name + " " + s.Name
+						if sub == "" || strings.HasPrefix(strings.ToLower(s.Name), strings.ToLower(sub)) {
+							matches = append(matches, full)
+						}
+					}
+					break
+				}
+			}
+		}
+		return matches
+	})
+
 	// Print banner before bubbletea starts.
 	printBanner(engine, engineErr)
 
@@ -216,7 +250,16 @@ func (m Model) statusText() string {
 			parts = append(parts, m.runWorkflow)
 		}
 	}
-	return strings.Join(parts, " · ")
+	status := strings.Join(parts, " · ")
+	switch m.mode {
+	case ModeCommand:
+		status += "  ·  / for commands  ·  /chat to chat  ·  ctrl+d ctrl+d to exit"
+	case ModeChat:
+		status += "  ·  /exit to return  ·  ctrl+c to cancel"
+	case ModeRun:
+		status += "  ·  /exit to return  ·  esc to cancel"
+	}
+	return status
 }
 
 func (m *Model) handleInput(input string) {
@@ -471,8 +514,6 @@ func printBanner(engine *eng.App, engineErr error) {
 		fmt.Println("  " + labelStyle.Render("Profile:") + profile)
 		fmt.Println("  " + labelStyle.Render("Workspace:") + workspace)
 	}
-	fmt.Println()
-	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or / for commands. /help for the full list."))
 	fmt.Println()
 }
 

@@ -3,26 +3,42 @@
 package prompt
 
 import (
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
-	"os"
 )
+
+// TabCompleteFunc returns completions for the current input.
+type TabCompleteFunc func(input string) []string
 
 // SubmitMsg is sent when the user presses enter.
 type SubmitMsg struct {
 	Text string
 }
 
+// CtrlCMsg is sent on Ctrl+C.
+type CtrlCMsg struct{}
+
+// CtrlDMsg is sent on Ctrl+D.
+type CtrlDMsg struct{}
+
+// EscMsg is sent on Escape.
+type EscMsg struct{}
+
 // Model is the inline prompt — separator + textarea + separator + status.
 type Model struct {
-	textarea textarea.Model
-	width    int
-	status   string
-	symbol   string
+	textarea    textarea.Model
+	width       int
+	status      string
+	symbol      string
+	tabComplete TabCompleteFunc
+	tabMatches  []string
+	tabIndex    int
+	tabOriginal string
 }
 
 // New creates a new prompt model.
@@ -62,6 +78,11 @@ func (m *Model) SetSymbol(s string) {
 	m.textarea.Prompt = s + " › "
 }
 
+// SetTabComplete sets the tab completion function.
+func (m *Model) SetTabComplete(fn TabCompleteFunc) {
+	m.tabComplete = fn
+}
+
 func (m Model) Init() tea.Cmd {
 	return textarea.Blink
 }
@@ -83,11 +104,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			text := strings.TrimSpace(m.textarea.Value())
 			if text != "" {
 				m.textarea.Reset()
+				m.tabMatches = nil
 				return m, func() tea.Msg { return SubmitMsg{Text: text} }
 			}
 			return m, nil
 		case tea.KeyEscape:
+			m.tabMatches = nil
 			return m, func() tea.Msg { return EscMsg{} }
+		case tea.KeyTab:
+			if m.tabComplete != nil {
+				m.handleTab()
+				return m, nil
+			}
+		}
+
+		// Any non-tab key clears tab state.
+		if msg.Type != tea.KeyTab {
+			m.tabMatches = nil
 		}
 	}
 
@@ -97,9 +130,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *Model) handleTab() {
+	input := m.textarea.Value()
+
+	if len(m.tabMatches) == 0 {
+		// First tab — get matches.
+		m.tabMatches = m.tabComplete(input)
+		m.tabIndex = 0
+		m.tabOriginal = input
+	} else {
+		// Subsequent tabs — cycle through matches.
+		m.tabIndex = (m.tabIndex + 1) % len(m.tabMatches)
+	}
+
+	if len(m.tabMatches) == 0 {
+		return
+	}
+
+	// Insert the match.
+	m.textarea.Reset()
+	m.textarea.SetValue(m.tabMatches[m.tabIndex])
+	// Move cursor to end.
+	val := m.tabMatches[m.tabIndex]
+	for range val {
+		m.textarea.SetCursor(len(val))
+	}
+}
+
 func (m Model) View() string {
-	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("#4B5563")).
-		Render(strings.Repeat("─", m.width))
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#4B5563"))
+	sep := sepStyle.Render(strings.Repeat("─", m.width))
 
 	statusBar := lipgloss.NewStyle().
 		Background(lipgloss.Color("#1F2937")).
@@ -109,15 +169,6 @@ func (m Model) View() string {
 
 	return sep + "\n" + m.textarea.View() + "\n" + sep + "\n" + statusBar
 }
-
-// CtrlCMsg is sent on Ctrl+C.
-type CtrlCMsg struct{}
-
-// CtrlDMsg is sent on Ctrl+D.
-type CtrlDMsg struct{}
-
-// EscMsg is sent on Escape.
-type EscMsg struct{}
 
 func termWidth() int {
 	w, _, err := term.GetSize(os.Stdout.Fd())
