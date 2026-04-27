@@ -104,12 +104,12 @@ func (m *Model) SetProgram(p *tea.Program) {
 }
 
 // Print outputs text to terminal scrollback above the managed region.
+// Uses tea.Println which coordinates with the renderer.
 func (m Model) Print(text string) {
-	if m.program != nil {
-		m.program.Println(text)
-	} else {
-		fmt.Println(text)
-	}
+	// tea.Println must not be called from within Update (deadlock).
+	// Use fmt.Println — in inline mode, stdout writes appear above the
+	// managed region. Bubbletea redraws its region on next render.
+	fmt.Println(text)
 }
 
 func (m Model) Init() tea.Cmd {
