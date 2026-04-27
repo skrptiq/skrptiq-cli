@@ -1,22 +1,7 @@
 ## Push Summary — skrptiq-cli (main)
 
-### What shipped — GH#440 standalone distribution
-
-1. **Version management** — `internal/version/version.go` with build-time ldflags injection (Version, Commit, Date). Banner and /settings about use dynamic version.
-
-2. **.gitignore** — standard Go ignores plus binary output.
-
-3. **GitHub Actions CI** — `.github/workflows/ci.yml`. Runs on push/PR. Checks out both skrptiq-cli and skrptiq-app repos side by side. Builds, tests, vets. Requires `ENGINE_ACCESS_TOKEN` secret.
-
-4. **GitHub Actions Release** — `.github/workflows/release.yml`. Triggered on tag push `v*`. Builds 5 platform binaries (darwin arm64/amd64, linux amd64/arm64, windows amd64) with CGO on native runners. Generates SHA256 checksums. Creates GitHub Release with all artifacts.
-
-5. **curl installer** — `scripts/install.sh`. Detects OS/arch, downloads correct binary from GitHub Releases, verifies SHA256, installs to ~/.local/bin/skrptiq. Supports SKRPTIQ_VERSION and SKRPTIQ_INSTALL_DIR env vars.
-
-### Cross-repo needs (flagged to orchestrator)
-- `ENGINE_ACCESS_TOKEN` secret on skrptiq-cli repo for CI access to skrptiq-app
-- `skrptiq/homebrew-tap` repo — orchestrator will create when ready
-- install.sh hosting on Hub — flag when ready
-
-### Tests
-- `go test ./...` — all passing (42 tests including version tests)
-- `go vet ./...` — clean
+### What shipped
+- `scripts/release.sh` — finds latest tag, auto-increments version, creates annotated tag, pushes to trigger the release workflow
+- Usage: `./scripts/release.sh` (patch), `./scripts/release.sh minor`, `./scripts/release.sh major`, or `./scripts/release.sh v0.3.0-beta.1`
+- Validates: must be on main, working directory clean, confirms before pushing
+- Token fallback in CI workflows: uses ENGINE_ACCESS_TOKEN if set, falls back to github.token
