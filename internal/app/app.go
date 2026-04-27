@@ -129,17 +129,13 @@ func (a *App) Print(text string) {
 	fmt.Println(text)
 }
 
-// printInputFrame prints the top separator before the prompt.
+// printInputFrame is a no-op — the status bar is the visual boundary.
 func (a *App) printInputFrame() {
-	w := a.termWidth()
-	sep := theme.Faint.Render(strings.Repeat("─", w))
-	fmt.Println(sep)
 }
 
 // printStatusFooter prints the bottom separator + status bar after the user submits.
 func (a *App) printStatusFooter() {
 	w := a.termWidth()
-	sep := theme.Faint.Render(strings.Repeat("─", w))
 
 	var parts []string
 	parts = append(parts, a.mode.Label())
@@ -167,7 +163,6 @@ func (a *App) printStatusFooter() {
 		Foreground(lipgloss.Color("#9CA3AF")).
 		Render(statusText)
 
-	fmt.Println(sep)
 	fmt.Println(bar)
 }
 
@@ -251,7 +246,7 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 	fmt.Println()
 	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or "+theme.ActionKey.Render("/")+" for commands. "+theme.ActionKey.Render("/help")+" for the full list."))
 	fmt.Println()
-	a.printInputFrame()
+	a.printStatusFooter()
 }
 
 // Run is the main input loop.
@@ -297,14 +292,8 @@ func (a *App) Run() {
 			continue
 		}
 
-		// Bottom separator + status bar (below the input the user just typed).
-		a.printStatusFooter()
-
-		// Handle the command — output goes between footer and next frame.
 		a.handleInput(line)
-
-		// Top separator for the next prompt.
-		a.printInputFrame()
+		a.printStatusFooter()
 	}
 }
 
