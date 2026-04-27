@@ -325,6 +325,14 @@ func (a *App) Run() {
 			continue
 		}
 
+		// Clear readline's prompt + hint from terminal, reprint input cleanly.
+		// Move up to prompt line, clear to end of screen, then print just the text.
+		fmt.Print("\033[A")  // move up to prompt line
+		fmt.Print("\033[2K") // clear that line
+		fmt.Print("\033[J")  // clear everything below (hint text)
+		fmt.Println("  " + theme.Faint.Render(">") + " " + line)
+		fmt.Println()
+
 		a.handleInput(line)
 	}
 }
