@@ -118,43 +118,54 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 
-		// Any non-tab key clears tab state.
+		// Any non-tab key clears tab cycling state.
 		if msg.Type != tea.KeyTab {
 			m.tabMatches = nil
+			m.tabIndex = 0
 		}
 	}
 
 	// Pass everything else to textarea.
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
+
+	// Auto-show completions when input starts with /.
+	if m.tabComplete != nil {
+		val := m.textarea.Value()
+		if strings.HasPrefix(val, "/") {
+			m.tabMatches = m.tabComplete(val)
+			m.tabIndex = -1 // no selection yet, just showing
+		} else {
+			m.tabMatches = nil
+		}
+	}
+
 	return m, cmd
 }
 
 func (m *Model) handleTab() {
-	input := m.textarea.Value()
-
 	if len(m.tabMatches) == 0 {
-		// First tab — get matches.
-		m.tabMatches = m.tabComplete(input)
-		m.tabIndex = 0
-		m.tabOriginal = input
+		if m.tabComplete != nil {
+			m.tabMatches = m.tabComplete(m.textarea.Value())
+			m.tabIndex = 0
+			m.tabOriginal = m.textarea.Value()
+		}
 	} else {
-		// Subsequent tabs — cycle through matches.
+		// Cycle through matches.
 		m.tabIndex = (m.tabIndex + 1) % len(m.tabMatches)
 	}
 
 	if len(m.tabMatches) == 0 {
 		return
 	}
+	if m.tabIndex < 0 {
+		m.tabIndex = 0
+	}
 
 	// Insert the match.
 	m.textarea.Reset()
 	m.textarea.SetValue(m.tabMatches[m.tabIndex])
-	// Move cursor to end.
-	val := m.tabMatches[m.tabIndex]
-	for range val {
-		m.textarea.SetCursor(len(val))
-	}
+	m.textarea.SetCursor(len(m.tabMatches[m.tabIndex]))
 }
 
 func (m Model) View() string {
@@ -167,7 +178,27 @@ func (m Model) View() string {
 		Width(m.width).
 		Render(" " + m.status)
 
-	return sep + "\n" + m.textarea.View() + "\n" + sep + "\n" + statusBar
+	// Show completion matches above the textarea when active.
+	completionView := ""
+	if len(m.tabMatches) > 0 {
+		matchStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF"))
+		selectedStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F9FAFB")).
+			Background(lipgloss.Color("#374151")).
+			Padding(0, 1)
+
+		var items []string
+		for i, match := range m.tabMatches {
+			if i == m.tabIndex {
+				items = append(items, selectedStyle.Render(match))
+			} else {
+				items = append(items, matchStyle.Render(" "+match+" "))
+			}
+		}
+		completionView = strings.Join(items, " ") + "\n"
+	}
+
+	return completionView + sep + "\n" + m.textarea.View() + "\n" + sep + "\n" + statusBar
 }
 
 func termWidth() int {
