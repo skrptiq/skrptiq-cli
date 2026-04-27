@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -291,7 +292,7 @@ func (a *App) Run() {
 	for {
 		line, err := a.rl.Readline()
 		if err != nil {
-			if err == readline.ErrCtrlC {
+			if errors.Is(err, readline.ErrCtrlC) || err.Error() == "Ctrl+C" {
 				if a.cancelStream != nil {
 					a.cancelStream()
 					a.cancelStream = nil
@@ -306,7 +307,7 @@ func (a *App) Run() {
 				fmt.Println()
 				continue
 			}
-			if err == io.EOF || err == readline.ErrEOF {
+			if errors.Is(err, io.EOF) || errors.Is(err, readline.ErrEOF) || err.Error() == "EOF" {
 				now := time.Now()
 				if now.Sub(lastEOF) < 500*time.Millisecond {
 					fmt.Println()
