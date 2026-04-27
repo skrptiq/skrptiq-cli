@@ -92,7 +92,7 @@ func New() (*App, error) {
 	a.commands = BuildCommands(engine)
 
 	rl := readline.NewInstance()
-	rl.SetPrompt(a.mode.Symbol() + " › ")
+	rl.SetPrompt(strings.Repeat("─", 60) + "\n" + a.mode.Symbol() + " › ")
 
 	// Hint text — shows the status bar BELOW the prompt.
 	rl.HintText = func(line []rune, pos int) []rune {
@@ -325,11 +325,11 @@ func (a *App) Run() {
 			continue
 		}
 
-		// Clear readline's prompt + hint from terminal, reprint input cleanly.
-		// Move up to prompt line, clear to end of screen, then print just the text.
-		fmt.Print("\033[A")  // move up to prompt line
-		fmt.Print("\033[2K") // clear that line
-		fmt.Print("\033[J")  // clear everything below (hint text)
+		// Clear readline's separator + prompt + hint from terminal.
+		// Move up 2 lines (separator line + input line), clear everything below.
+		fmt.Print("\033[2A") // move up 2 lines (to separator)
+		fmt.Print("\033[J")  // clear from cursor to end (separator + input + hint)
+		// Reprint just the user's text cleanly in scrollback.
 		fmt.Println("  " + theme.Faint.Render(">") + " " + line)
 		fmt.Println()
 
@@ -384,14 +384,16 @@ func (a *App) handleInput(input string) {
 			a.handleRunInput(input)
 		}
 	default:
-		a.Print(theme.Faint.Render("Type /chat to enter chat mode, or use / commands."))
+		a.Print(theme.Faint.Render("Use /chat for chat mode or / for commands."))
 	}
 }
 
 func (a *App) setMode(mode AppMode) {
 	a.mode = mode
 	if a.rl != nil {
-		a.rl.SetPrompt(a.mode.Symbol() + " › ")
+		w := a.termWidth()
+		sep := strings.Repeat("─", w)
+		a.rl.SetPrompt(sep + "\n" + a.mode.Symbol() + " › ")
 	}
 }
 
