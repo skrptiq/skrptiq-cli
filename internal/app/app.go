@@ -207,8 +207,10 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 	fmt.Println(sep)
 }
 
-// hintText returns the status text shown below the prompt.
+// hintText returns the separator + status shown below the prompt.
 func (a *App) hintText() string {
+	w := a.termWidth()
+
 	var parts []string
 	parts = append(parts, a.mode.Label())
 
@@ -229,7 +231,10 @@ func (a *App) hintText() string {
 		}
 	}
 
-	return strings.Join(parts, " · ")
+	sep := strings.Repeat("─", w)
+	status := strings.Join(parts, " · ")
+
+	return sep + "\n" + status
 }
 
 // tabCompleter provides tab completion for commands.
@@ -319,11 +324,6 @@ func (a *App) Run() {
 		if line == "" {
 			continue
 		}
-
-		// Echo the submitted input as a styled block in scrollback.
-		fmt.Println()
-		fmt.Println("  " + theme.Bold.Render(a.mode.Symbol()+" ›") + " " + line)
-		fmt.Println()
 
 		a.handleInput(line)
 	}
