@@ -9,6 +9,9 @@ dist/
 *.out
 *.prof
 
+# Claude
+.claude/settings.local.json
+
 # IDE
 .idea/
 .vscode/
