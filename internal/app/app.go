@@ -93,7 +93,7 @@ func New() (*App, error) {
 	a.commands = BuildCommands(engine)
 
 	rl := readline.NewInstance()
-	rl.SetPrompt(strings.Repeat("─", 60) + "\n" + a.mode.Symbol() + " › ")
+	rl.SetPrompt(a.mode.Symbol() + " › ")
 
 	// Hint text — shows the status bar BELOW the prompt.
 	rl.HintText = func(line []rune, pos int) []rune {
@@ -290,6 +290,10 @@ func (a *App) Run() {
 	var lastEOF time.Time
 
 	for {
+		// Print the top separator — this is the upper boundary of the input area.
+		w := a.termWidth()
+		fmt.Println(theme.Faint.Render(strings.Repeat("─", w)))
+
 		line, err := a.rl.Readline()
 		if err != nil {
 			if errors.Is(err, readline.ErrCtrlC) || err.Error() == "Ctrl+C" {
@@ -326,10 +330,10 @@ func (a *App) Run() {
 			continue
 		}
 
-		// Clear readline's separator + prompt + hint from terminal.
-		// Move up 2 lines (separator line + input line), clear everything below.
-		fmt.Print("\033[2A") // move up 2 lines (to separator)
-		fmt.Print("\033[J")  // clear from cursor to end (separator + input + hint)
+		// Clear the separator + prompt from terminal.
+		// After enter, cursor is on line below prompt. Move up 2 to separator, clear down.
+		fmt.Print("\033[2A") // up to separator line
+		fmt.Print("\033[J")  // clear separator + prompt line + anything below
 		// Reprint just the user's text cleanly in scrollback.
 		fmt.Println("  " + theme.Faint.Render(">") + " " + line)
 		fmt.Println()
@@ -392,9 +396,7 @@ func (a *App) handleInput(input string) {
 func (a *App) setMode(mode AppMode) {
 	a.mode = mode
 	if a.rl != nil {
-		w := a.termWidth()
-		sep := strings.Repeat("─", w)
-		a.rl.SetPrompt(sep + "\n" + a.mode.Symbol() + " › ")
+		a.rl.SetPrompt(a.mode.Symbol() + " › ")
 	}
 }
 
