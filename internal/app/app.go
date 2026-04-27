@@ -108,9 +108,6 @@ func New() (*App, error) {
 	}
 	a.rl = rl
 
-	// Set up fixed status bar at bottom of terminal.
-	a.setupStatusBar()
-
 	// Print startup banner.
 	a.printBanner(engine, engineErr)
 
@@ -119,7 +116,6 @@ func New() (*App, error) {
 
 // Close cleans up resources.
 func (a *App) Close() {
-	a.resetTerminal()
 	if a.rl != nil {
 		a.rl.Close()
 	}
@@ -133,30 +129,18 @@ func (a *App) Print(text string) {
 	fmt.Println(text)
 }
 
-// setupStatusBar reserves the bottom row for a persistent status bar
-// by setting the terminal's scroll region.
-func (a *App) setupStatusBar() {
-	_, rows, err := term.GetSize(os.Stdout.Fd())
-	if err != nil || rows < 5 {
-		return
-	}
-	// Set scroll region to rows 1..(rows-1), reserving the last row.
-	fmt.Printf("\033[1;%dr", rows-1)
-	// Move cursor to top of scroll region.
-	fmt.Print("\033[H")
-	// Render the status bar on the reserved bottom row.
-	a.renderStatusBar()
+// printInputFrame prints the top separator before the prompt.
+func (a *App) printInputFrame() {
+	w := a.termWidth()
+	sep := theme.Faint.Render(strings.Repeat("─", w))
+	fmt.Println(sep)
 }
 
-// renderStatusBar draws the status bar on the last terminal row.
-func (a *App) renderStatusBar() {
-	_, rows, err := term.GetSize(os.Stdout.Fd())
-	if err != nil || rows < 5 {
-		return
-	}
+// printStatusFooter prints the bottom separator + status bar after the user submits.
+func (a *App) printStatusFooter() {
 	w := a.termWidth()
+	sep := theme.Faint.Render(strings.Repeat("─", w))
 
-	// Build status text.
 	var parts []string
 	parts = append(parts, a.mode.Label())
 	if a.engine != nil {
@@ -174,28 +158,17 @@ func (a *App) renderStatusBar() {
 			parts = append(parts, a.runWorkflow)
 		}
 	}
-
-	text := " " + strings.Join(parts, " · ")
-	// Pad to full width.
-	if len(text) < w {
-		text += strings.Repeat(" ", w-len(text))
+	statusText := " " + strings.Join(parts, " · ")
+	if len(statusText) < w {
+		statusText += strings.Repeat(" ", w-len(statusText))
 	}
-
 	bar := lipgloss.NewStyle().
 		Background(lipgloss.Color("#1F2937")).
 		Foreground(lipgloss.Color("#9CA3AF")).
-		Render(text)
+		Render(statusText)
 
-	// Save cursor, move to last row, print, restore cursor.
-	fmt.Printf("\033[s\033[%d;1H%s\033[u", rows, bar)
-}
-
-// resetTerminal restores the terminal scroll region on exit.
-func (a *App) resetTerminal() {
-	// Reset scroll region to full terminal.
-	fmt.Print("\033[r")
-	// Move cursor to bottom.
-	fmt.Print("\033[999;1H\n")
+	fmt.Println(sep)
+	fmt.Println(bar)
 }
 
 func (a *App) termWidth() int {
@@ -278,7 +251,7 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 	fmt.Println()
 	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or "+theme.ActionKey.Render("/")+" for commands. "+theme.ActionKey.Render("/help")+" for the full list."))
 	fmt.Println()
-	a.renderStatusBar()
+	a.printInputFrame()
 }
 
 // Run is the main input loop.
@@ -324,8 +297,14 @@ func (a *App) Run() {
 			continue
 		}
 
+		// Bottom separator + status bar (below the input the user just typed).
+		a.printStatusFooter()
+
+		// Handle the command — output goes between footer and next frame.
 		a.handleInput(line)
-		a.renderStatusBar()
+
+		// Top separator for the next prompt.
+		a.printInputFrame()
 	}
 }
 
@@ -384,15 +363,10 @@ func (a *App) handleInput(input string) {
 func (a *App) setMode(mode AppMode) {
 	a.mode = mode
 	a.updatePrompt()
-	a.renderStatusBar()
 }
 
 func (a *App) updatePrompt() {
-	w := a.termWidth()
-	sep := theme.Faint.Render(strings.Repeat("─", w))
-
-	// Prompt: top separator + input symbol only.
-	prompt := sep + "\n" + a.mode.Symbol() + " › "
+	prompt := a.mode.Symbol() + " › "
 	if a.rl != nil {
 		a.rl.SetPrompt(prompt)
 	}
