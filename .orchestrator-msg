@@ -1,7 +1,15 @@
 ## Push Summary — skrptiq-cli (main)
 
-### What shipped
-- `scripts/release.sh` — finds latest tag, auto-increments version, creates annotated tag, pushes to trigger the release workflow
-- Usage: `./scripts/release.sh` (patch), `./scripts/release.sh minor`, `./scripts/release.sh major`, or `./scripts/release.sh v0.3.0-beta.1`
-- Validates: must be on main, working directory clean, confirms before pushing
-- Token fallback in CI workflows: uses ENGINE_ACCESS_TOKEN if set, falls back to github.token
+### What shipped — GH#440 standalone distribution
+
+- Version management with build-time ldflags
+- .gitignore
+- GitHub Actions CI workflow (checkout both repos, build/test/vet)
+- GitHub Actions release workflow (5 platform binaries on tag push)
+- curl installer script (scripts/install.sh)
+- Release script with --help (scripts/release.sh)
+- Token fallback for cross-repo access
+
+### To trigger first release
+1. Set ENGINE_ACCESS_TOKEN secret (or enable org cross-repo access)
+2. Run: ./scripts/release.sh

@@ -14,7 +14,8 @@
       "Bash(ls *)",
       "Bash(go list *)",
       "Bash(go doc *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(chmod +x *)"
     ]
   }
 }
