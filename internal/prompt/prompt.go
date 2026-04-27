@@ -198,7 +198,7 @@ func (m Model) View() string {
 		completionView = strings.Join(items, " ") + "\n"
 	}
 
-	return completionView + sep + "\n" + m.textarea.View() + "\n" + sep + "\n" + statusBar
+	return sep + "\n" + m.textarea.View() + "\n" + sep + "\n" + completionView + statusBar
 }
 
 func termWidth() int {

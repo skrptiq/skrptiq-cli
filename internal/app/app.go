@@ -99,29 +99,56 @@ func New() Model {
 			return nil
 		}
 		var matches []string
-		parts := strings.SplitN(input, " ", 2)
+		parts := strings.SplitN(input, " ", 3)
 		cmdName := parts[0]
 
 		if len(parts) == 1 {
-			// Match command names.
+			// Stage 1: match command names.
 			for _, cmd := range m.commands {
 				if strings.HasPrefix(strings.ToLower(cmd.Name), strings.ToLower(input)) {
 					matches = append(matches, cmd.Name)
 				}
 			}
 		} else {
-			// Match subcommands.
+			// Find the matching command.
 			for _, cmd := range m.commands {
-				if strings.EqualFold(cmd.Name, cmdName) {
-					sub := parts[1]
-					for _, s := range cmd.Subcommands {
-						full := cmd.Name + " " + s.Name
-						if sub == "" || strings.HasPrefix(strings.ToLower(s.Name), strings.ToLower(sub)) {
-							matches = append(matches, full)
+				if !strings.EqualFold(cmd.Name, cmdName) {
+					continue
+				}
+
+				arg := strings.TrimSpace(parts[1])
+
+				if cmd.HasSubcommands() {
+					if len(parts) == 2 {
+						// Stage 2: match subcommands.
+						for _, s := range cmd.Subcommands {
+							if arg == "" || strings.HasPrefix(strings.ToLower(s.Name), strings.ToLower(arg)) {
+								matches = append(matches, cmd.Name+" "+s.Name)
+							}
+						}
+					} else if len(parts) == 3 {
+						// Stage 3: subcommand args (e.g. /runs show <id>).
+						subName := parts[1]
+						argPartial := parts[2]
+						for _, s := range cmd.Subcommands {
+							if strings.EqualFold(s.Name, subName) && s.ArgProvider != nil {
+								completions := s.ArgProvider(argPartial)
+								for _, c := range completions {
+									matches = append(matches, cmd.Name+" "+s.Name+" "+c.Value)
+								}
+								break
+							}
 						}
 					}
-					break
+				} else if cmd.ArgProvider != nil {
+					// Stage 2: argument completion (e.g. /run <workflow>).
+					completions := cmd.ArgProvider(arg)
+					for _, c := range completions {
+						matches = append(matches, cmd.Name+" "+c.Value)
+					}
 				}
+
+				break
 			}
 		}
 		return matches
