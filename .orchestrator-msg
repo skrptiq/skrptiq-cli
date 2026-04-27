@@ -1,5 +1,0 @@
-## Push Summary — skrptiq-cli (main)
-
-### What shipped
-- Fixed release workflow: bash shell on all platforms (Windows was using PowerShell), fixed Go cache path, simplified checksum generation
-- v0.0.1 release failed on Windows — needs v0.0.2 tag to retry

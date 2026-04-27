@@ -3,22 +3,23 @@
 
 ## Priority Queue
 
-### 1. GH#440 — Standalone distribution (Homebrew, curl installer, GitHub Releases)
+### 1. GH#440 — First release (v0.0.2 building)
 
-**Read the full issue.** This is the path to a first build. Priorities:
+v0.0.2 release workflow running — 4/5 builds succeeded. darwin-amd64 queued for GitHub runner. Monitor and fix if needed. Once all 5 pass, verify the release artifacts on GitHub Releases.
 
-1. **GitHub Actions** — build platform binaries on tag push (darwin arm64/x64, linux x64/arm64, windows x64)
-2. **GitHub Releases** — binaries attached to tags
-3. **Homebrew tap** — `brew install skrptiq/tap/skrptiq`
-4. **curl installer** — `curl -fsSL https://hub.skrptiq.ai/install.sh | sh`
+### 2. Polish for first usable release
 
-Standalone data directory: `~/.skrptiq/` when no desktop app DB found. Auth: `skrptiq login` for Hub operations.
+After the build lands, focus on what makes the CLI usable day-to-day:
+- Chat mode wired to real LLM streaming
+- Run mode wired to real workflow execution with gate handling
+- Any rough edges from the readline migration
 
-### 2. GH#436 — Remaining interaction depth (post-build polish)
+### 3. GH#437 — Direct CLI execution (future)
 
 ## Cross-Repo Context
-- **App:** Fixing GH#438 (stepPrompts migration), then MCP config UX, then Microsoft 365.
-- **Hub:** Will need `/api/cli/latest` endpoint (GH#439) for install-from-app flow.
+- **ENGINE_ACCESS_TOKEN** configured on this repo for CI cross-repo checkout.
+- **Engine extraction (GH#441)** deferred — CI workaround is sufficient.
+- **App:** Moving to local RAG (GH#412).
 
 ## Constraints
 - Import engine module only — never app-internal Electron packages
