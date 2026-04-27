@@ -57,6 +57,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: skrptiq-cli/go.mod
+          cache-dependency-path: skrptiq-cli/go.sum
 
       - name: Install cross-compiler (Linux ARM64)
         if: matrix.cross && matrix.goos == 'linux' && matrix.goarch == 'arm64'
@@ -64,6 +65,7 @@ jobs:
 
       - name: Build
         working-directory: skrptiq-cli
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -79,13 +81,11 @@ jobs:
           go build -ldflags "${LDFLAGS}" -o ../dist/${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} .
 
       - name: Generate checksum
+        shell: bash
         run: |
           cd dist
-          if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            certutil -hashfile ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} SHA256 > ${{ env.BINARY_NAME }}-${{ matrix.suffix }}.sha256
-          else
-            shasum -a 256 ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} > ${{ env.BINARY_NAME }}-${{ matrix.suffix }}.sha256
-          fi
+          sha256sum ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} > ${{ env.BINARY_NAME }}-${{ matrix.suffix }}.sha256 2>/dev/null || \
+          shasum -a 256 ${{ env.BINARY_NAME }}-${{ matrix.suffix }}${{ matrix.ext }} > ${{ env.BINARY_NAME }}-${{ matrix.suffix }}.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
