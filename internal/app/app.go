@@ -141,6 +141,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 
 	case prompt.SubmitMsg:
+		// Show what the user typed in scrollback.
+		m.Print(theme.Faint.Render("  > ") + msg.Text)
 		m.handleInput(msg.Text)
 		return m, m.flushOutput()
 
@@ -261,7 +263,7 @@ func (m *Model) handleInput(input string) {
 			m.handleRunInput(input)
 		}
 	default:
-		m.Print(theme.Faint.Render("Use /chat for chat mode or / for commands."))
+		// Silent in command mode — the user's text is already in scrollback.
 	}
 }
 
