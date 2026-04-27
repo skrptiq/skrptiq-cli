@@ -112,9 +112,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case tea.KeyEscape:
 			m.tabMatches = nil
 			return m, func() tea.Msg { return EscMsg{} }
-		case tea.KeyTab:
-			if m.tabComplete != nil {
-				m.handleTab()
+		case tea.KeyTab, tea.KeyDown:
+			if len(m.tabMatches) > 0 {
+				// Move selection down (or select first if none selected).
+				m.tabIndex++
+				if m.tabIndex >= len(m.tabMatches) {
+					m.tabIndex = 0
+				}
+				m.selectMatch()
+				return m, nil
+			} else if msg.Type == tea.KeyTab && m.tabComplete != nil {
+				// First tab with no list — trigger completion.
+				m.tabMatches = m.tabComplete(m.textarea.Value())
+				if len(m.tabMatches) > 0 {
+					m.tabIndex = 0
+					m.tabOriginal = m.textarea.Value()
+					m.selectMatch()
+				}
 				return m, nil
 			}
 		case tea.KeyUp:
@@ -126,19 +140,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.selectMatch()
 				return m, nil
 			}
-		case tea.KeyDown:
-			if len(m.tabMatches) > 0 {
-				m.tabIndex++
-				if m.tabIndex >= len(m.tabMatches) {
-					m.tabIndex = 0
-				}
-				m.selectMatch()
-				return m, nil
-			}
 		}
 
-		// Any non-navigation key clears completion state.
-		if msg.Type != tea.KeyTab && msg.Type != tea.KeyUp && msg.Type != tea.KeyDown {
+		// Any other key clears completion state.
+		if len(m.tabMatches) > 0 {
 			m.tabMatches = nil
 			m.tabIndex = 0
 		}
@@ -148,40 +153,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
 
-	// Auto-show completions when input starts with /.
+	// Auto-show completions when input changes and starts with /.
 	if m.tabComplete != nil {
 		val := m.textarea.Value()
 		if strings.HasPrefix(val, "/") {
-			m.tabMatches = m.tabComplete(val)
-			m.tabIndex = -1 // no selection yet, just showing
+			newMatches := m.tabComplete(val)
+			m.tabMatches = newMatches
+			// Reset selection when matches change from typing.
+			m.tabIndex = -1
 		} else {
 			m.tabMatches = nil
+			m.tabIndex = -1
 		}
 	}
 
 	return m, cmd
-}
-
-func (m *Model) handleTab() {
-	if len(m.tabMatches) == 0 {
-		if m.tabComplete != nil {
-			m.tabMatches = m.tabComplete(m.textarea.Value())
-			m.tabIndex = 0
-			m.tabOriginal = m.textarea.Value()
-		}
-	} else {
-		// Cycle through matches.
-		m.tabIndex = (m.tabIndex + 1) % len(m.tabMatches)
-	}
-
-	if len(m.tabMatches) == 0 {
-		return
-	}
-	if m.tabIndex < 0 {
-		m.tabIndex = 0
-	}
-
-	m.selectMatch()
 }
 
 func (m *Model) selectMatch() {
@@ -214,9 +200,11 @@ func (m Model) View() string {
 			Width(m.width)
 
 		// Calculate visible window around the selected item.
+		idx := m.tabIndex
+		if idx < 0 { idx = 0 }
 		start := 0
-		if m.tabIndex >= maxVisible {
-			start = m.tabIndex - maxVisible + 1
+		if idx >= maxVisible {
+			start = idx - maxVisible + 1
 		}
 		end := start + maxVisible
 		if end > len(m.tabMatches) {
