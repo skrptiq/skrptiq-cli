@@ -1,42 +1,15 @@
 ## Push Summary — skrptiq-cli (main)
 
-### What shipped — REPL rewrite: bubbletea → readline
+### What shipped
+- 40 tests across engine and app packages
+- CLAUDE.md updated: testing is mandatory, write tests alongside code, no mocks unless unavoidable
+- Tech stack section updated to reflect readline architecture
 
-**Replaced bubbletea with readline for the input loop.** This is a fundamental architecture change that solves the terminal scrollback problem.
+### Test coverage
+**Engine (22 tests):** DefaultDBPath, Open valid/invalid, all query methods with empty DB, node CRUD + search, profile CRUD + find, formatDuration, hub imports, MCP servers, providers, connections, settings, executions, run prefix search.
 
-**What changed:**
-- All output via `fmt.Println` — persists in terminal scrollback naturally
-- Input via `github.com/chzyer/readline` — handles Ctrl+C, Ctrl+D, history, tab completion natively
-- Command history persisted to `~/.skrptiq/cli_history`
-- Tab completion for all slash commands and subcommands via readline's `PrefixCompleter`
-- No alt screen — the entire session is one continuous scrollable terminal
-- Ctrl+C cancels active streams or is ignored; Ctrl+D exits
-
-**What was removed:**
-- bubbletea dependency (no longer used for REPL)
-- Viewport-based scrolling (terminal handles it now)
-- internal/views/ directory (progress, gate, diff, tree — prototype TUI views)
-- internal/components/ directory (autocomplete popup, header, status bar, spinner)
-- internal/app/keys.go, stream.go, app_test.go
-
-**What was kept (unchanged):**
-- All command handlers (handlers.go — rewritten to use `a.Print()`)
-- Engine integration (engine.go)
-- Command registry with completers (commands.go)
-- Mode switching (command/chat/run)
-- Chat → LLM streaming
-- Run → engine execution with progress events and gate approval
-- Theme/styling (theme.go)
+**App (18 tests):** Type methods (HasSubcommands, ModeLabel, ModeSymbol), splitFirst parsing, helpText completeness, command routing for all commands, mode switching (chat/run/command/exit), nil engine graceful handling, usage block formatting, status icons, BuildCommands registry validation, subcommand structure, ArgProvider with nil engine, bare text handling, slash commands in any mode, historyPath, noEngineMsg.
 
 ### Tests
-- `go build ./...` — clean
+- `go test ./...` — 40 tests, all passing
 - `go vet ./...` — clean
-- Tests removed (bubbletea-specific, need rewriting for readline)
-
-### Architecture
-```
-main.go         → creates App, runs readline loop
-internal/app/   → App struct, handlers, commands, types
-internal/engine → engine integration (unchanged)
-internal/theme  → lipgloss styles (unchanged)
-```

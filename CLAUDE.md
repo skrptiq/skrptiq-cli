@@ -23,16 +23,17 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 
 ## Tech Stack
 - **Language:** Go
-- **Terminal UI:** bubbletea (Charm ecosystem)
+- **Terminal input:** readline (github.com/chzyer/readline) — inline REPL with terminal scrollback
+- **Styling:** lipgloss (Charm ecosystem) — output formatting only
 - **Execution engine:** Imported from `skrptiq-app/engine/` as Go module
-- **Storage:** `~/.skrptiq/skrptiq.db` (WAL-mode SQLite, shared with desktop app via engine storage package)
+- **Storage:** `~/Library/Application Support/skrptiq/data/skrptiq.db` (WAL-mode SQLite, shared with desktop app via engine storage package)
 - **Distribution:** single binary — brew, GitHub releases, go install
 
 ## Architecture
 
 ### What the CLI owns
-- Interactive REPL with bubbletea TUI
-- Terminal-native rendering (progress bars, diffs, tables, execution trees)
+- Interactive REPL with readline input and fmt.Println output
+- Terminal scrollback — all output persists in the terminal's native scroll buffer
 - Workspace detection (current directory context)
 - Pipe support (stdin/stdout for composability)
 - Natural language input → workflow selection
@@ -56,9 +57,14 @@ Import the engine module only. Never import app-internal Electron packages. If y
 - Standard Go project layout
 - `go fmt` and `go vet` before every commit
 
-## Testing
-- `go test ./...` — required for all changes
-- Test TUI components with bubbletea's test utilities
+## Testing — MANDATORY
+- `go test ./...` — required for ALL changes. Do not commit without tests passing.
+- **Write tests alongside code.** Every new handler, function, or behaviour change must include tests that validate it works and will catch regressions.
+- **Test categories:**
+  - **Unit tests** — pure functions, type methods, parsing logic, command routing
+  - **Integration tests** — engine queries against a test database, command handlers with real data
+  - **No mocks unless unavoidable** — prefer a real test database over mocking storage
+- **Test file placement:** `*_test.go` next to the code it tests
 - Report results in `.orchestrator-msg` push summary
 
 ## Plan Mode Gate — MANDATORY

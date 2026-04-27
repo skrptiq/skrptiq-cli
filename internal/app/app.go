@@ -284,7 +284,9 @@ func (a *App) updatePrompt() {
 	}
 
 	prompt := contextLine + "\n" + theme.Bold.Render(a.mode.Symbol()) + " "
-	a.rl.SetPrompt(prompt)
+	if a.rl != nil {
+		a.rl.SetPrompt(prompt)
+	}
 }
 
 // handleChatInput sends input to the LLM.
