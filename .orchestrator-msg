@@ -1,5 +1,16 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-- Typing `/` and enter shows a formatted command list with descriptions and subcommands (replaces the flat readline completion display)
-- Tab still works for inline completion, but `/` gives the readable reference
+Switched from chzyer/readline to lmorg/readline v4 — native HintText support shows status bar BELOW the prompt.
+
+**Stack:** lmorg/readline for input + hints + history, lipgloss for styled output, plain stdout for scrollback. Matches the Claude Code terminal pattern.
+
+**lmorg/readline features used:**
+- `HintText` callback — returns status text (mode, profile, provider) displayed below the input
+- `TabCompleter` — two-stage completion (commands → subcommands)
+- `SetPrompt` — just the mode symbol, clean
+- Built-in history, Ctrl+C (ErrCtrlC), Ctrl+D (EOF)
+
+### Tests
+- `go test ./...` — all passing
+- `go build ./...` — clean

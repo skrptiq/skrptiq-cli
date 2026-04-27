@@ -371,7 +371,7 @@ func (a *App) handleProfile(sub, args string) {
 		if profile == nil { a.Print(theme.ErrorText.Render("Profile not found: " + name)); return }
 		if err := a.engine.SetActiveProfile(profile.ID, profile.Type); err != nil { a.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 		a.Print(theme.SuccessText.Render("Switched to profile: ") + profile.Name)
-		a.updatePrompt()
+		a.setMode(a.mode) // refresh prompt
 	case "controls":
 		voice, _ := a.engine.ActiveProfile("voice")
 		if voice == nil { a.Print(theme.Faint.Render("No active voice profile.")); return }
