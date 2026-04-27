@@ -1,15 +1,5 @@
 ## Push Summary — skrptiq-cli (main)
 
-### What shipped — GH#440 standalone distribution
-
-- Version management with build-time ldflags
-- .gitignore
-- GitHub Actions CI workflow (checkout both repos, build/test/vet)
-- GitHub Actions release workflow (5 platform binaries on tag push)
-- curl installer script (scripts/install.sh)
-- Release script with --help (scripts/release.sh)
-- Token fallback for cross-repo access
-
-### To trigger first release
-1. Set ENGINE_ACCESS_TOKEN secret (or enable org cross-repo access)
-2. Run: ./scripts/release.sh
+### What shipped
+- Fixed release workflow: bash shell on all platforms (Windows was using PowerShell), fixed Go cache path, simplified checksum generation
+- v0.0.1 release failed on Windows — needs v0.0.2 tag to retry
