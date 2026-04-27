@@ -93,6 +93,7 @@ func New() (*App, error) {
 	// Build readline completer from command registry.
 	completer := a.buildCompleter()
 
+	// Initial prompt — will be updated by updatePrompt after first resize.
 	prompt := "⚡ › "
 
 	rl, err := readline.NewEx(&readline.Config{
@@ -128,21 +129,27 @@ func (a *App) Print(text string) {
 	fmt.Println(text)
 }
 
-func (a *App) printBanner(engine *eng.App, engineErr error) {
-	width := 60
+func (a *App) termWidth() int {
+	w, _, err := term.GetSize(os.Stdout.Fd())
+	if err != nil || w < 20 {
+		return 60
+	}
+	return w
+}
 
-	// Clear screen and move cursor to top — fresh start like Claude Code.
+func (a *App) printBanner(engine *eng.App, engineErr error) {
+	w := a.termWidth()
+
+	// Clear screen and move cursor to top.
 	fmt.Print("\033[2J\033[H")
 
-	// Get terminal dimensions.
+	// Get terminal height to push content to bottom.
 	_, rows, err := term.GetSize(os.Stdout.Fd())
 	if err != nil || rows < 10 {
 		rows = 24
 	}
 
-	// Push content to the bottom — banner + prompt appear near the bottom
-	// with empty space above, matching the Claude Code startup feel.
-	bannerLines := 12
+	bannerLines := 14
 	padding := rows - bannerLines
 	if padding < 0 {
 		padding = 0
@@ -151,8 +158,9 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 		fmt.Println()
 	}
 
-	sep := theme.Faint.Render(strings.Repeat("─", width))
+	sep := theme.Faint.Render(strings.Repeat("─", w))
 
+	// Banner block — scrolls off as user works.
 	fmt.Println(sep)
 	fmt.Println()
 	fmt.Println("  " + theme.Title.Render("skrptiq") + "  " + theme.Faint.Render("v0.1.0-prototype"))
@@ -177,7 +185,6 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 			profile = p.Name
 		}
 
-		// MCP servers.
 		mcpStatus := ""
 		if servers, err := engine.MCPServers(); err == nil && len(servers) > 0 {
 			var parts []string
@@ -200,10 +207,9 @@ func (a *App) printBanner(engine *eng.App, engineErr error) {
 	}
 
 	fmt.Println()
-	fmt.Println(sep)
-	fmt.Println()
 	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or "+theme.ActionKey.Render("/")+" for commands. "+theme.ActionKey.Render("/help")+" for the full list."))
 	fmt.Println()
+	fmt.Println(sep)
 }
 
 // Run is the main input loop.
@@ -308,22 +314,14 @@ func (a *App) handleInput(input string) {
 func (a *App) setMode(mode AppMode) {
 	a.mode = mode
 	a.updatePrompt()
-	a.printStatus()
 }
 
 func (a *App) updatePrompt() {
-	// Prompt is just the mode symbol — clean and minimal.
-	prompt := a.mode.Symbol() + " › "
-	if a.rl != nil {
-		a.rl.SetPrompt(prompt)
-	}
-}
+	w := a.termWidth()
+	sep := theme.Faint.Render(strings.Repeat("─", w))
 
-// printStatus prints a subtle status line below command output.
-// Shows mode, profile, timing, and other contextual info.
-func (a *App) printStatus() {
+	// Build status parts.
 	var parts []string
-
 	parts = append(parts, a.mode.Label())
 
 	if a.engine != nil {
@@ -343,7 +341,12 @@ func (a *App) printStatus() {
 		}
 	}
 
-	fmt.Println(theme.Faint.Render(strings.Join(parts, " · ")))
+	status := theme.Faint.Render(strings.Join(parts, " · "))
+
+	prompt := sep + "\n" + status + "\n" + a.mode.Symbol() + " › "
+	if a.rl != nil {
+		a.rl.SetPrompt(prompt)
+	}
 }
 
 // handleChatInput sends input to the LLM.
