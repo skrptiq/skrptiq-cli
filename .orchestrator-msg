@@ -1,4 +1,7 @@
 ## Push Summary — skrptiq-cli (main)
 
 ### What shipped
-Single-line prompt — no more duplicate context on empty returns. Format: `⚡ command · Profile Name ›`
+- Proper startup banner with visual hierarchy: separator lines, app name, version, tagline, profile, workspace, MCP status
+- Single-line prompt: `⚡ command · Profile Name ›`
+- Double Ctrl+D to exit (500ms window, shows hint on first press)
+- Hint text at startup: "Type naturally to chat, or / for commands."

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/chzyer/readline"
@@ -114,30 +115,7 @@ func New() (*App, error) {
 	a.rl = rl
 
 	// Print startup banner.
-	if engineErr != nil {
-		a.Print(theme.ErrorText.Render("Engine: " + engineErr.Error()))
-	} else if engine != nil {
-		workspace := "~"
-		if cwd, err := os.Getwd(); err == nil {
-			home, _ := os.UserHomeDir()
-			if home != "" && strings.HasPrefix(cwd, home) {
-				workspace = "~" + cwd[len(home):]
-			} else {
-				workspace = filepath.Base(cwd)
-			}
-		}
-
-		profile := "default"
-		if p, _ := engine.ActiveProfile("voice"); p != nil {
-			profile = p.Name
-		}
-
-		a.Print(theme.Title.Render("skrptiq") + " " + theme.Faint.Render("v0.1.0-prototype"))
-		a.Print(theme.Faint.Render("  Profile: ") + profile)
-		a.Print(theme.Faint.Render("  Workspace: ") + workspace)
-		a.Print(theme.Faint.Render("  Database: ") + engine.DB.Path())
-		a.Print("")
-	}
+	a.printBanner(engine, engineErr)
 
 	return a, nil
 }
@@ -157,8 +135,70 @@ func (a *App) Print(text string) {
 	fmt.Println(text)
 }
 
+func (a *App) printBanner(engine *eng.App, engineErr error) {
+	// Get terminal width for separator lines.
+	width := 60
+
+	sep := theme.Faint.Render(strings.Repeat("─", width))
+
+	fmt.Println()
+	fmt.Println(sep)
+	fmt.Println()
+	fmt.Println("  " + theme.Title.Render("skrptiq") + "  " + theme.Faint.Render("v0.1.0-prototype"))
+	fmt.Println("  " + theme.Faint.Render("Interactive terminal for personalised AI agents"))
+	fmt.Println()
+
+	if engineErr != nil {
+		fmt.Println("  " + theme.ErrorText.Render("Engine: "+engineErr.Error()))
+	} else if engine != nil {
+		workspace := "~"
+		if cwd, err := os.Getwd(); err == nil {
+			home, _ := os.UserHomeDir()
+			if home != "" && strings.HasPrefix(cwd, home) {
+				workspace = "~" + cwd[len(home):]
+			} else {
+				workspace = filepath.Base(cwd)
+			}
+		}
+
+		profile := "default"
+		if p, _ := engine.ActiveProfile("voice"); p != nil {
+			profile = p.Name
+		}
+
+		// MCP servers.
+		mcpStatus := ""
+		if servers, err := engine.MCPServers(); err == nil && len(servers) > 0 {
+			var parts []string
+			for _, s := range servers {
+				indicator := theme.ErrorText.Render("●")
+				if s.Status == "connected" {
+					indicator = theme.SuccessText.Render("●")
+				}
+				parts = append(parts, s.Name+" "+indicator)
+			}
+			mcpStatus = strings.Join(parts, "  ")
+		}
+
+		labelStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(14)
+		fmt.Println("  " + labelStyle.Render("Profile:") + profile)
+		fmt.Println("  " + labelStyle.Render("Workspace:") + workspace)
+		if mcpStatus != "" {
+			fmt.Println("  " + labelStyle.Render("MCP:") + mcpStatus)
+		}
+	}
+
+	fmt.Println()
+	fmt.Println(sep)
+	fmt.Println()
+	fmt.Println("  " + theme.Faint.Render("Type naturally to chat, or "+theme.ActionKey.Render("/")+" for commands. "+theme.ActionKey.Render("/help")+" for the full list."))
+	fmt.Println()
+}
+
 // Run is the main input loop.
 func (a *App) Run() {
+	var lastEOF time.Time
+
 	for {
 		line, err := a.rl.Readline()
 		if err != nil {
@@ -175,12 +215,20 @@ func (a *App) Run() {
 					a.setMode(ModeCommand)
 					continue
 				}
+				fmt.Println()
 				continue
 			}
 			if err == io.EOF {
-				// Ctrl+D — exit.
-				a.Print(theme.Faint.Render("Goodbye."))
-				return
+				// Double Ctrl+D to exit — must press twice within 500ms.
+				now := time.Now()
+				if now.Sub(lastEOF) < 500*time.Millisecond {
+					fmt.Println()
+					a.Print(theme.Faint.Render("Goodbye."))
+					return
+				}
+				lastEOF = now
+				a.Print(theme.Faint.Render("Press Ctrl+D again to exit."))
+				continue
 			}
 			return
 		}
@@ -539,5 +587,5 @@ func historyPath() string {
 	return filepath.Join(dir, "cli_history")
 }
 
-// Keep imports used by other files in this package.
+// lipgloss is used by handlers.go in this package.
 var _ = lipgloss.NewStyle
