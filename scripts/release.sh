@@ -10,6 +10,31 @@
 
 set -e
 
+# Help.
+if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ "$1" = "help" ]; then
+    cat <<HELP
+Usage: ./scripts/release.sh [patch|minor|major|v<version>]
+
+  patch             Increment patch version (default)
+                    v0.1.0 → v0.1.1
+
+  minor             Increment minor version
+                    v0.1.1 → v0.2.0
+
+  major             Increment major version
+                    v0.2.0 → v1.0.0
+
+  v<version>        Explicit version
+                    v0.3.0, v0.3.0-beta.1, v1.0.0-rc.1
+
+  -h, --help, help  Show this message
+
+Requires: clean working directory, on main branch.
+Creates an annotated git tag and pushes to trigger the release workflow.
+HELP
+    exit 0
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
