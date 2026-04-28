@@ -47,9 +47,19 @@ func Open(path string) (*App, error) {
 	if path == "" {
 		path = DefaultDBPath()
 	}
+	if path == "" {
+		return nil, fmt.Errorf("could not determine database path (home directory not found)")
+	}
+
+	// Ensure parent directory exists for standalone mode.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("could not create data directory %s: %w", dir, err)
+	}
+
 	db, err := storage.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not open database at %s: %w", path, err)
 	}
 	return &App{
 		DB:  db,

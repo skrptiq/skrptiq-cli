@@ -83,9 +83,16 @@ type Model struct {
 	ready         bool
 }
 
-// New creates a new Model.
-func New() Model {
-	engine, engineErr := eng.Open("")
+// New creates a new Model. Returns an error if the engine fails to start.
+// The CLI must not enter an interactive session with a broken engine.
+func New(dbPath string) (Model, error) {
+	engine, err := eng.Open(dbPath)
+	if err != nil {
+		return Model{}, fmt.Errorf("could not open database at %s\n\n"+
+			"  The database may be locked by the desktop app or corrupted.\n"+
+			"  Try: close the desktop app and retry, or run with --db-path to specify an alternative.\n\n"+
+			"  Technical detail: %w", eng.DefaultDBPath(), err)
+	}
 
 	m := Model{
 		engine: engine,
@@ -156,9 +163,9 @@ func New() Model {
 	})
 
 	// Print banner before bubbletea starts.
-	printBanner(engine, engineErr)
+	printBanner(engine)
 
-	return m
+	return m, nil
 }
 
 // SetProgram stores the program reference for Println.
@@ -534,7 +541,7 @@ func (m *Model) startExecutionWithInputs(node *storage.Node, inputs map[string]s
 }
 
 
-func printBanner(engine *eng.App, engineErr error) {
+func printBanner(engine *eng.App) {
 	w, _, _ := term.GetSize(os.Stdout.Fd())
 	if w < 20 { w = 60 }
 	_, rows, _ := term.GetSize(os.Stdout.Fd())
@@ -551,9 +558,7 @@ func printBanner(engine *eng.App, engineErr error) {
 	fmt.Println("  " + theme.Faint.Render("Interactive terminal for personalised AI agents"))
 	fmt.Println()
 
-	if engineErr != nil {
-		fmt.Println("  " + theme.ErrorText.Render("Engine: "+engineErr.Error()))
-	} else if engine != nil {
+	if engine != nil {
 		workspace := "~"
 		if cwd, err := os.Getwd(); err == nil {
 			home, _ := os.UserHomeDir()
