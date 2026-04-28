@@ -50,12 +50,25 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 ### Boundary rule
 Import the engine module only. Never import app-internal Electron packages. If you need something from the app that isn't in the engine, flag it to the orchestrator — it probably needs extracting into the engine.
 
+### Integration contract
+If you ever build import, file write, or DB write functionality: read `../orchestrator/docs/SKRPT-INTEGRATION-CONTRACT.md` first. It defines the exact data shape the engine expects. The CLI currently reads from the shared DB (populated by the app) — any future write paths must follow the same contract.
+
 ## Code Conventions
 - British English in all user-facing strings, comments, and docs
 - Prefer simplicity over cleverness — no premature abstraction
 - Own-repo commits only — never modify sibling repos
 - Standard Go project layout
 - `go fmt` and `go vet` before every commit
+- **No silent failures on critical paths** — if engine or DB fails to load, exit immediately with actionable stderr. Never continue with a broken subsystem.
+
+## Failure Classification
+
+| Class | CLI behaviour |
+|-------|-------------|
+| **Startup-critical** (engine, DB) | Exit with error message to stderr. Non-zero exit code. |
+| **Per-operation** (MCP call, API fetch) | Print error inline, continue session. |
+
+The CLI must never enter the interactive session with a broken engine or DB. Fail fast, fail loud.
 
 ## Testing — MANDATORY
 - `go test ./...` — required for ALL changes. Do not commit without tests passing.
