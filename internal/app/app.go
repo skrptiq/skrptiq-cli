@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -91,6 +92,13 @@ func New(dbPath string) (Model, error) {
 		return Model{}, err
 	}
 
+	// Restore saved workspace directory.
+	if ws := engine.Setting("workspacePath"); ws != "" {
+		if info, err := os.Stat(ws); err == nil && info.IsDir() {
+			os.Chdir(ws)
+		}
+	}
+
 	m := Model{
 		engine: engine,
 		mode:   ModeCommand,
@@ -156,6 +164,7 @@ func New(dbPath string) (Model, error) {
 				break
 			}
 		}
+		sort.Strings(matches)
 		return matches
 	})
 
@@ -545,8 +554,6 @@ func printBanner(engine *eng.App) {
 	if rows < 10 { rows = 24 }
 
 	fmt.Print("\033[2J\033[H")
-	bannerLines := 12
-	for i := 0; i < rows-bannerLines; i++ { fmt.Println() }
 
 	sep := theme.Faint.Render(strings.Repeat("─", w))
 	fmt.Println(sep)
@@ -555,6 +562,7 @@ func printBanner(engine *eng.App) {
 	fmt.Println("  " + theme.Faint.Render("Interactive terminal for personalised AI agents"))
 	fmt.Println()
 
+	bannerLines := 6 // separator + blank + title + tagline + blank + trailing blank
 	if engine != nil {
 		workspace := "~"
 		if cwd, err := os.Getwd(); err == nil {
@@ -568,8 +576,14 @@ func printBanner(engine *eng.App) {
 		labelStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(14)
 		fmt.Println("  " + labelStyle.Render("Profile:") + profile)
 		fmt.Println("  " + labelStyle.Render("Workspace:") + workspace)
+		bannerLines += 2
 	}
 	fmt.Println()
+
+	// Push the prompt to the bottom of the terminal.
+	// Leave room for the prompt area (separator + input + separator + status).
+	remaining := rows - bannerLines - 4
+	for i := 0; i < remaining; i++ { fmt.Println() }
 }
 
 // lipgloss is used by handlers.go.

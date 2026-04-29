@@ -124,7 +124,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			} else if msg.Type == tea.KeyTab && m.tabComplete != nil {
 				// First tab with no list — trigger completion.
 				m.tabMatches = m.tabComplete(m.textarea.Value())
-				if len(m.tabMatches) > 0 {
+				if len(m.tabMatches) == 1 {
+					// Single match — insert it and clear completion state.
+					m.tabIndex = 0
+					m.selectMatch()
+					m.tabMatches = nil
+				} else if len(m.tabMatches) > 0 {
 					m.tabIndex = 0
 					m.tabOriginal = m.textarea.Value()
 					m.selectMatch()
@@ -225,7 +230,11 @@ func (m Model) View() string {
 			}
 		}
 		if len(m.tabMatches) > maxVisible {
-			lines = append(lines, matchStyle.Render(fmt.Sprintf("   %d/%d", m.tabIndex+1, len(m.tabMatches))))
+			pos := m.tabIndex + 1
+			if pos < 1 {
+				pos = 1
+			}
+			lines = append(lines, matchStyle.Render(fmt.Sprintf("   %d of %d options", pos, len(m.tabMatches))))
 		}
 		completionView = strings.Join(lines, "\n") + "\n"
 	}

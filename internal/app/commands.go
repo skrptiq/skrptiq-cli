@@ -21,7 +21,7 @@ func BuildCommands(app *eng.App) []Command {
 			partial = strings.ToLower(partial)
 			var results []Completion
 			for _, n := range nodes {
-				if partial == "" || strings.Contains(strings.ToLower(n.Title), partial) {
+				if partial == "" || strings.HasPrefix(strings.ToLower(n.Title), partial) {
 					desc := n.Type
 					if n.Description != nil {
 						d := *n.Description
@@ -51,7 +51,7 @@ func BuildCommands(app *eng.App) []Command {
 		partial = strings.ToLower(partial)
 		var results []Completion
 		for _, n := range nodes {
-			if partial == "" || strings.Contains(strings.ToLower(n.Title), partial) {
+			if partial == "" || strings.HasPrefix(strings.ToLower(n.Title), partial) {
 				results = append(results, Completion{
 					Value:       n.Title,
 					Description: n.Type,
@@ -72,7 +72,7 @@ func BuildCommands(app *eng.App) []Command {
 		partial = strings.ToLower(partial)
 		var results []Completion
 		for _, p := range profiles {
-			if partial == "" || strings.Contains(strings.ToLower(p.Name), partial) {
+			if partial == "" || strings.HasPrefix(strings.ToLower(p.Name), partial) {
 				active := ""
 				if p.IsActive == 1 {
 					active = " (active)"
@@ -97,7 +97,7 @@ func BuildCommands(app *eng.App) []Command {
 		partial = strings.ToLower(partial)
 		var results []Completion
 		for _, t := range tags {
-			if partial == "" || strings.Contains(strings.ToLower(t.Name), partial) {
+			if partial == "" || strings.HasPrefix(strings.ToLower(t.Name), partial) {
 				results = append(results, Completion{
 					Value:       t.Name,
 					Description: t.Colour,
@@ -139,7 +139,7 @@ func BuildCommands(app *eng.App) []Command {
 					shortID = shortID[:8]
 				}
 				label := shortID + " " + r.WorkflowTitle
-				if partial == "" || strings.Contains(strings.ToLower(label), partial) {
+				if partial == "" || strings.HasPrefix(strings.ToLower(label), partial) {
 					results = append(results, Completion{
 						Value:       shortID,
 						Description: statusLabel(r.Status) + " " + r.WorkflowTitle + " " + r.StartedAt,
@@ -173,9 +173,35 @@ func BuildCommands(app *eng.App) []Command {
 		}},
 
 		// Browse.
-		{Name: "/list", Description: "List nodes by type"},
+		{Name: "/list", Description: "List nodes by type", ArgProvider: func(partial string) []Completion {
+			types := []struct{ name, desc string }{
+				{"workflows", "List all workflows"},
+				{"skills", "List all skills"},
+				{"prompts", "List all prompts"},
+				{"sources", "List all sources"},
+				{"documents", "List all documents"},
+				{"assets", "List all assets"},
+				{"services", "List all services"},
+			}
+			partial = strings.ToLower(partial)
+			var results []Completion
+			for _, t := range types {
+				if partial == "" || strings.HasPrefix(t.name, partial) {
+					results = append(results, Completion{Value: t.name, Description: t.desc})
+				}
+			}
+			return results
+		}},
 		{Name: "/search", Description: "Search nodes by title", ArgProvider: allNodeCompleter},
-		{Name: "/show", Description: "Show node content", ArgProvider: allNodeCompleter},
+		{Name: "/show", Description: "Show node content", Subcommands: []Subcommand{
+			{Name: "workflow", Description: "Show a workflow", ArgProvider: nodeCompleter("workflow")},
+			{Name: "skill", Description: "Show a skill", ArgProvider: nodeCompleter("skill")},
+			{Name: "prompt", Description: "Show a prompt", ArgProvider: nodeCompleter("prompt")},
+			{Name: "source", Description: "Show a source", ArgProvider: nodeCompleter("source")},
+			{Name: "document", Description: "Show a document", ArgProvider: nodeCompleter("document")},
+			{Name: "asset", Description: "Show an asset", ArgProvider: nodeCompleter("asset")},
+			{Name: "service", Description: "Show a service", ArgProvider: nodeCompleter("service")},
+		}},
 
 		// Hub.
 		{Name: "/hub", Description: "Hub operations", Subcommands: []Subcommand{

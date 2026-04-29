@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 	"github.com/skrptiq/skrptiq-cli/internal/version"
@@ -40,7 +41,7 @@ func (m *Model) handleSlashCommand(cmd string, args string) bool {
 	case "run":
 		m.handleEnterRun(args)
 	case "clear":
-		fmt.Print("\033[2J\033[H") // ANSI clear screen
+		clearToBottom()
 	case "list":
 		m.handleList(args)
 	case "show":
@@ -151,8 +152,20 @@ func (m *Model) handleList(args string) {
 
 func (m *Model) handleShow(args string) {
 	if m.engine == nil { m.Print(noEngineMsg()); return }
+
+	// Support both "/show <name>" and "/show <type> <name>".
+	typeMap := map[string]bool{
+		"workflow": true, "skill": true, "prompt": true,
+		"source": true, "document": true, "asset": true, "service": true,
+	}
 	title := strings.TrimSpace(args)
-	if title == "" { m.Print(theme.Faint.Render("Usage: /show <node name>")); return }
+	if title == "" { m.Print(theme.Faint.Render("Usage: /show <type> <name> or /show <name>")); return }
+
+	parts := strings.SplitN(title, " ", 2)
+	if len(parts) == 2 && typeMap[strings.ToLower(parts[0])] {
+		title = strings.TrimSpace(parts[1])
+	}
+
 	node, err := m.engine.FindNodeByTitle(title)
 	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 	if node == nil { m.Print(theme.Faint.Render("No node found: " + title)); return }
@@ -476,6 +489,9 @@ func (m *Model) handleWorkspaceCmd(sub, args string) {
 		info, err := os.Stat(absPath)
 		if err != nil || !info.IsDir() { m.Print(theme.ErrorText.Render("Not a directory: " + absPath)); return }
 		if err := os.Chdir(absPath); err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		if m.engine != nil {
+			m.engine.DB.SetSetting("workspacePath", absPath)
+		}
 		m.Print(theme.SuccessText.Render("Workspace: ") + absPath)
 	default:
 		m.Print(usageBlock("/workspace", []string{"show", "set"}))
@@ -716,4 +732,18 @@ func helpText() string {
   /help                  This message
 
   Tab to complete commands. Ctrl+C to cancel. Ctrl+D to exit.`
+}
+
+// clearToBottom clears the screen and pushes the cursor to the bottom
+// so the prompt sits at the bottom of the terminal window.
+func clearToBottom() {
+	_, rows, _ := term.GetSize(os.Stdout.Fd())
+	if rows < 10 {
+		rows = 24
+	}
+	fmt.Print("\033[2J\033[H")
+	// Leave room for the prompt area (separator + input + separator + status).
+	for i := 0; i < rows-4; i++ {
+		fmt.Println()
+	}
 }
