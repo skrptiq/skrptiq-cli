@@ -48,18 +48,30 @@ func Open(path string) (*App, error) {
 		path = DefaultDBPath()
 	}
 	if path == "" {
-		return nil, fmt.Errorf("could not determine database path (home directory not found)")
+		return nil, fmt.Errorf(
+			"cannot find home directory — unable to locate database\n\n" +
+				"  Try: run with --db-path /path/to/skrptiq.db to specify the database location")
 	}
 
 	// Ensure parent directory exists for standalone mode.
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("could not create data directory %s: %w", dir, err)
+		return nil, fmt.Errorf(
+			"cannot create data directory: %s\n\n"+
+				"  Check that you have write permission to this location.\n"+
+				"  Try: mkdir -p %s\n\n"+
+				"  Detail: %w", dir, dir, err)
 	}
 
 	db, err := storage.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("could not open database at %s: %w", path, err)
+		return nil, fmt.Errorf(
+			"cannot open database: %s\n\n"+
+				"  Common causes:\n"+
+				"  • The database is locked by the desktop app — close it and retry\n"+
+				"  • The file is corrupted — delete it and re-import from the hub\n"+
+				"  • Wrong path — use --db-path to point to the correct file\n\n"+
+				"  Detail: %w", path, err)
 	}
 	return &App{
 		DB:  db,

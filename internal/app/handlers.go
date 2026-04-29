@@ -660,7 +660,8 @@ func usageBlock(cmd string, subcommands []string) string {
 }
 
 func noEngineMsg() string {
-	return theme.ErrorText.Render("No database connection. Is ~/.skrptiq/skrptiq.db accessible?")
+	return theme.ErrorText.Render("No database connection.") +
+		"\n  Try restarting skrptiq, or run with --db-path to specify the database location."
 }
 
 func helpText() string {

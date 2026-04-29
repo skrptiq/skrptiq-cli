@@ -29,7 +29,10 @@ func main() {
 	p := tea.NewProgram(&model, tea.WithInputTTY())
 	model.SetProgram(p)
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: terminal session failed\n\n"+
+			"  This usually means the terminal does not support interactive input.\n"+
+			"  Try: run from a standard terminal emulator (not a pipe or script).\n\n"+
+			"  Detail: %v\n", err)
 		os.Exit(1)
 	}
 }

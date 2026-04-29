@@ -88,10 +88,7 @@ type Model struct {
 func New(dbPath string) (Model, error) {
 	engine, err := eng.Open(dbPath)
 	if err != nil {
-		return Model{}, fmt.Errorf("could not open database at %s\n\n"+
-			"  The database may be locked by the desktop app or corrupted.\n"+
-			"  Try: close the desktop app and retry, or run with --db-path to specify an alternative.\n\n"+
-			"  Technical detail: %w", eng.DefaultDBPath(), err)
+		return Model{}, err
 	}
 
 	m := Model{

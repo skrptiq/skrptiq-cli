@@ -47,6 +47,43 @@ func TestOpenInvalidPath(t *testing.T) {
 	}
 }
 
+func TestOpenDirCreateErrorIsActionable(t *testing.T) {
+	// A path where the parent directory cannot be created should give
+	// actionable guidance including the directory and a mkdir suggestion.
+	_, err := Open("/nonexistent/path/to/db.sqlite")
+	if err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "cannot create data directory") {
+		t.Errorf("error should describe the failure, got: %s", msg)
+	}
+	if !strings.Contains(msg, "mkdir -p") {
+		t.Errorf("error should suggest mkdir, got: %s", msg)
+	}
+}
+
+func TestOpenDBErrorIsActionable(t *testing.T) {
+	// A path where the directory exists but the file is not a valid DB
+	// should give guidance about common causes.
+	tmp := t.TempDir()
+	badDB := filepath.Join(tmp, "bad.db")
+	// Write garbage to make it an invalid SQLite file.
+	os.WriteFile(badDB, []byte("not a database"), 0644)
+	_, err := Open(badDB)
+	if err == nil {
+		// Some SQLite drivers accept any file; skip if no error.
+		t.Skip("storage.Open accepted invalid file")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "--db-path") {
+		t.Errorf("error should suggest --db-path flag, got: %s", msg)
+	}
+	if !strings.Contains(msg, "Common causes") {
+		t.Errorf("error should list common causes, got: %s", msg)
+	}
+}
+
 func TestOpenTempDB(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
