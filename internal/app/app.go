@@ -79,9 +79,10 @@ type Model struct {
 	inputMeta       map[string]inputMetaInfo
 	pendingNode     *storage.Node
 
-	pendingOutput []string
-	lastEOF       time.Time
-	ready         bool
+	pendingOutput  []string
+	lastEOF        time.Time
+	ready          bool
+	quitRequested  bool
 }
 
 // New creates a new Model. Returns an error if the engine fails to start.
@@ -219,6 +220,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Show what the user typed in scrollback.
 		m.Print(theme.Faint.Render("  > ") + msg.Text)
 		m.handleInput(msg.Text)
+		if m.quitRequested {
+			m.Print(theme.Faint.Render("Goodbye."))
+			return m, tea.Sequence(m.flushOutput(), tea.Quit)
+		}
 		return m, m.flushOutput()
 
 	case prompt.CtrlCMsg:

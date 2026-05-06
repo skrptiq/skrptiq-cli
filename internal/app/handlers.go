@@ -7,16 +7,56 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 
+	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
 	"github.com/skrptiq/skrptiq-cli/internal/version"
 )
 
+// commandHelp returns help text for a command. Returns "" if unknown.
+func commandHelp(cmd string) string {
+	help := map[string]string{
+		"help":      "Usage: /help\n\n  Show all available commands.",
+		"chat":      "Usage: /chat\n\n  Enter chat mode. Talk to your AI team using natural language.\n  Use /exit to return to command mode.",
+		"command":   "Usage: /command\n\n  Return to command mode from chat or run mode.",
+		"exit":      "Usage: /exit\n\n  Exit the current mode and return to command mode.",
+		"quit":      "Usage: /quit\n\n  Exit skrptiq. Shortcut: ctrl+d ctrl+d.",
+		"run":       "Usage: /run [workflow name]\n\n  Enter run mode. If a workflow name is provided, start it immediately.\n  Tab to complete workflow names. Alias: /r",
+		"clear":     "Usage: /clear\n\n  Clear the screen.",
+		"status":    "Usage: /status\n\n  Show the current execution status with step detail.",
+		"list":      "Usage: /list [type] [--tag <name>] [--json]\n\n  List nodes. Types: workflows, skills, prompts, sources,\n  documents, assets, services.\n\n  Flags:\n    --tag <name>   Filter by tag\n    --json         Output as JSON",
+		"show":      "Usage: /show [type] <name>\n\n  Show a node's content and metadata.\n  Types: workflow, skill, prompt, source, document, asset, service.\n\n  Examples:\n    /show Blog Post Pipeline\n    /show workflow Blog Post Pipeline",
+		"search":    "Usage: /search <query> [--json]\n\n  Search nodes by title. Alias: /s",
+		"hub":       "Usage: /hub <subcommand>\n\n  Subcommands:\n    list              List imported skrpts\n    search <query>    Search community skrpts\n    import <slug>     Import a skrpt from Hub\n    update            Check for updates",
+		"runs":      "Usage: /runs <subcommand> [--status <s>] [--workflow <name>] [--json]\n\n  Subcommands:\n    list              List recent executions\n    status            Show active executions\n    show <id>         Show run details\n\n  Flags (for list):\n    --status <s>      Filter by status (running, paused, completed, failed)\n    --workflow <name> Filter by workflow name\n    --json            Output as JSON",
+		"profile":   "Usage: /profile <subcommand>\n\n  Subcommands:\n    list              List all profiles\n    show              Show active profile details\n    use <name>        Switch active profile\n    controls          Show quality control settings",
+		"dials":     "Usage: /dials [subcommand]\n\n  Subcommands:\n    show              Show current persona dial values\n    set <dial> <val>  Set a dial value\n\n  Dials adjust the persona characteristics used during execution.",
+		"mcp":       "Usage: /mcp <subcommand>\n\n  Subcommands:\n    list              List MCP server connections\n    tools             List available tools\n    connect <name>    Connect to a server\n    disconnect <name> Disconnect a server",
+		"providers":  "Usage: /providers <subcommand>\n\n  Subcommands:\n    list                          List configured providers\n    add <name> <type> <api-key>   Add a new provider\n\n  Types: anthropic, openai, gemini",
+		"workspace": "Usage: /workspace <subcommand>\n\n  Subcommands:\n    show              Show current workspace context\n    set <path>        Change workspace directory (persisted)",
+		"tags":      "Usage: /tags list [--json]\n\n  List all tags.",
+		"tag":       "Usage: /tag <node title> <tag name>\n\n  Apply a tag to a node.",
+		"untag":     "Usage: /untag <node title> <tag name>\n\n  Remove a tag from a node.",
+		"config":    "Usage: /config <subcommand>\n\n  Subcommands:\n    show              Show configuration values\n    set <key> <value> Update a configuration value",
+		"settings":  "Usage: /settings <subcommand>\n\n  Subcommands:\n    about             Version and system info\n    providers         AI provider configuration\n    connections       All connections\n    config            Show configuration values\n    set <key> <value> Update a configuration value",
+	}
+	return help[cmd]
+}
+
 // handleSlashCommand processes slash commands. Returns true if handled.
 func (m *Model) handleSlashCommand(cmd string, args string) bool {
+	// Check for --help flag on any command.
+	if strings.Contains(args, "--help") || args == "help" {
+		if h := commandHelp(cmd); h != "" {
+			m.Print(h)
+			return true
+		}
+	}
+
 	sub, subArgs := splitFirst(args)
 
 	switch cmd {
@@ -38,7 +78,9 @@ func (m *Model) handleSlashCommand(cmd string, args string) bool {
 		} else {
 			m.Print(theme.Faint.Render("Already in command mode. Use ctrl+d to exit skrptiq."))
 		}
-	case "run":
+	case "quit", "q":
+		m.quitRequested = true
+	case "run", "r":
 		m.handleEnterRun(args)
 	case "clear":
 		clearToBottom()
@@ -46,18 +88,22 @@ func (m *Model) handleSlashCommand(cmd string, args string) bool {
 		m.handleList(args)
 	case "show":
 		m.handleShow(args)
-	case "search":
+	case "search", "s":
 		m.handleSearch(args)
+	case "status":
+		m.handleStatus()
 	case "hub":
 		m.handleHub(sub, subArgs)
 	case "runs":
 		m.handleRuns(sub, subArgs)
 	case "profile":
 		m.handleProfile(sub, subArgs)
+	case "dials":
+		m.handleDials(sub, subArgs)
 	case "mcp":
 		m.handleMCPCmd(sub)
 	case "providers":
-		m.handleProvidersCmd(sub)
+		m.handleProvidersCmd(sub, subArgs)
 	case "workspace":
 		m.handleWorkspaceCmd(sub, subArgs)
 	case "tags":
@@ -91,7 +137,13 @@ func (m *Model) handleList(args string) {
 		m.Print(noEngineMsg())
 		return
 	}
-	nodeType := strings.TrimSpace(strings.ToLower(args))
+
+	// Parse flags from args.
+	nodeType, flags := parseFlags(args)
+	tagFilter := flags["tag"]
+	jsonOut := flags["json"] != ""
+
+	nodeType = strings.ToLower(nodeType)
 	typeMap := map[string]string{
 		"workflows": "workflow", "workflow": "workflow",
 		"skills": "skill", "skill": "skill",
@@ -114,7 +166,7 @@ func (m *Model) handleList(args string) {
 	} else {
 		mapped, ok := typeMap[nodeType]
 		if !ok {
-			m.Print(theme.ErrorText.Render("Unknown type: " + args + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
+			m.Print(theme.ErrorText.Render("Unknown type: " + nodeType + ". Try: workflows, skills, prompts, sources, documents, assets, services"))
 			return
 		}
 		filtered, e := m.engine.NodesByType(mapped)
@@ -127,6 +179,29 @@ func (m *Model) handleList(args string) {
 		m.Print(theme.ErrorText.Render("Error: " + err.Error()))
 		return
 	}
+
+	// Apply tag filter if specified.
+	if tagFilter != "" {
+		var filtered []struct{ Title, Type string }
+		allNodes, _ := m.engine.DB.GetAllNodes()
+		nodeIDs := make(map[string]bool)
+		for _, n := range allNodes {
+			tags, _ := m.engine.DB.GetTagsForNode(n.ID)
+			for _, t := range tags {
+				if strings.EqualFold(t.Name, tagFilter) {
+					nodeIDs[n.Title] = true
+					break
+				}
+			}
+		}
+		for _, n := range nodes {
+			if nodeIDs[n.Title] {
+				filtered = append(filtered, n)
+			}
+		}
+		nodes = filtered
+	}
+
 	if len(nodes) == 0 {
 		m.Print(theme.Faint.Render("No nodes found."))
 		return
@@ -137,11 +212,27 @@ func (m *Model) handleList(args string) {
 		}
 		return strings.ToLower(nodes[i].Title) < strings.ToLower(nodes[j].Title)
 	})
-	typeFilter := ""
-	if nodeType != "" {
-		typeFilter = " (" + nodeType + ")"
+
+	if jsonOut {
+		type nodeJSON struct {
+			Title string `json:"title"`
+			Type  string `json:"type"`
+		}
+		var out []nodeJSON
+		for _, n := range nodes { out = append(out, nodeJSON{Title: n.Title, Type: n.Type}) }
+		data, _ := json.MarshalIndent(out, "", "  ")
+		m.Print(string(data))
+		return
 	}
-	m.Print(fmt.Sprintf("%s%s — %d nodes", theme.Title.Render("Nodes"), typeFilter, len(nodes)))
+
+	typeFilter2 := ""
+	if nodeType != "" {
+		typeFilter2 = " (" + nodeType + ")"
+	}
+	if tagFilter != "" {
+		typeFilter2 += " [tag: " + tagFilter + "]"
+	}
+	m.Print(fmt.Sprintf("%s%s — %d nodes", theme.Title.Render("Nodes"), typeFilter2, len(nodes)))
 	typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 	for _, n := range nodes {
 		m.Print(fmt.Sprintf("  %s %s", typeStyle.Render(n.Type), n.Title))
@@ -183,11 +274,25 @@ func (m *Model) handleShow(args string) {
 
 func (m *Model) handleSearch(args string) {
 	if m.engine == nil { m.Print(noEngineMsg()); return }
-	query := strings.TrimSpace(args)
-	if query == "" { m.Print(theme.Faint.Render("Usage: /search <query>")); return }
+	query, flags := parseFlags(args)
+	jsonOut := flags["json"] != ""
+	if query == "" { m.Print(theme.Faint.Render("Usage: /search <query> [--json]")); return }
 	nodes, err := m.engine.SearchNodes(query)
 	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 	if len(nodes) == 0 { m.Print(theme.Faint.Render("No results for: " + query)); return }
+
+	if jsonOut {
+		type nodeJSON struct {
+			Title string `json:"title"`
+			Type  string `json:"type"`
+		}
+		var out []nodeJSON
+		for _, n := range nodes { out = append(out, nodeJSON{Title: n.Title, Type: n.Type}) }
+		data, _ := json.MarshalIndent(out, "", "  ")
+		m.Print(string(data))
+		return
+	}
+
 	m.Print(fmt.Sprintf("%d results for %q:", len(nodes), query))
 	typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 	for _, n := range nodes {
@@ -259,11 +364,38 @@ func (m *Model) handleHub(sub, args string) {
 func (m *Model) handleRuns(sub, args string) {
 	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
-	case "list":
-		runs, err := m.engine.ListExecutions(20)
+	case "list", "":
+		_, flags := parseFlags(args)
+		statusFilter := flags["status"]
+		workflowFilter := flags["workflow"]
+		jsonOut := flags["json"] != ""
+
+		runs, err := m.engine.ListExecutions(50)
 		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+
+		// Apply filters.
+		if statusFilter != "" || workflowFilter != "" {
+			var filtered []eng.ExecutionSummary
+			for _, r := range runs {
+				if statusFilter != "" && !strings.EqualFold(r.Status, statusFilter) { continue }
+				if workflowFilter != "" && !strings.Contains(strings.ToLower(r.WorkflowTitle), strings.ToLower(workflowFilter)) { continue }
+				filtered = append(filtered, r)
+			}
+			runs = filtered
+		}
+
 		if len(runs) == 0 { m.Print(theme.Faint.Render("No executions found.")); return }
-		m.Print(theme.Title.Render("Recent Runs"))
+
+		if jsonOut {
+			data, _ := json.MarshalIndent(runs, "", "  ")
+			m.Print(string(data))
+			return
+		}
+
+		title := "Recent Runs"
+		if statusFilter != "" { title += " [" + statusFilter + "]" }
+		if workflowFilter != "" { title += " [" + workflowFilter + "]" }
+		m.Print(theme.Title.Render(title))
 		for _, r := range runs {
 			shortID := r.ID
 			if len(shortID) > 8 { shortID = shortID[:8] }
@@ -288,7 +420,7 @@ func (m *Model) handleRuns(sub, args string) {
 	case "show":
 		m.handleRunShow(args)
 	default:
-		m.Print(usageBlock("/runs", []string{"list", "status", "show <id>"}))
+		m.Print(usageBlock("/runs", []string{"list [--status <s>] [--workflow <name>] [--json]", "status", "show <id>"}))
 	}
 }
 
@@ -361,9 +493,16 @@ func (m *Model) handleProfile(sub, args string) {
 	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
+		_, flags := parseFlags(args)
+		jsonOut := flags["json"] != ""
 		profiles, err := m.engine.Profiles()
 		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 		if len(profiles) == 0 { m.Print(theme.Faint.Render("No profiles configured.")); return }
+		if jsonOut {
+			data, _ := json.MarshalIndent(profiles, "", "  ")
+			m.Print(string(data))
+			return
+		}
 		m.Print(theme.Title.Render("Profiles"))
 		typeStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(12)
 		for _, p := range profiles {
@@ -447,7 +586,7 @@ func (m *Model) handleMCPCmd(sub string) {
 
 // --- /providers ---
 
-func (m *Model) handleProvidersCmd(sub string) {
+func (m *Model) handleProvidersCmd(sub, args string) {
 	if m.engine == nil { m.Print(noEngineMsg()); return }
 	switch sub {
 	case "list":
@@ -462,7 +601,8 @@ func (m *Model) handleProvidersCmd(sub string) {
 			if p.Provider != "" { line += theme.Faint.Render(" (" + p.Provider + ")") }
 			m.Print(line)
 		}
-	case "add": m.Print(theme.Faint.Render("/providers add — requires interactive setup."))
+	case "add":
+		m.handleProviderAdd(args)
 	default:
 		m.Print(usageBlock("/providers", []string{"list", "add"}))
 	}
@@ -502,18 +642,27 @@ func (m *Model) handleWorkspaceCmd(sub, args string) {
 
 func (m *Model) handleTagsCmd(sub string) {
 	if m.engine == nil { m.Print(noEngineMsg()); return }
-	switch sub {
-	case "list":
+	// sub may contain --json flag.
+	_, flags := parseFlags(sub)
+	jsonOut := flags["json"] != ""
+	cleanSub := strings.TrimSpace(strings.Replace(sub, "--json", "", 1))
+	switch cleanSub {
+	case "list", "":
 		tags, err := m.engine.Tags()
 		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 		if len(tags) == 0 { m.Print(theme.Faint.Render("No tags defined.")); return }
+		if jsonOut {
+			data, _ := json.MarshalIndent(tags, "", "  ")
+			m.Print(string(data))
+			return
+		}
 		m.Print(theme.Title.Render("Tags"))
 		for _, t := range tags {
 			colour := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Colour))
 			m.Print(fmt.Sprintf("  %s %s", colour.Render("●"), t.Name))
 		}
 	default:
-		m.Print(usageBlock("/tags", []string{"list"}))
+		m.Print(usageBlock("/tags", []string{"list [--json]"}))
 	}
 }
 
@@ -603,7 +752,7 @@ func (m *Model) handleSettings(sub, args string) {
 		if m.engine != nil { m.Print(theme.Faint.Render("Engine: ") + m.engine.DB.Path()) } else { m.Print(theme.Faint.Render("Engine: not connected")) }
 		cwd, _ := os.Getwd()
 		m.Print(theme.Faint.Render("Working directory: ") + cwd)
-	case "providers": m.handleProvidersCmd("list")
+	case "providers": m.handleProvidersCmd("list", "")
 	case "connections":
 		if m.engine == nil { m.Print(noEngineMsg()); return }
 		conns, err := m.engine.Connections()
@@ -664,7 +813,135 @@ func (m *Model) handleEnterChat(args string) {
 	m.Print(theme.Faint.Render("Type naturally. /exit to return to command mode."))
 }
 
+// --- /status ---
+
+func (m *Model) handleStatus() {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
+	if m.executionID == "" {
+		m.Print(theme.Faint.Render("No active execution."))
+		return
+	}
+	run, err := m.engine.GetRunDetail(m.executionID)
+	if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+	m.Print(theme.Title.Render(run.WorkflowTitle))
+	m.Print(theme.Faint.Render("ID: ") + run.ID[:8])
+	m.Print(theme.Faint.Render("Status: ") + statusIcon(run.Status) + " " + run.Status)
+	m.Print(theme.Faint.Render("Started: ") + run.StartedAt)
+	if run.TotalTokens > 0 { m.Print(theme.Faint.Render("Tokens: ") + fmt.Sprintf("%d", run.TotalTokens)) }
+	if run.Error != nil && *run.Error != "" { m.Print(theme.ErrorText.Render("Error: ") + *run.Error) }
+	if len(run.Steps) > 0 {
+		m.Print("")
+		for _, s := range run.Steps {
+			line := fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, s.NodeTitle)
+			if s.Provider != "" { line += theme.Faint.Render(" (" + s.Provider + ")") }
+			if s.Duration != "" { line += theme.Faint.Render(" " + s.Duration) }
+			m.Print(line)
+		}
+	}
+}
+
+// --- /dials ---
+
+func (m *Model) handleDials(sub, args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
+	switch sub {
+	case "show", "":
+		raw := m.engine.Setting("PERSONA_DIALS")
+		if raw == "" {
+			m.Print(theme.Faint.Render("No persona dials configured."))
+			return
+		}
+		var dials map[string]any
+		if err := json.Unmarshal([]byte(raw), &dials); err != nil {
+			m.Print(theme.ErrorText.Render("Error parsing dials: " + err.Error()))
+			return
+		}
+		m.Print(theme.Title.Render("Persona Dials"))
+		labelStyle := lipgloss.NewStyle().Foreground(theme.Muted).Width(20)
+		// Sort keys for consistent display.
+		keys := make([]string, 0, len(dials))
+		for k := range dials { keys = append(keys, k) }
+		sort.Strings(keys)
+		for _, k := range keys {
+			m.Print(fmt.Sprintf("  %s %v", labelStyle.Render(k+":"), dials[k]))
+		}
+	case "set":
+		parts := strings.SplitN(args, " ", 2)
+		if len(parts) < 2 { m.Print(theme.Faint.Render("Usage: /dials set <dial> <value>")); return }
+		dialName, dialValue := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		raw := m.engine.Setting("PERSONA_DIALS")
+		var dials map[string]any
+		if raw != "" {
+			if err := json.Unmarshal([]byte(raw), &dials); err != nil {
+				dials = make(map[string]any)
+			}
+		} else {
+			dials = make(map[string]any)
+		}
+		// Try to parse as number.
+		var val any = dialValue
+		var numVal float64
+		if _, err := fmt.Sscanf(dialValue, "%f", &numVal); err == nil {
+			val = numVal
+		}
+		dials[dialName] = val
+		out, _ := json.Marshal(dials)
+		if err := m.engine.DB.SetSetting("PERSONA_DIALS", string(out)); err != nil {
+			m.Print(theme.ErrorText.Render("Error: " + err.Error()))
+			return
+		}
+		m.Print(theme.SuccessText.Render("Set ") + dialName + " = " + dialValue)
+	default:
+		m.Print(usageBlock("/dials", []string{"show", "set <dial> <value>"}))
+	}
+}
+
+// --- /providers add ---
+
+func (m *Model) handleProviderAdd(args string) {
+	// Expect: /providers add <name> <provider-type> <api-key>
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 3)
+	if len(parts) < 3 {
+		m.Print(theme.Faint.Render("Usage: /providers add <name> <type> <api-key>"))
+		m.Print(theme.Faint.Render("  Types: anthropic, openai, gemini"))
+		m.Print(theme.Faint.Render("  Example: /providers add claude anthropic sk-ant-..."))
+		return
+	}
+	name, provType, apiKey := parts[0], parts[1], parts[2]
+	id := fmt.Sprintf("conn_%s_%d", provType, time.Now().UnixMilli())
+	authData := &apiKey
+	if err := m.engine.DB.CreateConnection(id, name, "llm-provider", provType, "connected", authData, nil, nil); err != nil {
+		m.Print(theme.ErrorText.Render("Error: " + err.Error()))
+		return
+	}
+	m.Print(theme.SuccessText.Render("Added provider: ") + name + theme.Faint.Render(" ("+provType+")"))
+}
+
 // --- helpers ---
+
+// parseFlags splits args into a positional part and --flag values.
+// e.g. "workflows --tag content --json" → ("workflows", {"tag":"content","json":"true"})
+func parseFlags(args string) (string, map[string]string) {
+	flags := make(map[string]string)
+	var positional []string
+	parts := strings.Fields(args)
+	for i := 0; i < len(parts); i++ {
+		if strings.HasPrefix(parts[i], "--") {
+			key := strings.TrimPrefix(parts[i], "--")
+			if key == "json" || key == "help" {
+				flags[key] = "true"
+			} else if i+1 < len(parts) && !strings.HasPrefix(parts[i+1], "--") {
+				flags[key] = parts[i+1]
+				i++
+			} else {
+				flags[key] = "true"
+			}
+		} else {
+			positional = append(positional, parts[i])
+		}
+	}
+	return strings.Join(positional, " "), flags
+}
 
 func usageBlock(cmd string, subcommands []string) string {
 	var b strings.Builder
@@ -685,25 +962,29 @@ func helpText() string {
 
   Modes
   /chat                  Enter chat mode (talk to your AI team)
-  /run <name>            Enter run mode (execute a workflow)
+  /run <name>            Run a workflow (/r is a shortcut)
   /command               Return to command mode
   /exit                  Return to command mode
+  /quit                  Exit skrptiq (/q is a shortcut)
 
   Browse & search
-  /list [type]           List nodes (workflows, skills, prompts...)
-  /search <query>        Search nodes by title
-  /show <name>           Show node content and metadata
+  /list [type]           List nodes (--tag <name>, --json)
+  /search <query>        Search nodes by title (/s is a shortcut, --json)
+  /show [type] <name>    Show node content and metadata
+  /status                Show current execution status
 
   Execution
-  /runs list             List recent executions
+  /runs list             List executions (--status, --workflow, --json)
   /runs status           Show active executions
   /runs show <id>        Show run details and step outputs
 
-  Profiles
-  /profile list          List all profiles
+  Profiles & Persona
+  /profile list          List all profiles (--json)
   /profile show          Show active profile details
   /profile use <name>    Switch active profile
   /profile controls      Show quality control settings
+  /dials                 Show persona dial settings
+  /dials set <d> <v>     Set a persona dial value
 
   Hub
   /hub list              List imported skrpts
@@ -714,9 +995,11 @@ func helpText() string {
   Infrastructure
   /mcp list              List MCP server connections
   /mcp tools             List available MCP tools
+  /providers list        List AI providers
+  /providers add         Add a new provider
   /workspace show        Show workspace context
   /workspace set <path>  Change workspace directory
-  /tags list             List all tags
+  /tags list             List all tags (--json)
   /tag <node> <tag>      Apply a tag to a node
   /untag <node> <tag>    Remove a tag from a node
 
@@ -731,7 +1014,8 @@ func helpText() string {
   /clear                 Clear screen
   /help                  This message
 
-  Tab to complete commands. Ctrl+C to cancel. Ctrl+D to exit.`
+  All commands support --help. Tab to complete commands.
+  Ctrl+C to cancel. Ctrl+D to exit.`
 }
 
 // clearToBottom clears the screen and pushes the cursor to the bottom

@@ -336,3 +336,84 @@ func TestNoEngineMsg(t *testing.T) {
 	}
 }
 
+// --- parseFlags tests ---
+
+func TestParseFlags(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantPos   string
+		wantFlags map[string]string
+	}{
+		{"workflows", "workflows", map[string]string{}},
+		{"--json", "", map[string]string{"json": "true"}},
+		{"workflows --tag content", "workflows", map[string]string{"tag": "content"}},
+		{"workflows --tag content --json", "workflows", map[string]string{"tag": "content", "json": "true"}},
+		{"--status running --workflow blog", "", map[string]string{"status": "running", "workflow": "blog"}},
+		{"--help", "", map[string]string{"help": "true"}},
+	}
+	for _, tt := range tests {
+		pos, flags := parseFlags(tt.input)
+		if pos != tt.wantPos {
+			t.Errorf("parseFlags(%q) positional = %q, want %q", tt.input, pos, tt.wantPos)
+		}
+		for k, v := range tt.wantFlags {
+			if flags[k] != v {
+				t.Errorf("parseFlags(%q) flag %q = %q, want %q", tt.input, k, flags[k], v)
+			}
+		}
+	}
+}
+
+// --- commandHelp tests ---
+
+func TestCommandHelpCoversAllCommands(t *testing.T) {
+	cmds := []string{"help", "chat", "run", "exit", "quit", "clear", "status",
+		"list", "show", "search", "hub", "runs", "profile", "dials",
+		"mcp", "providers", "workspace", "tags", "tag", "untag", "config", "settings"}
+	for _, cmd := range cmds {
+		h := commandHelp(cmd)
+		if h == "" {
+			t.Errorf("commandHelp(%q) returned empty string — missing help text", cmd)
+		}
+		if !strings.Contains(h, "Usage:") {
+			t.Errorf("commandHelp(%q) should start with Usage:", cmd)
+		}
+	}
+}
+
+// --- alias routing tests ---
+
+func TestAliasRouting(t *testing.T) {
+	m := Model{mode: ModeCommand}
+	// /q should set quitRequested.
+	m.handleSlashCommand("q", "")
+	if !m.quitRequested {
+		t.Error("expected /q to set quitRequested")
+	}
+	// /quit should also set quitRequested.
+	m2 := Model{mode: ModeCommand}
+	m2.handleSlashCommand("quit", "")
+	if !m2.quitRequested {
+		t.Error("expected /quit to set quitRequested")
+	}
+}
+
+func TestHelpFlagInterceptsCommand(t *testing.T) {
+	m := Model{mode: ModeCommand}
+	handled := m.handleSlashCommand("list", "--help")
+	if !handled {
+		t.Error("expected --help to be handled")
+	}
+	// Check that help was printed (should have pending output).
+	found := false
+	for _, line := range m.pendingOutput {
+		if strings.Contains(line, "Usage:") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected help text in pending output")
+	}
+}
+

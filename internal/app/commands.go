@@ -156,10 +156,12 @@ func BuildCommands(app *eng.App) []Command {
 		{Name: "/run", Description: "Enter run mode", ArgProvider: nodeCompleter("workflow")},
 		{Name: "/command", Description: "Return to command mode"},
 		{Name: "/exit", Description: "Exit current mode"},
+		{Name: "/quit", Description: "Exit skrptiq"},
 
 		// Session.
 		{Name: "/help", Description: "List all available commands"},
 		{Name: "/clear", Description: "Clear session history"},
+		{Name: "/status", Description: "Show current execution status"},
 
 		// Execution (deferred — needs engine runner).
 		{Name: "/resume", Description: "Resume a paused execution"},
@@ -219,12 +221,24 @@ func BuildCommands(app *eng.App) []Command {
 			{Name: "controls", Description: "Show quality control settings"},
 		}},
 
+		// Persona dials.
+		{Name: "/dials", Description: "Persona dial settings", Subcommands: []Subcommand{
+			{Name: "show", Description: "Show current dial values"},
+			{Name: "set", Description: "Set a dial value"},
+		}},
+
 		// MCP.
 		{Name: "/mcp", Description: "MCP servers", Subcommands: []Subcommand{
 			{Name: "list", Description: "List server connections"},
 			{Name: "tools", Description: "List available tools"},
 			{Name: "connect", Description: "Connect to a server"},
 			{Name: "disconnect", Description: "Disconnect a server"},
+		}},
+
+		// Providers.
+		{Name: "/providers", Description: "AI providers", Subcommands: []Subcommand{
+			{Name: "list", Description: "List configured providers"},
+			{Name: "add", Description: "Add a new provider"},
 		}},
 
 		// Tags.
