@@ -15,6 +15,7 @@ import (
 	"github.com/skrptiq/engine/hubapi"
 	"github.com/skrptiq/engine/llm"
 	"github.com/skrptiq/engine/storage"
+	"github.com/skrptiq/engine/workspace"
 )
 
 // DefaultDBPath returns the database path, checking locations in order:
@@ -465,6 +466,11 @@ func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[str
 // ResumeExecution resumes a paused execution with gate input.
 func (a *App) ResumeExecution(ctx context.Context, executionID string, gateInput string, onProgress exec.ProgressCallback) (string, error) {
 	return exec.ResumeExecution(ctx, a.DB, executionID, gateInput, onProgress)
+}
+
+// ListDeps returns workspace dependencies from skrptiq.yaml in the given directory.
+func (a *App) ListDeps(workspacePath string) ([]workspace.DepInfo, error) {
+	return workspace.ListDeps(workspacePath, nil)
 }
 
 // StopExecution cancels a running exec.

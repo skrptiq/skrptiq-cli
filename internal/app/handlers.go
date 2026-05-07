@@ -38,6 +38,7 @@ func commandHelp(cmd string) string {
 		"mcp":       "Usage: /mcp <subcommand>\n\n  Subcommands:\n    list              List MCP server connections\n    tools             List available tools\n    connect <name>    Connect to a server\n    disconnect <name> Disconnect a server",
 		"providers":  "Usage: /providers <subcommand>\n\n  Subcommands:\n    list                          List configured providers\n    add <name> <type> <api-key>   Add a new provider\n\n  Types: anthropic, openai, gemini",
 		"workspace": "Usage: /workspace <subcommand>\n\n  Subcommands:\n    show              Show current workspace context\n    set <path>        Change workspace directory (persisted)",
+		"repos":     "Usage: /repos [list] [--json]\n\n  List workspace dependencies from skrptiq.yaml.\n  Shows clone status and object counts.",
 		"tags":      "Usage: /tags list [--json]\n\n  List all tags.",
 		"tag":       "Usage: /tag <node title> <tag name>\n\n  Apply a tag to a node.",
 		"untag":     "Usage: /untag <node title> <tag name>\n\n  Remove a tag from a node.",
@@ -106,6 +107,8 @@ func (m *Model) handleSlashCommand(cmd string, args string) bool {
 		m.handleProvidersCmd(sub, subArgs)
 	case "workspace":
 		m.handleWorkspaceCmd(sub, subArgs)
+	case "repos":
+		m.handleRepos(sub, subArgs)
 	case "tags":
 		m.handleTagsCmd(sub)
 	case "tag":
@@ -638,6 +641,54 @@ func (m *Model) handleWorkspaceCmd(sub, args string) {
 	}
 }
 
+// --- /repos ---
+
+func (m *Model) handleRepos(sub, args string) {
+	if m.engine == nil { m.Print(noEngineMsg()); return }
+	_, flags := parseFlags(args)
+	jsonOut := flags["json"] != ""
+
+	switch sub {
+	case "list", "":
+		cwd, err := os.Getwd()
+		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
+		deps, err := m.engine.ListDeps(cwd)
+		if err != nil {
+			if os.IsNotExist(err) {
+				m.Print(theme.Faint.Render("No skrptiq.yaml found in current workspace."))
+				return
+			}
+			m.Print(theme.ErrorText.Render("Error: " + err.Error()))
+			return
+		}
+		if len(deps) == 0 {
+			m.Print(theme.Faint.Render("No dependencies defined in skrptiq.yaml."))
+			return
+		}
+		if jsonOut {
+			data, _ := json.MarshalIndent(deps, "", "  ")
+			m.Print(string(data))
+			return
+		}
+		m.Print(theme.Title.Render("Workspace Dependencies"))
+		for _, d := range deps {
+			indicator := theme.ErrorText.Render("○")
+			status := "not cloned"
+			if d.Cloned {
+				indicator = theme.SuccessText.Render("●")
+				status = "cloned"
+			}
+			line := fmt.Sprintf("  %s %s", indicator, theme.Bold.Render(d.Name))
+			line += theme.Faint.Render(" — " + status)
+			if d.ObjectCount > 0 { line += theme.Faint.Render(fmt.Sprintf(" (%d objects)", d.ObjectCount)) }
+			m.Print(line)
+			m.Print("    " + theme.Faint.Render(d.Source))
+		}
+	default:
+		m.Print(usageBlock("/repos", []string{"list [--json]"}))
+	}
+}
+
 // --- /tags ---
 
 func (m *Model) handleTagsCmd(sub string) {
@@ -999,6 +1050,7 @@ func helpText() string {
   /providers add         Add a new provider
   /workspace show        Show workspace context
   /workspace set <path>  Change workspace directory
+  /repos list            List workspace dependencies (--json)
   /tags list             List all tags (--json)
   /tag <node> <tag>      Apply a tag to a node
   /untag <node> <tag>    Remove a tag from a node

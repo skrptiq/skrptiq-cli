@@ -369,7 +369,7 @@ func TestParseFlags(t *testing.T) {
 func TestCommandHelpCoversAllCommands(t *testing.T) {
 	cmds := []string{"help", "chat", "run", "exit", "quit", "clear", "status",
 		"list", "show", "search", "hub", "runs", "profile", "dials",
-		"mcp", "providers", "workspace", "tags", "tag", "untag", "config", "settings"}
+		"mcp", "providers", "workspace", "repos", "tags", "tag", "untag", "config", "settings"}
 	for _, cmd := range cmds {
 		h := commandHelp(cmd)
 		if h == "" {

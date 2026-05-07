@@ -253,6 +253,9 @@ func BuildCommands(app *eng.App) []Command {
 			{Name: "show", Description: "Show current context"},
 			{Name: "set", Description: "Change workspace directory"},
 		}},
+		{Name: "/repos", Description: "Workspace dependencies", Subcommands: []Subcommand{
+			{Name: "list", Description: "List linked repositories"},
+		}},
 
 		// Settings.
 		{Name: "/settings", Description: "App settings", Subcommands: []Subcommand{
