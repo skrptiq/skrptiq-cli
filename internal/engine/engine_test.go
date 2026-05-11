@@ -362,12 +362,15 @@ func TestNodeCRUDAndSearch(t *testing.T) {
 	}
 	defer app.Close()
 
-	// Create nodes.
+	// Create nodes — fileSlug (7th param) is required by engine validation.
 	desc := "A test workflow"
 	content := "Workflow content"
-	app.DB.CreateNode("wf1", "workflow", "Blog Post Pipeline", &desc, &content, nil, nil, nil)
-	app.DB.CreateNode("sk1", "skill", "Language Polish", nil, nil, nil, nil, nil)
-	app.DB.CreateNode("sk2", "skill", "SEO Optimisation", nil, nil, nil, nil, nil)
+	slugWf := "blog-post-pipeline"
+	slugSk1 := "language-polish"
+	slugSk2 := "seo-optimisation"
+	app.DB.CreateNode("wf1", "workflow", "Blog Post Pipeline", &desc, &content, nil, &slugWf, nil)
+	app.DB.CreateNode("sk1", "skill", "Language Polish", nil, nil, nil, &slugSk1, nil)
+	app.DB.CreateNode("sk2", "skill", "SEO Optimisation", nil, nil, nil, &slugSk2, nil)
 
 	// Test NodesByType.
 	workflows, _ := app.NodesByType("workflow")

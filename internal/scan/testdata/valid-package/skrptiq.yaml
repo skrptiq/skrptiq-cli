@@ -1,0 +1,4 @@
+name: test-valid-package
+version: "1.0.0"
+description: A valid test package for scan validation
+author: test

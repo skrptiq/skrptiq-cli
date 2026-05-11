@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/skrptiq/skrptiq-cli/internal/app"
+	"github.com/skrptiq/skrptiq-cli/internal/scan"
 	"github.com/skrptiq/skrptiq-cli/internal/version"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,6 +20,20 @@ func main() {
 	if *showVersion {
 		fmt.Println("skrptiq " + version.Full())
 		return
+	}
+
+	// Subcommand: skrptiq scan [--json] <path>
+	args := flag.Args()
+	if len(args) > 0 && args[0] == "scan" {
+		scanFlags := flag.NewFlagSet("scan", flag.ExitOnError)
+		jsonOutput := scanFlags.Bool("json", false, "Output as JSON")
+		scanFlags.Parse(args[1:])
+		scanPath := scanFlags.Arg(0)
+		if scanPath == "" {
+			fmt.Fprintln(os.Stderr, "Usage: skrptiq scan [--json] <path>")
+			os.Exit(2)
+		}
+		os.Exit(scan.Run(scanPath, *jsonOutput))
 	}
 
 	model, err := app.New(*dbPath)
