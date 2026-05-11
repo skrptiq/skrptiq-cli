@@ -299,7 +299,7 @@ func (m Model) statusText() string {
 	status := strings.Join(parts, " · ")
 	switch m.mode {
 	case ModeCommand:
-		status += "  ·  / for commands  ·  /chat to chat  ·  ctrl+d ctrl+d to exit"
+		status += "  ·  type naturally or / for commands  ·  ctrl+d ctrl+d to exit"
 	case ModeChat:
 		status += "  ·  /exit to return  ·  ctrl+c to cancel"
 	case ModeRun:
@@ -352,7 +352,9 @@ func (m *Model) handleInput(input string) {
 			m.handleRunInput(input)
 		}
 	default:
-		// Silent in command mode — the user's text is already in scrollback.
+		// Chat-first: natural language in command mode routes to chat.
+		// Slash commands are the power-user escape hatch (GH#436 direction).
+		m.handleChatInput(input)
 	}
 }
 
