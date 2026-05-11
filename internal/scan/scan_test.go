@@ -95,8 +95,8 @@ func TestParseDirectory_ValidPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseDirectory failed: %v", err)
 	}
-	if len(files) != 3 {
-		t.Errorf("expected 3 files, got %d", len(files))
+	if len(files) != 4 {
+		t.Errorf("expected 4 files, got %d", len(files))
 	}
 	if len(issues) != 0 {
 		t.Errorf("expected 0 parse issues, got %d", len(issues))
