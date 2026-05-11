@@ -51,7 +51,7 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 Import the engine module only. Never import app-internal Electron packages. If you need something from the app that isn't in the engine, flag it to the orchestrator — it probably needs extracting into the engine.
 
 ### Integration contract
-If you ever build import, file write, or DB write functionality: read `../orchestrator/docs/SKRPT-INTEGRATION-CONTRACT.md` first. It defines the exact data shape the engine expects. The CLI currently reads from the shared DB (populated by the app) — any future write paths must follow the same contract.
+If you ever build import, file write, or DB write functionality: read `../skrptiq-orchestrator/docs/SKRPT-INTEGRATION-CONTRACT.md` first. It defines the exact data shape the engine expects. The CLI currently reads from the shared DB (populated by the app) — any future write paths must follow the same contract.
 
 ## Code Conventions
 - British English in all user-facing strings, comments, and docs
@@ -87,9 +87,13 @@ The CLI must never enter the interactive session with a broken engine or DB. Fai
 When you enter plan mode for ANY feature — regardless of scope — you must:
 
 1. Write the plan
-2. Add a review request to `../orchestrator/inbox.md` with: issue number, summary, what you intend to build, any cross-repo implications
+2. **Deliver the plan to the orchestrator.** Two methods (use whichever works):
+   - **Method A (preferred):** Write directly to `../skrptiq-orchestrator/inbox.md` — append your plan review request after the `------` separator. The orchestrator reads this file at session start and when checking for updates. This works because both repos are on the same machine.
+   - **Method B (via push hook):** Write to `.orchestrator-msg` in this repo, then `git commit` and `git push`. The pre-push hook delivers the message to the orchestrator's inbox automatically. **Note:** the message only arrives when you PUSH — writing the file alone does nothing. You must commit and push for delivery.
 3. **STOP. Do not implement. Do not start coding. Do not approve your own plan.**
-4. Wait for an approval entry to appear in `../orchestrator/inbox.md` before proceeding
+4. Wait for an approval entry to appear in `../skrptiq-orchestrator/inbox.md` before proceeding. Check the file directly — don't wait for a push notification.
+
+**Common mistake:** Writing to `.orchestrator-msg` but not pushing, or writing the plan to a local file that the orchestrator can't see. The orchestrator reads `../skrptiq-orchestrator/inbox.md` — if your plan isn't in that file, it hasn't been submitted.
 
 You do NOT have authority to approve your own plans. Only the orchestrator approves plans. If you implement before receiving approval, the work may be rejected.
 
@@ -103,6 +107,11 @@ This applies to all plans: new features, engine boundary changes, storage change
 4. Files explicitly referenced in the briefing
 
 Cross-repo files — never read these. If you need cross-repo context, ask the user.
+
+**Cross-repo knowledge:** The orchestrator maintains a structured knowledge base at `../skrptiq-orchestrator/knowledge/`. If you need to understand a past decision, contract, or finding:
+1. `rg 'summary:' ../skrptiq-orchestrator/knowledge/K-*.md` — scan summaries
+2. `rg -l 'repos:.*cli' ../skrptiq-orchestrator/knowledge/` — entries affecting this repo
+3. Only read the file if the summary is relevant to your current task
 
 **Rule: if the briefing doesn't mention it, don't load it.**
 
