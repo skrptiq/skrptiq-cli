@@ -13,8 +13,27 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 3. Run tests for every code change (`go test ./...`)
 4. **Commit your work as you go.** Make atomic commits after completing each logical unit of work — don't wait to be asked. Good commit granularity: one feature, one fix, or one refactor per commit.
 5. **Between priority items:** check the briefing for a `[compact]` marker on the next item. If marked, run `/compact` and re-read this `CLAUDE.md` and `docs/BRIEFING.md` before starting. If not marked, carry on — the context from the previous task is likely useful.
-6. Before `git push`: write a summary to `.orchestrator-msg` (hook delivers it)
+6. **Before EVERY `git push`:** write `.orchestrator-msg` (see Push Protocol below)
 7. After fixing a GH Issue: comment with commit hash and close (or remove your label for cross-repo issues)
+
+## Push Protocol — MANDATORY
+
+**Every push must include an `.orchestrator-msg` file.** The pre-push hook reads it and delivers it to the orchestrator's inbox. Without it, the orchestrator only sees commit hashes and filenames — no context about what you did or why.
+
+**Steps:**
+1. Write `.orchestrator-msg` in the repo root with a summary of what shipped, issues closed, tests run, and anything the orchestrator needs to know
+2. Do NOT `git add` or commit this file — it's a working tree file read by the hook during push
+3. Run `git push` — the hook reads the file, appends it to the orchestrator's inbox, then deletes the file automatically
+4. If you forget to write it before pushing, write it and push again (even an empty commit: `git commit --allow-empty -m "chore: deliver orchestrator message"`)
+
+**What to include:**
+- Issues closed/progressed with commit hashes
+- Test results (pass count, any skipped)
+- Cross-repo implications (what other repos need to know)
+- Plan review requests (if submitting a plan for approval)
+- Anything that changed since the last push the orchestrator should be aware of
+
+**The hook will NOT fire if `.orchestrator-msg` doesn't exist.** The push still succeeds, but the orchestrator gets a bare notification with no context.
 
 ## Communication Protocol
 - **British English** throughout all code, docs, and UI copy

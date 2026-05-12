@@ -13,9 +13,63 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+func printHelp() {
+	fmt.Print(`skrptiq — personalised AI agents in your terminal
+
+Usage:
+  skrptiq                     Launch interactive session
+  skrptiq <command> [args]    Run a command directly
+
+Commands:
+  run <workflow> [flags]      Execute a workflow
+  list [type] [flags]         List nodes (workflows, skills, prompts, ...)
+  show <name> [flags]         Display node content and metadata
+  hub <subcommand>            Browse and import community skrpts
+  scan <path>                 Parse and validate a directory
+  help                        Show this help message
+  version                     Print version and exit
+
+Run flags:
+  --input key=value           Set input variable (repeatable; value=- reads stdin)
+  --output <path>             Write final output to a file
+  --json                      Emit structured JSON output
+  --yes                       Auto-approve all gate steps
+  --strict                    Fail on any gate rejection
+  --gate-timeout <seconds>    Auto-approve gates after timeout
+
+List/show flags:
+  --type <nodeType>           Filter by node type
+  --tag <name>                Filter by tag
+  --json                      Emit structured JSON output
+  -q                          Quiet mode — IDs only
+
+Hub subcommands:
+  hub list                    List imported skrpts
+  hub search <query>          Search community skrpts
+  hub import <slug>           Import a skrpt from Hub
+  hub update                  Check for updates to imported skrpts
+
+Global flags:
+  --db-path <path>            Path to SQLite database (overrides default)
+  --version                   Print version and exit
+
+Interactive session:
+  Type naturally to chat with your AI team, or use /commands.
+  Run /help inside the session for interactive command reference.
+
+Examples:
+  skrptiq                             Start interactive session
+  skrptiq run "Blog Post Pipeline"    Execute a workflow by name
+  skrptiq list workflows              List all workflows
+  skrptiq hub search "blog"           Search community skrpts
+  echo "draft" | skrptiq run "Edit"   Pipe input to a workflow
+`)
+}
+
 func main() {
 	dbPath := flag.String("db-path", "", "Path to SQLite database (overrides default)")
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	flag.Usage = func() { printHelp() }
 	flag.Parse()
 
 	if *showVersion {
@@ -27,6 +81,9 @@ func main() {
 	args := flag.Args()
 	if len(args) > 0 {
 		switch args[0] {
+		case "help", "-h":
+			printHelp()
+			return
 		case "scan":
 			scanFlags := flag.NewFlagSet("scan", flag.ExitOnError)
 			jsonOutput := scanFlags.Bool("json", false, "Output as JSON")
