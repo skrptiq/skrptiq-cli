@@ -460,7 +460,7 @@ func (a *App) BuildPlan(workflowNodeID string) (*exec.ExecutionPlan, error) {
 
 // RunWorkflow starts a workflow execution with a progress callback.
 func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[string]string, onProgress exec.ProgressCallback) (string, error) {
-	return exec.RunWorkflow(ctx, a.DB, workflowID, inputs, onProgress, nil, nil, nil, nil)
+	return exec.RunWorkflow(ctx, a.DB, workflowID, inputs, onProgress, nil, nil, nil, nil, nil)
 }
 
 // ResumeExecution resumes a paused execution with gate input.
