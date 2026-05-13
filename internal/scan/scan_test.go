@@ -84,14 +84,14 @@ func TestParseFile_Connections(t *testing.T) {
 
 func TestParseDirectory_MissingManifest(t *testing.T) {
 	tmp := t.TempDir()
-	_, _, err := ParseDirectory(tmp)
+	_, _, _, err := ParseDirectory(tmp)
 	if err == nil {
 		t.Error("expected error for directory without skrptiq.yaml")
 	}
 }
 
 func TestParseDirectory_ValidPackage(t *testing.T) {
-	files, issues, err := ParseDirectory(testdataPath("valid-package"))
+	files, _, issues, err := ParseDirectory(testdataPath("valid-package"))
 	if err != nil {
 		t.Fatalf("ParseDirectory failed: %v", err)
 	}
@@ -114,6 +114,28 @@ func TestScan_ValidPackage(t *testing.T) {
 	if code != 0 {
 		t.Errorf("expected exit code 0 for valid package, got %d", code)
 		t.Logf("output: %s", buf.String())
+	}
+}
+
+// GH#524: template-flagged packages may use {{UPPERCASE}} fill-in-the-
+// blank markers in prompts. The scanner must propagate `template: true`
+// from skrptiq.yaml into the temp DB's `skrpt_manifests` row AND set
+// `Namespace` on every node — without both, the engine's
+// IsTemplatePackage check returns false and the warning still fires.
+// This test would have caught the original ship-and-forget bug.
+func TestScan_TemplatePackage_SuppressesUnknownNamespaceWarnings(t *testing.T) {
+	result := runScan(t, testdataPath("template-package"))
+	if result.WarnCount > 0 || result.ErrorCount > 0 {
+		t.Errorf("expected 0 issues for template package, got %d errors + %d warnings",
+			result.ErrorCount, result.WarnCount)
+		for _, issue := range result.Issues {
+			t.Logf("  %s: %s", issue.Code, issue.Message)
+		}
+	}
+	for _, issue := range result.Issues {
+		if issue.Code == "prompt.unknown_namespace" {
+			t.Errorf("template package should not emit unknown_namespace: %s", issue.Message)
+		}
 	}
 }
 

@@ -43,7 +43,7 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	}
 
 	// 1. Parse the skrpt directory.
-	files, parseIssues, err := ParseDirectory(absPath)
+	files, manifest, parseIssues, err := ParseDirectory(absPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 2
@@ -67,6 +67,26 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	var allIssues []ScanIssue
 	allIssues = append(allIssues, parseIssues...)
 
+	// 2a. Seed hub_imports + skrpt_manifests so the engine validator's
+	// package-aware checks (e.g. IsTemplatePackage for GH#524) can see
+	// the manifest flags during scan. Without this seed, every scanned
+	// node looks like a workspace-local node with no package context
+	// and template-package warnings can't be suppressed.
+	namespace := stringOr(manifest["name"], filepath.Base(absPath))
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding manifest: %v\n", err)
+		return 2
+	}
+	if err := db.UpsertHubImport("scan-import", namespace, namespace, namespace, nil, nil, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Error seeding scan hub_import: %v\n", err)
+		return 2
+	}
+	if err := db.UpsertManifest("scan-manifest", "scan-import", namespace, string(manifestJSON)); err != nil {
+		fmt.Fprintf(os.Stderr, "Error seeding scan manifest: %v\n", err)
+		return 2
+	}
+
 	nodeCount := 0
 	edgeCount := 0
 
@@ -74,7 +94,7 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	for _, f := range files {
 		rel := relPath(absPath, f.Path)
 		slug := f.Frontmatter.ID
-		node := buildNode(f)
+		node := buildNode(f, namespace)
 
 		// Validate.
 		issues := db.ValidateNode(node)
@@ -203,11 +223,16 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 }
 
 // buildNode constructs a storage.Node from a ParsedFile.
-func buildNode(f ParsedFile) storage.Node {
+//
+// namespace is the scan package's namespace (taken from the manifest's
+// `name` field). It's set on every node so the engine's package-aware
+// checks — IsTemplatePackage (GH#524), package-orphan analysis — see
+// the same shape they'd see for an imported skrpt in the app DB.
+func buildNode(f ParsedFile, namespace string) storage.Node {
 	slug := f.Frontmatter.ID
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	var desc, content, metadata, fileSlug *string
+	var desc, content, metadata, fileSlug, ns *string
 	if f.Frontmatter.Description != "" {
 		d := f.Frontmatter.Description
 		desc = &d
@@ -221,18 +246,31 @@ func buildNode(f ParsedFile) storage.Node {
 		metadata = &metaJSON
 	}
 	fileSlug = &slug
+	if namespace != "" {
+		ns = &namespace
+	}
 
 	return storage.Node{
-		ID:        slug,
-		Type:      f.Frontmatter.Type,
-		Title:     f.Frontmatter.Title,
+		ID:          slug,
+		Type:        f.Frontmatter.Type,
+		Title:       f.Frontmatter.Title,
 		Description: desc,
-		Content:   content,
-		Metadata:  metadata,
-		FileSlug:  fileSlug,
-		CreatedAt: now,
-		UpdatedAt: now,
+		Content:     content,
+		Metadata:    metadata,
+		FileSlug:    fileSlug,
+		Namespace:   ns,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
+}
+
+// stringOr returns v as a string when it is one; fallback otherwise.
+// Used to read manifest fields without a hard cast.
+func stringOr(v any, fallback string) string {
+	if s, ok := v.(string); ok && s != "" {
+		return s
+	}
+	return fallback
 }
 
 // insertNodeRaw inserts a node via raw SQL, bypassing the validation gate.

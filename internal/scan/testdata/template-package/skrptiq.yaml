@@ -1,0 +1,5 @@
+name: test-template-package
+version: "1.0.0"
+description: A template package for scan suppression test (GH#524)
+author: test
+template: true

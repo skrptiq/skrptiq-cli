@@ -56,19 +56,25 @@ var nodeDirs = map[string]string{
 
 // ParseDirectory reads a skrpt directory and parses all node files.
 // Returns an error if skrptiq.yaml is missing or unreadable.
-func ParseDirectory(path string) ([]ParsedFile, []ScanIssue, error) {
+//
+// The parsed manifest map is also returned so the scanner can populate
+// the temp DB's `skrpt_manifests` table — without it the engine's
+// `IsTemplatePackage` check (GH#524) can't distinguish template
+// packages from regular ones and the `unknown_namespace` warnings
+// fire for legitimate fill-in-the-blank markers.
+func ParseDirectory(path string) ([]ParsedFile, map[string]any, []ScanIssue, error) {
 	manifestPath := filepath.Join(path, "skrptiq.yaml")
 	if _, err := os.Stat(manifestPath); err != nil {
-		return nil, nil, fmt.Errorf("skrptiq.yaml not found in %s", path)
+		return nil, nil, nil, fmt.Errorf("skrptiq.yaml not found in %s", path)
 	}
 	// Validate manifest is parseable YAML.
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot read skrptiq.yaml: %w", err)
+		return nil, nil, nil, fmt.Errorf("cannot read skrptiq.yaml: %w", err)
 	}
 	var manifest map[string]any
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, nil, fmt.Errorf("invalid skrptiq.yaml: %w", err)
+		return nil, nil, nil, fmt.Errorf("invalid skrptiq.yaml: %w", err)
 	}
 
 	var files []ParsedFile
@@ -107,7 +113,7 @@ func ParseDirectory(path string) ([]ParsedFile, []ScanIssue, error) {
 		}
 	}
 
-	return files, issues, nil
+	return files, manifest, issues, nil
 }
 
 // ParseFile reads a single .md file and extracts frontmatter and body.
