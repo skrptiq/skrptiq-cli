@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/skrptiq/engine/storage"
 )
@@ -35,6 +34,13 @@ func Run(scanPath string, jsonOutput bool) int {
 }
 
 // RunTo executes the scan, writing output to w, and returns the exit code.
+//
+// GH#525: hydration goes through engine.HydratePackage, which is the
+// single source of truth for "parsed inputs → populated engine DB". The
+// scanner builds HydrationInput slices from parsed files + manifest,
+// hands them to HydratePackage, and surfaces the returned issues
+// alongside its own per-file context. Workflow-level validation runs
+// after hydration since it needs the full DB state.
 func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	absPath, err := filepath.Abs(scanPath)
 	if err != nil {
@@ -64,115 +70,125 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	}
 	defer db.Close()
 
+	// Manifest's name is the namespace HydratePackage will stamp.
+	// Fall back to the directory name if the manifest doesn't carry one
+	// (older catalogue skrpts) — same fallback the previous flow used.
+	if _, ok := manifest["name"]; !ok || manifest["name"] == nil || manifest["name"] == "" {
+		manifest["name"] = filepath.Base(absPath)
+	}
+
+	// 3. Build HydrationInput from the parsed files. Also keep a
+	// nodeID → file map so issues HydratePackage returns can be
+	// re-attached to their source file for the user-facing report.
+	nodeFiles := make(map[string]string, len(files))
+	nodeIDSet := make(map[string]bool, len(files))
+	nodes := make([]storage.NodeInput, 0, len(files))
+	for _, f := range files {
+		id := f.Frontmatter.ID
+		nodeFiles[id] = relPath(absPath, f.Path)
+		nodeIDSet[id] = true
+
+		var desc, content, metadata, fileSlug *string
+		if f.Frontmatter.Description != "" {
+			d := f.Frontmatter.Description
+			desc = &d
+		}
+		if f.Body != "" {
+			c := f.Body
+			content = &c
+		}
+		if mj := BuildMetadataJSON(f.Frontmatter); mj != "" {
+			metadata = &mj
+		}
+		slug := id
+		fileSlug = &slug
+
+		nodes = append(nodes, storage.NodeInput{
+			ID:          id,
+			Type:        f.Frontmatter.Type,
+			Title:       f.Frontmatter.Title,
+			Description: desc,
+			Content:     content,
+			Metadata:    metadata,
+			FileSlug:    fileSlug,
+		})
+	}
+
+	// 4. Build EdgeInput slice, pre-filtering edges whose target slug
+	// isn't in the node set. Those get scan.edge_target_unresolved
+	// without being passed to HydratePackage — HydratePackage assumes
+	// FK targets resolve, and dangling references are a scan-specific
+	// failure mode, not a hydration one.
 	var allIssues []ScanIssue
 	allIssues = append(allIssues, parseIssues...)
 
-	// 2a. Seed hub_imports + skrpt_manifests so the engine validator's
-	// package-aware checks (e.g. IsTemplatePackage for GH#524) can see
-	// the manifest flags during scan. Without this seed, every scanned
-	// node looks like a workspace-local node with no package context
-	// and template-package warnings can't be suppressed.
-	namespace := stringOr(manifest["name"], filepath.Base(absPath))
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error encoding manifest: %v\n", err)
-		return 2
-	}
-	if err := db.UpsertHubImport("scan-import", namespace, namespace, namespace, nil, nil, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "Error seeding scan hub_import: %v\n", err)
-		return 2
-	}
-	if err := db.UpsertManifest("scan-manifest", "scan-import", namespace, string(manifestJSON)); err != nil {
-		fmt.Fprintf(os.Stderr, "Error seeding scan manifest: %v\n", err)
-		return 2
-	}
-
-	nodeCount := 0
-	edgeCount := 0
-
-	// 3. Load nodes — validate separately, insert with raw SQL.
-	for _, f := range files {
-		rel := relPath(absPath, f.Path)
-		slug := f.Frontmatter.ID
-		node := buildNode(f, namespace)
-
-		// Validate.
-		issues := db.ValidateNode(node)
-		for _, issue := range issues {
-			allIssues = append(allIssues, ScanIssue{
-				File:            rel,
-				NodeSlug:        slug,
-				ValidationIssue: issue,
-			})
-		}
-
-		// Insert via raw SQL (bypass validation gate).
-		if err := insertNodeRaw(db, node); err != nil {
-			// If insert fails (e.g. CHECK constraint on type), record it.
-			allIssues = append(allIssues, ScanIssue{
-				File:            rel,
-				NodeSlug:        slug,
-				ValidationIssue: makeIssue("scan.insert_failed", "error", err.Error(), "", ""),
-			})
-			continue
-		}
-		nodeCount++
-	}
-
-	// 4. Load edges — resolve targets, validate, insert.
+	edgeFiles := make(map[string]edgeFileCtx, len(files))
+	edges := make([]storage.EdgeInput, 0)
 	for _, f := range files {
 		rel := relPath(absPath, f.Path)
 		sourceSlug := f.Frontmatter.ID
-
 		for _, conn := range f.Frontmatter.Connections {
-			targetSlug := conn.Target
-			edgeID := fmt.Sprintf("%s--%s--%s", sourceSlug, conn.Type, targetSlug)
-
-			// Check target exists.
-			targetNode, _ := db.GetNode(targetSlug)
-			if targetNode == nil {
+			edgeID := fmt.Sprintf("%s--%s--%s", sourceSlug, conn.Type, conn.Target)
+			if !nodeIDSet[conn.Target] {
 				allIssues = append(allIssues, ScanIssue{
 					File:     rel,
 					NodeSlug: sourceSlug,
 					ValidationIssue: makeIssue("scan.edge_target_unresolved", "error",
-						fmt.Sprintf("connection target %q not found", targetSlug),
+						fmt.Sprintf("connection target %q not found", conn.Target),
 						"§6.4", "connections"),
 				})
 				continue
 			}
-
-			edge := storage.Edge{
+			edges = append(edges, storage.EdgeInput{
 				ID:       edgeID,
 				SourceID: sourceSlug,
-				TargetID: targetSlug,
+				TargetID: conn.Target,
 				Type:     conn.Type,
 				Position: conn.Position,
-			}
-
-			// Validate.
-			issues := db.ValidateEdge(edge)
-			for _, issue := range issues {
-				allIssues = append(allIssues, ScanIssue{
-					File:            rel,
-					NodeSlug:        sourceSlug,
-					ValidationIssue: issue,
-				})
-			}
-
-			// Insert.
-			if err := insertEdgeRaw(db, edge); err != nil {
-				allIssues = append(allIssues, ScanIssue{
-					File:            rel,
-					NodeSlug:        sourceSlug,
-					ValidationIssue: makeIssue("scan.insert_failed", "error", err.Error(), "", ""),
-				})
-				continue
-			}
-			edgeCount++
+			})
+			edgeFiles[edgeID] = edgeFileCtx{file: rel, sourceSlug: sourceSlug}
 		}
 	}
 
-	// 5. Validate workflows.
+	// 5. Hydrate. The single owner of parsed-input → engine-DB.
+	hydration, err := db.HydratePackage(storage.HydrationInput{
+		HubImportID: "scan-import",
+		Manifest:    manifest,
+		Nodes:       nodes,
+		Edges:       edges,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error hydrating package: %v\n", err)
+		return 2
+	}
+
+	// 6. Convert hydration issues back into ScanIssue with file context.
+	for nodeID, issues := range hydration.IssuesByNodeID {
+		file := nodeFiles[nodeID]
+		for _, issue := range issues {
+			allIssues = append(allIssues, ScanIssue{
+				File:            file,
+				NodeSlug:        nodeID,
+				ValidationIssue: issue,
+			})
+		}
+	}
+	for edgeID, issues := range hydration.IssuesByEdgeID {
+		ctx := edgeFiles[edgeID]
+		for _, issue := range issues {
+			allIssues = append(allIssues, ScanIssue{
+				File:            ctx.file,
+				NodeSlug:        ctx.sourceSlug,
+				ValidationIssue: issue,
+			})
+		}
+	}
+
+	// 7. Validate workflows. HydratePackage runs node + edge validation
+	// but the workflow-context checks (GH#511 binding coverage, GH#512
+	// step-ref resolution, etc.) need the full DB state and live in
+	// ValidateWorkflow. Run them per workflow file so issues attribute
+	// back to the right file.
 	for _, f := range files {
 		if f.Frontmatter.Type != "workflow" {
 			continue
@@ -188,11 +204,11 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		}
 	}
 
-	// 6. Build result and output.
+	// 8. Build result and output.
 	result := ScanResult{
 		Path:      absPath,
-		NodeCount: nodeCount,
-		EdgeCount: edgeCount,
+		NodeCount: hydration.NodesInserted,
+		EdgeCount: hydration.EdgesInserted,
 		Issues:    allIssues,
 	}
 	for _, issue := range allIssues {
@@ -212,7 +228,7 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		OutputTable(result, w)
 	}
 
-	// 7. Exit code.
+	// 9. Exit code.
 	if result.ErrorCount > 0 {
 		return 2
 	}
@@ -222,76 +238,12 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	return 0
 }
 
-// buildNode constructs a storage.Node from a ParsedFile.
-//
-// namespace is the scan package's namespace (taken from the manifest's
-// `name` field). It's set on every node so the engine's package-aware
-// checks — IsTemplatePackage (GH#524), package-orphan analysis — see
-// the same shape they'd see for an imported skrpt in the app DB.
-func buildNode(f ParsedFile, namespace string) storage.Node {
-	slug := f.Frontmatter.ID
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	var desc, content, metadata, fileSlug, ns *string
-	if f.Frontmatter.Description != "" {
-		d := f.Frontmatter.Description
-		desc = &d
-	}
-	if f.Body != "" {
-		c := f.Body
-		content = &c
-	}
-	metaJSON := BuildMetadataJSON(f.Frontmatter)
-	if metaJSON != "" {
-		metadata = &metaJSON
-	}
-	fileSlug = &slug
-	if namespace != "" {
-		ns = &namespace
-	}
-
-	return storage.Node{
-		ID:          slug,
-		Type:        f.Frontmatter.Type,
-		Title:       f.Frontmatter.Title,
-		Description: desc,
-		Content:     content,
-		Metadata:    metadata,
-		FileSlug:    fileSlug,
-		Namespace:   ns,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-}
-
-// stringOr returns v as a string when it is one; fallback otherwise.
-// Used to read manifest fields without a hard cast.
-func stringOr(v any, fallback string) string {
-	if s, ok := v.(string); ok && s != "" {
-		return s
-	}
-	return fallback
-}
-
-// insertNodeRaw inserts a node via raw SQL, bypassing the validation gate.
-func insertNodeRaw(db *storage.DB, n storage.Node) error {
-	_, err := db.Exec(
-		`INSERT OR REPLACE INTO nodes (id, type, title, description, content, metadata, file_slug, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.ID, n.Type, n.Title, n.Description, n.Content, n.Metadata, n.FileSlug, n.CreatedAt, n.UpdatedAt,
-	)
-	return err
-}
-
-// insertEdgeRaw inserts an edge via raw SQL, bypassing the validation gate.
-func insertEdgeRaw(db *storage.DB, e storage.Edge) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := db.Exec(
-		`INSERT OR REPLACE INTO edges (id, source_id, target_id, type, position, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		e.ID, e.SourceID, e.TargetID, e.Type, e.Position, now,
-	)
-	return err
+// edgeFileCtx tracks the originating file + source slug for a built
+// EdgeInput so we can re-attach file context to any issue HydratePackage
+// surfaces against the edge.
+type edgeFileCtx struct {
+	file       string
+	sourceSlug string
 }
 
 // makeIssue creates a ValidationIssue.

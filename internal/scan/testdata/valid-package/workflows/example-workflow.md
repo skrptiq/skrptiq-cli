@@ -10,6 +10,7 @@ connections:
 metadata:
   execution:
     - skill: example-skill
+      prompt: example-prompt
       step_type: generation
   stepPrompts:
     example-skill: example-prompt
