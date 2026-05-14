@@ -37,6 +37,8 @@ jobs:
 
       - name: Compute next patch version and tag
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           LATEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
           if [ -z "$LATEST" ]; then
             NEXT="v0.0.1"
