@@ -20,12 +20,20 @@ jobs:
     if: github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
     steps:
+      - name: Generate pipeline app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          owner: skrptiq
+          repositories: skrptiq-cli
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # PAT required — GITHUB_TOKEN cannot trigger other workflows.
-          token: ${{ secrets.CLI_RELEASE_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Compute next patch version and tag
         run: |
