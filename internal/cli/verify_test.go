@@ -236,5 +236,56 @@ func contains(s, sub string) bool {
 	return indexOf(s, sub) >= 0
 }
 
+// --- Cross-side drift-gate tests ---
+// These pin the same constants engine + App tests reference. A CLI-side
+// checksum or trust-loading regression fails CLI CI in lockstep with
+// engine + App — that's the design per BUNDLE-INTEGRITY-CONTRACT §9.4.
+
+const pinnedFixtureChecksum = "sha256:e93447842a7493ebc2d0dc9dc1e1e5f5cf13a79a66c1fe87724ca78beca9ba8a"
+const pinnedHubKeyFingerprint = "64c8dc7ad56dcd8fee9a3f460ade4a0f3b2aa5bf21b17cde3f755ab4b6758ebe"
+
+func TestDriftGate_FixtureChecksum(t *testing.T) {
+	fixtureDir := resolveEngineFixture(t, "bundle", "signable-skrpt")
+
+	got, err := bundle.ComputeBundleChecksum(fixtureDir)
+	if err != nil {
+		t.Fatalf("ComputeBundleChecksum: %v", err)
+	}
+	if got != pinnedFixtureChecksum {
+		t.Errorf("fixture checksum drift:\n  got:  %s\n  want: %s", got, pinnedFixtureChecksum)
+	}
+}
+
+func TestDriftGate_HubKeyFingerprint(t *testing.T) {
+	keys, err := bundle.LoadEmbeddedTrustedKeys()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedTrustedKeys: %v", err)
+	}
+
+	if _, ok := keys[pinnedHubKeyFingerprint]; !ok {
+		var found []string
+		for k := range keys {
+			found = append(found, k)
+		}
+		t.Errorf("Hub key fingerprint not in trusted registry.\n  want: %s\n  got:  %v", pinnedHubKeyFingerprint, found)
+	}
+}
+
+// resolveEngineFixture finds the engine fixture directory. go test sets
+// cwd to the package directory (internal/cli/), so we navigate up to
+// the repo root (../..) then across to the sibling repo via the same
+// relative path the go.mod replace directive uses.
+func resolveEngineFixture(t *testing.T, category, name string) string {
+	t.Helper()
+	// internal/cli/ → ../.. = repo root → ../skrptiq-app/engine
+	fixtureDir := filepath.Join("..", "..", "..", "skrptiq-app", "engine", "test", "fixtures", category, name)
+	abs, _ := filepath.Abs(fixtureDir)
+
+	if _, err := os.Stat(abs); os.IsNotExist(err) {
+		t.Skip("engine fixture not found — sibling repo not available")
+	}
+	return abs
+}
+
 // Ensure base64 import is used (for test readability in error messages).
 var _ = base64.StdEncoding
