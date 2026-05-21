@@ -1,7 +1,6 @@
 package scan
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -257,11 +256,4 @@ func makeIssue(code string, severity string, message, contractRef, field string)
 	}
 }
 
-// marshalJSON marshals a value to a JSON string.
-func marshalJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
-}
+// marshalJSON moved to bridge.go

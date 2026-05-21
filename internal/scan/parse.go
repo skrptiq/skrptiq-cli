@@ -206,10 +206,4 @@ func BuildMetadataJSON(fm Frontmatter) string {
 	return marshalJSON(meta)
 }
 
-func relPath(base, full string) string {
-	rel, err := filepath.Rel(base, full)
-	if err != nil {
-		return full
-	}
-	return rel
-}
+// relPath moved to bridge.go
