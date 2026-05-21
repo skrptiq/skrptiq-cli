@@ -19,13 +19,14 @@ type ScanIssue struct {
 
 // ScanResult is the complete scan output.
 type ScanResult struct {
-	Path       string      `json:"path"`
-	NodeCount  int         `json:"nodeCount"`
-	EdgeCount  int         `json:"edgeCount"`
-	Issues     []ScanIssue `json:"issues"`
-	ErrorCount int         `json:"errorCount"`
-	WarnCount  int         `json:"warnCount"`
-	InfoCount  int         `json:"infoCount"`
+	Path       string        `json:"path"`
+	NodeCount  int           `json:"nodeCount"`
+	EdgeCount  int           `json:"edgeCount"`
+	Issues     []ScanIssue   `json:"issues"`
+	ErrorCount int           `json:"errorCount"`
+	WarnCount  int           `json:"warnCount"`
+	InfoCount  int           `json:"infoCount"`
+	Package    *parse.Package `json:"package,omitempty"`
 }
 
 // Run executes the scan, writing output to stdout, and returns the exit code (0 pass, 1 warnings, 2 errors).
@@ -123,11 +124,17 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	}
 
 	// 7. Build result and output.
+	// Strip host-specific FilePath from nodes for portable JSON output.
+	// RootDir is kept — it matches result.Path.
+	for i := range pkg.Nodes {
+		pkg.Nodes[i].FilePath = ""
+	}
 	result := ScanResult{
 		Path:      absPath,
 		NodeCount: hydration.NodesInserted,
 		EdgeCount: hydration.EdgesInserted,
 		Issues:    allIssues,
+		Package:   &pkg,
 	}
 	for _, issue := range allIssues {
 		switch issue.Severity {

@@ -130,6 +130,31 @@ func TestScan_JSONOutput(t *testing.T) {
 	}
 }
 
+// GH#583: JSON output includes the parsed Package so Hub can extract
+// manifest fields and node counts without a parallel parser.
+func TestScan_JSONOutput_IncludesPackage(t *testing.T) {
+	result := runScan(t, testdataPath("valid-package"))
+
+	if result.Package == nil {
+		t.Fatal("expected package field in JSON output")
+	}
+	if result.Package.Manifest.Name != "test-valid-package" {
+		t.Errorf("package.manifest.name = %q, want %q", result.Package.Manifest.Name, "test-valid-package")
+	}
+	if result.Package.Manifest.Version != "1.0.0" {
+		t.Errorf("package.manifest.version = %q, want %q", result.Package.Manifest.Version, "1.0.0")
+	}
+	if len(result.Package.Nodes) != result.NodeCount {
+		t.Errorf("package.nodes length = %d, want %d (matching nodeCount)", len(result.Package.Nodes), result.NodeCount)
+	}
+	// FilePath should be stripped for portability.
+	for _, nf := range result.Package.Nodes {
+		if nf.FilePath != "" {
+			t.Errorf("node %q has non-empty filePath %q — should be stripped", nf.ID, nf.FilePath)
+		}
+	}
+}
+
 // GH#580: cross-package edges (target contains "/") should produce a
 // warning, not an error. They're legal at runtime but unresolvable in
 // a single-package scan.
