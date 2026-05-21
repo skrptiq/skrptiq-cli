@@ -31,6 +31,7 @@ Commands:
   migrate-identity <dir>      Rewrite legacy manifest.id to canonical form
   catalogue <dir>             List all skrpts in a directory (JSON)
   sign <dir> --key-env <VAR>  Sign a bundle (adds integrity + trust blocks)
+  verify <bundle.zip>         Verify a signed bundle
   help                        Show this help message
   version                     Print version and exit
 
@@ -119,6 +120,8 @@ func main() {
 			os.Exit(cli.Catalogue(args[1:]))
 		case "sign":
 			os.Exit(cli.Sign(args[1:]))
+		case "verify":
+			os.Exit(cli.Verify(args[1:]))
 		case "version":
 			fmt.Println("skrptiq " + version.Full())
 			return
