@@ -26,6 +26,9 @@ Commands:
   show <name> [flags]         Display node content and metadata
   hub <subcommand>            Browse and import community skrpts
   scan <path>                 Parse and validate a directory
+  new <name>                  Create a new skrpt directory
+  lint <dir> [--auto-fix]     Check for identity/manifest issues
+  migrate-identity <dir>      Rewrite legacy manifest.id to canonical form
   help                        Show this help message
   version                     Print version and exit
 
@@ -62,6 +65,8 @@ Examples:
   skrptiq run "Blog Post Pipeline"    Execute a workflow by name
   skrptiq list workflows              List all workflows
   skrptiq hub search "blog"           Search community skrpts
+  skrptiq new my-skrpt                Create a new skrpt directory
+  skrptiq lint ./my-skrpt --auto-fix  Fix identity issues in place
   echo "draft" | skrptiq run "Edit"   Pipe input to a workflow
 `)
 }
@@ -102,6 +107,12 @@ func main() {
 			os.Exit(cli.Show(args[1:], *dbPath))
 		case "hub":
 			os.Exit(cli.Hub(args[1:], *dbPath))
+		case "new":
+			os.Exit(cli.New(args[1:]))
+		case "lint":
+			os.Exit(cli.Lint(args[1:]))
+		case "migrate-identity":
+			os.Exit(cli.MigrateIdentity(args[1:]))
 		case "version":
 			fmt.Println("skrptiq " + version.Full())
 			return
