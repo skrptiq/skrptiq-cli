@@ -29,6 +29,7 @@ Commands:
   new <name>                  Create a new skrpt directory
   lint <dir> [--auto-fix]     Check for identity/manifest issues
   migrate-identity <dir>      Rewrite legacy manifest.id to canonical form
+  catalogue <dir>             List all skrpts in a directory (JSON)
   help                        Show this help message
   version                     Print version and exit
 
@@ -113,6 +114,8 @@ func main() {
 			os.Exit(cli.Lint(args[1:]))
 		case "migrate-identity":
 			os.Exit(cli.MigrateIdentity(args[1:]))
+		case "catalogue":
+			os.Exit(cli.Catalogue(args[1:]))
 		case "version":
 			fmt.Println("skrptiq " + version.Full())
 			return
