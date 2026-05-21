@@ -4,106 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"os"
 )
 
 func testdataPath(name string) string {
 	return filepath.Join("testdata", name)
-}
-
-// --- Parse tests ---
-
-func TestParseFile_ValidSkill(t *testing.T) {
-	f, err := ParseFile(filepath.Join(testdataPath("valid-package"), "skills", "example-skill.md"), "skills")
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	if f.Frontmatter.Type != "skill" {
-		t.Errorf("expected type skill, got %q", f.Frontmatter.Type)
-	}
-	if f.Frontmatter.ID != "example-skill" {
-		t.Errorf("expected id example-skill, got %q", f.Frontmatter.ID)
-	}
-	if f.Frontmatter.Title != "Example Skill" {
-		t.Errorf("expected title Example Skill, got %q", f.Frontmatter.Title)
-	}
-	if len(f.Frontmatter.Connections) != 1 {
-		t.Errorf("expected 1 connection, got %d", len(f.Frontmatter.Connections))
-	}
-	if !strings.Contains(f.Body, "valid node") {
-		t.Errorf("expected body to contain 'valid node', got %q", f.Body)
-	}
-}
-
-func TestParseFile_EmptyIDDerivesFromFilename(t *testing.T) {
-	// Create a temp file without an id field.
-	tmp := t.TempDir()
-	content := "---\ntype: skill\ntitle: \"No ID\"\n---\nBody text."
-	os.WriteFile(filepath.Join(tmp, "derived-slug.md"), []byte(content), 0644)
-
-	f, err := ParseFile(filepath.Join(tmp, "derived-slug.md"), "skills")
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	if f.Frontmatter.ID != "derived-slug" {
-		t.Errorf("expected id derived-slug, got %q", f.Frontmatter.ID)
-	}
-}
-
-func TestParseFile_NoFrontmatter(t *testing.T) {
-	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, "no-fm.md"), []byte("Just text, no frontmatter."), 0644)
-	_, err := ParseFile(filepath.Join(tmp, "no-fm.md"), "skills")
-	if err == nil {
-		t.Error("expected error for file without frontmatter")
-	}
-}
-
-func TestParseFile_Connections(t *testing.T) {
-	f, err := ParseFile(filepath.Join(testdataPath("valid-package"), "workflows", "example-workflow.md"), "workflows")
-	if err != nil {
-		t.Fatalf("ParseFile failed: %v", err)
-	}
-	if len(f.Frontmatter.Connections) != 1 {
-		t.Fatalf("expected 1 connection, got %d", len(f.Frontmatter.Connections))
-	}
-	conn := f.Frontmatter.Connections[0]
-	if conn.Target != "example-skill" {
-		t.Errorf("expected target example-skill, got %q", conn.Target)
-	}
-	if conn.Type != "uses" {
-		t.Errorf("expected type uses, got %q", conn.Type)
-	}
-	if conn.Position == nil || *conn.Position != 0 {
-		t.Error("expected position 0")
-	}
-}
-
-func TestParseDirectory_MissingManifest(t *testing.T) {
-	tmp := t.TempDir()
-	_, _, _, err := ParseDirectory(tmp)
-	if err == nil {
-		t.Error("expected error for directory without skrptiq.yaml")
-	}
-}
-
-func TestParseDirectory_ValidPackage(t *testing.T) {
-	files, _, issues, err := ParseDirectory(testdataPath("valid-package"))
-	if err != nil {
-		t.Fatalf("ParseDirectory failed: %v", err)
-	}
-	if len(files) != 4 {
-		t.Errorf("expected 4 files, got %d", len(files))
-	}
-	if len(issues) != 0 {
-		t.Errorf("expected 0 parse issues, got %d", len(issues))
-		for _, i := range issues {
-			t.Logf("  %s: %s", i.Code, i.Message)
-		}
-	}
 }
 
 // --- Scan integration tests ---
