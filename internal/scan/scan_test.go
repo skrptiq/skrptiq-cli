@@ -225,6 +225,42 @@ func TestScan_JSONOutput(t *testing.T) {
 	}
 }
 
+// GH#580: cross-package edges (target contains "/") should produce a
+// warning, not an error. They're legal at runtime but unresolvable in
+// a single-package scan.
+func TestScan_CrossPackageEdge_WarningNotError(t *testing.T) {
+	result := runScan(t, testdataPath("cross-package-edge"))
+	// Should have a warning for the cross-package edge.
+	found := false
+	for _, issue := range result.Issues {
+		if issue.Code == "scan.cross_package_edge" {
+			found = true
+			if issue.Severity != "warning" {
+				t.Errorf("expected warning severity, got %q", issue.Severity)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("expected scan.cross_package_edge issue")
+		for _, i := range result.Issues {
+			t.Logf("  %s: %s (%s)", i.Code, i.Message, i.File)
+		}
+	}
+	// Must NOT have an error for the cross-package target.
+	for _, issue := range result.Issues {
+		if issue.Code == "scan.edge_target_unresolved" {
+			t.Errorf("cross-package edge should not produce edge_target_unresolved: %s", issue.Message)
+		}
+	}
+	// Exit code should be 1 (warning), not 2 (error).
+	var buf bytes.Buffer
+	code := RunTo(testdataPath("cross-package-edge"), true, &buf)
+	if code != 1 {
+		t.Errorf("expected exit code 1 (warning) for cross-package edge, got %d", code)
+	}
+}
+
 // runScan is a test helper that captures the scan result via JSON.
 func runScan(t *testing.T, path string) ScanResult {
 	t.Helper()

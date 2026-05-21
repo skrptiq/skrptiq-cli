@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/skrptiq/engine/parse"
 	"github.com/skrptiq/engine/storage"
 )
 
@@ -34,12 +35,10 @@ func Run(scanPath string, jsonOutput bool) int {
 
 // RunTo executes the scan, writing output to w, and returns the exit code.
 //
-// GH#525: hydration goes through engine.HydratePackage, which is the
-// single source of truth for "parsed inputs → populated engine DB". The
-// scanner builds HydrationInput slices from parsed files + manifest,
-// hands them to HydratePackage, and surfaces the returned issues
-// alongside its own per-file context. Workflow-level validation runs
-// after hydration since it needs the full DB state.
+// F12: delegates directory reading to engine/parse.ReadPackage (the
+// canonical single-source reader). The bridge function converts the
+// parsed Package into storage.HydrationInput for the temp-DB hydration
+// step. Workflow-level validation still needs the full DB state.
 func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	absPath, err := filepath.Abs(scanPath)
 	if err != nil {
@@ -47,8 +46,8 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		return 2
 	}
 
-	// 1. Parse the skrpt directory.
-	files, manifest, parseIssues, err := ParseDirectory(absPath)
+	// 1. Read the package via the canonical engine reader.
+	pkg, parseIssues, err := parse.ReadPackage(absPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 2
@@ -69,101 +68,24 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	}
 	defer db.Close()
 
-	// Manifest's name is the namespace HydratePackage will stamp.
-	// Fall back to the directory name if the manifest doesn't carry one
-	// (older catalogue skrpts) — same fallback the previous flow used.
-	if _, ok := manifest["name"]; !ok || manifest["name"] == nil || manifest["name"] == "" {
-		manifest["name"] = filepath.Base(absPath)
-	}
+	// 3. Convert parse.Package → storage.HydrationInput via bridge.
+	br := bridgeToHydration(pkg, absPath)
 
-	// 3. Build HydrationInput from the parsed files. Also keep a
-	// nodeID → file map so issues HydratePackage returns can be
-	// re-attached to their source file for the user-facing report.
-	nodeFiles := make(map[string]string, len(files))
-	nodeIDSet := make(map[string]bool, len(files))
-	nodes := make([]storage.NodeInput, 0, len(files))
-	for _, f := range files {
-		id := f.Frontmatter.ID
-		nodeFiles[id] = relPath(absPath, f.Path)
-		nodeIDSet[id] = true
-
-		var desc, content, metadata, fileSlug *string
-		if f.Frontmatter.Description != "" {
-			d := f.Frontmatter.Description
-			desc = &d
-		}
-		if f.Body != "" {
-			c := f.Body
-			content = &c
-		}
-		if mj := BuildMetadataJSON(f.Frontmatter); mj != "" {
-			metadata = &mj
-		}
-		slug := id
-		fileSlug = &slug
-
-		nodes = append(nodes, storage.NodeInput{
-			ID:          id,
-			Type:        f.Frontmatter.Type,
-			Title:       f.Frontmatter.Title,
-			Description: desc,
-			Content:     content,
-			Metadata:    metadata,
-			FileSlug:    fileSlug,
-		})
-	}
-
-	// 4. Build EdgeInput slice, pre-filtering edges whose target slug
-	// isn't in the node set. Those get scan.edge_target_unresolved
-	// without being passed to HydratePackage — HydratePackage assumes
-	// FK targets resolve, and dangling references are a scan-specific
-	// failure mode, not a hydration one.
+	// Collect all issues: parse-time + bridge-time.
 	var allIssues []ScanIssue
-	allIssues = append(allIssues, parseIssues...)
+	allIssues = append(allIssues, parseIssuesToScanIssues(parseIssues)...)
+	allIssues = append(allIssues, br.Issues...)
 
-	edgeFiles := make(map[string]edgeFileCtx, len(files))
-	edges := make([]storage.EdgeInput, 0)
-	for _, f := range files {
-		rel := relPath(absPath, f.Path)
-		sourceSlug := f.Frontmatter.ID
-		for _, conn := range f.Frontmatter.Connections {
-			edgeID := fmt.Sprintf("%s--%s--%s", sourceSlug, conn.Type, conn.Target)
-			if !nodeIDSet[conn.Target] {
-				allIssues = append(allIssues, ScanIssue{
-					File:     rel,
-					NodeSlug: sourceSlug,
-					ValidationIssue: makeIssue("scan.edge_target_unresolved", "error",
-						fmt.Sprintf("connection target %q not found", conn.Target),
-						"§6.4", "connections"),
-				})
-				continue
-			}
-			edges = append(edges, storage.EdgeInput{
-				ID:       edgeID,
-				SourceID: sourceSlug,
-				TargetID: conn.Target,
-				Type:     conn.Type,
-				Position: conn.Position,
-			})
-			edgeFiles[edgeID] = edgeFileCtx{file: rel, sourceSlug: sourceSlug}
-		}
-	}
-
-	// 5. Hydrate. The single owner of parsed-input → engine-DB.
-	hydration, err := db.HydratePackage(storage.HydrationInput{
-		HubImportID: "scan-import",
-		Manifest:    manifest,
-		Nodes:       nodes,
-		Edges:       edges,
-	})
+	// 4. Hydrate into the temp DB.
+	hydration, err := db.HydratePackage(br.Input)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error hydrating package: %v\n", err)
 		return 2
 	}
 
-	// 6. Convert hydration issues back into ScanIssue with file context.
+	// 5. Convert hydration issues back into ScanIssue with file context.
 	for nodeID, issues := range hydration.IssuesByNodeID {
-		file := nodeFiles[nodeID]
+		file := br.NodeFiles[nodeID]
 		for _, issue := range issues {
 			allIssues = append(allIssues, ScanIssue{
 				File:            file,
@@ -173,7 +95,7 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		}
 	}
 	for edgeID, issues := range hydration.IssuesByEdgeID {
-		ctx := edgeFiles[edgeID]
+		ctx := br.EdgeFiles[edgeID]
 		for _, issue := range issues {
 			allIssues = append(allIssues, ScanIssue{
 				File:            ctx.file,
@@ -183,27 +105,24 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		}
 	}
 
-	// 7. Validate workflows. HydratePackage runs node + edge validation
-	// but the workflow-context checks (GH#511 binding coverage, GH#512
-	// step-ref resolution, etc.) need the full DB state and live in
-	// ValidateWorkflow. Run them per workflow file so issues attribute
-	// back to the right file.
-	for _, f := range files {
-		if f.Frontmatter.Type != "workflow" {
+	// 6. Validate workflows. Workflow-context checks (binding coverage,
+	// step-ref resolution, etc.) need the full DB state.
+	for _, nf := range pkg.Nodes {
+		if nf.Type != "workflow" {
 			continue
 		}
-		rel := relPath(absPath, f.Path)
-		issues := db.ValidateWorkflow(f.Frontmatter.ID)
+		rel := relPath(absPath, nf.FilePath)
+		issues := db.ValidateWorkflow(nf.ID)
 		for _, issue := range issues {
 			allIssues = append(allIssues, ScanIssue{
 				File:            rel,
-				NodeSlug:        f.Frontmatter.ID,
+				NodeSlug:        nf.ID,
 				ValidationIssue: issue,
 			})
 		}
 	}
 
-	// 8. Build result and output.
+	// 7. Build result and output.
 	result := ScanResult{
 		Path:      absPath,
 		NodeCount: hydration.NodesInserted,
@@ -227,7 +146,7 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		OutputTable(result, w)
 	}
 
-	// 9. Exit code.
+	// 8. Exit code.
 	if result.ErrorCount > 0 {
 		return 2
 	}
@@ -255,5 +174,3 @@ func makeIssue(code string, severity string, message, contractRef, field string)
 		Field:       field,
 	}
 }
-
-// marshalJSON moved to bridge.go
