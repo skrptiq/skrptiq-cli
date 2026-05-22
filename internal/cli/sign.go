@@ -2,7 +2,9 @@ package cli
 
 import (
 	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"os"
@@ -54,17 +56,34 @@ func Sign(args []string) int {
 	return ExitOK
 }
 
-// parseSigningKey reads the named env var and decodes a base64-encoded
-// ed25519 key. Accepts 32-byte seed or 64-byte full private key.
+// parseSigningKey reads the named env var and decodes an ed25519 private key.
+// Accepts three formats:
+//   - PEM-encoded PKCS8 private key (as used by GitHub secrets / openssl)
+//   - Base64-encoded 32-byte seed
+//   - Base64-encoded 64-byte full private key
 func parseSigningKey(envVar string) (ed25519.PrivateKey, error) {
 	raw := os.Getenv(envVar)
 	if raw == "" {
 		return nil, fmt.Errorf("environment variable %s is not set", envVar)
 	}
 
+	// Try PEM first — this is the format GitHub org secrets typically use.
+	if block, _ := pem.Decode([]byte(raw)); block != nil {
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("invalid PEM key in %s: %v", envVar, err)
+		}
+		edKey, ok := key.(ed25519.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("invalid key in %s: PEM contains %T, expected ed25519", envVar, key)
+		}
+		return edKey, nil
+	}
+
+	// Fall back to raw base64 (seed or full key).
 	decoded, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid key in %s: base64 decode failed: %v", envVar, err)
+		return nil, fmt.Errorf("invalid key in %s: not PEM and base64 decode failed: %v", envVar, err)
 	}
 
 	switch len(decoded) {

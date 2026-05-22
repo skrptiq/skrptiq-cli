@@ -3,7 +3,9 @@ package cli
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +74,36 @@ func TestSign_RoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(content, "signature:") {
 		t.Error("expected signature field in trust block")
+	}
+}
+
+// GH#588: PEM-encoded keys (as used by GitHub org secrets) must work.
+func TestSign_PEMKey(t *testing.T) {
+	dir, seed := makeSignableFixture(t)
+
+	// Build a PEM-encoded PKCS8 private key from the seed.
+	privKey := ed25519.NewKeyFromSeed(seed)
+	pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(privKey)
+	if err != nil {
+		t.Fatalf("marshal PKCS8: %v", err)
+	}
+	pemBlock := pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: pkcs8Bytes,
+	})
+
+	t.Setenv("TEST_PEM_KEY", string(pemBlock))
+	code := Sign([]string{"--key-env", "TEST_PEM_KEY", dir})
+	if code != ExitOK {
+		t.Fatalf("expected exit 0 for PEM key, got %d", code)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "skrptiq.yaml"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if !strings.Contains(string(data), "integrity:") {
+		t.Error("expected integrity block in signed manifest")
 	}
 }
 
