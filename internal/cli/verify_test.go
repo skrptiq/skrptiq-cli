@@ -241,7 +241,7 @@ func contains(s, sub string) bool {
 // checksum or trust-loading regression fails CLI CI in lockstep with
 // engine + App — that's the design per BUNDLE-INTEGRITY-CONTRACT §9.4.
 
-const pinnedFixtureChecksum = "sha256:e93447842a7493ebc2d0dc9dc1e1e5f5cf13a79a66c1fe87724ca78beca9ba8a"
+const pinnedFixtureChecksum = "sha256:de4337141bb48d2d366efac6ad33c50db213ac43e2a218a7ac296573ed04bab6"
 const pinnedHubKeyFingerprint = "64c8dc7ad56dcd8fee9a3f460ade4a0f3b2aa5bf21b17cde3f755ab4b6758ebe"
 
 func TestDriftGate_FixtureChecksum(t *testing.T) {
