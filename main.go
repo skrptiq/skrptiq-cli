@@ -25,7 +25,8 @@ Commands:
   list [type] [flags]         List nodes (workflows, skills, prompts, ...)
   show <name> [flags]         Display node content and metadata
   hub <subcommand>            Browse and import community skrpts
-  scan <path>                 Parse and validate a directory
+  scan [--no-resolve-deps] <path>
+                              Parse and validate a directory
   new <name>                  Create a new skrpt directory
   lint <dir> [--auto-fix]     Check for identity/manifest issues
   migrate-identity <dir>      Rewrite legacy manifest.id to canonical form
@@ -95,13 +96,18 @@ func main() {
 		case "scan":
 			scanFlags := flag.NewFlagSet("scan", flag.ExitOnError)
 			jsonOutput := scanFlags.Bool("json", false, "Output as JSON")
+			noResolveDeps := scanFlags.Bool("no-resolve-deps", false,
+				"Skip Hub-fetching of declared dependency node lists (local-dev / offline only; weaker than the publish gate)")
 			scanFlags.Parse(args[1:])
 			scanPath := scanFlags.Arg(0)
 			if scanPath == "" {
-				fmt.Fprintln(os.Stderr, "Usage: skrptiq scan [--json] <path>")
+				fmt.Fprintln(os.Stderr, "Usage: skrptiq scan [--json] [--no-resolve-deps] <path>")
 				os.Exit(2)
 			}
-			os.Exit(scan.Run(scanPath, *jsonOutput))
+			os.Exit(scan.RunWithOptions(scanPath, *jsonOutput, scan.Options{
+				NoResolveDeps: *noResolveDeps,
+				HubBaseURL:    os.Getenv("SKRPTIQ_HUB_URL"),
+			}, os.Stdout))
 		case "run":
 			os.Exit(cli.Run(args[1:], *dbPath))
 		case "list":

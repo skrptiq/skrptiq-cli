@@ -5,9 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/skrptiq/engine/parse"
 	"github.com/skrptiq/engine/storage"
+	"github.com/skrptiq/skrptiq-cli/internal/scan/depresolver"
 )
 
 // ScanIssue wraps a ValidationIssue with file context.
@@ -19,28 +21,47 @@ type ScanIssue struct {
 
 // ScanResult is the complete scan output.
 type ScanResult struct {
-	Path       string        `json:"path"`
-	NodeCount  int           `json:"nodeCount"`
-	EdgeCount  int           `json:"edgeCount"`
-	Issues     []ScanIssue   `json:"issues"`
-	ErrorCount int           `json:"errorCount"`
-	WarnCount  int           `json:"warnCount"`
-	InfoCount  int           `json:"infoCount"`
+	Path       string         `json:"path"`
+	NodeCount  int            `json:"nodeCount"`
+	EdgeCount  int            `json:"edgeCount"`
+	Issues     []ScanIssue    `json:"issues"`
+	ErrorCount int            `json:"errorCount"`
+	WarnCount  int            `json:"warnCount"`
+	InfoCount  int            `json:"infoCount"`
 	Package    *parse.Package `json:"package,omitempty"`
 }
 
-// Run executes the scan, writing output to stdout, and returns the exit code (0 pass, 1 warnings, 2 errors).
+// Options controls scanner behaviour beyond path + output format.
+type Options struct {
+	// NoResolveDeps disables Hub-fetching of declared dependency node
+	// lists (GH#630 plan §4). Default = false (strict mode, the publish
+	// gate). With this flag set, workflow-execution refs not resolved
+	// locally are accepted without further validation — for offline /
+	// local-dev authoring only.
+	NoResolveDeps bool
+	// HubBaseURL overrides the Hub origin used by the dep resolver.
+	// Empty → depresolver.DefaultHubBaseURL.
+	HubBaseURL string
+	// DepCacheDir overrides ~/.skrptiq/cache for the dep-nodes cache.
+	// Empty → resolver default. Tests inject a tempdir here.
+	DepCacheDir string
+}
+
+// Run executes the scan in strict mode (the publish gate), writing
+// output to stdout, and returns the exit code (0 pass, 1 warnings, 2
+// errors).
 func Run(scanPath string, jsonOutput bool) int {
 	return RunTo(scanPath, jsonOutput, os.Stdout)
 }
 
-// RunTo executes the scan, writing output to w, and returns the exit code.
-//
-// F12: delegates directory reading to engine/parse.ReadPackage (the
-// canonical single-source reader). The bridge function converts the
-// parsed Package into storage.HydrationInput for the temp-DB hydration
-// step. Workflow-level validation still needs the full DB state.
+// RunTo is the back-compat entry point with stdout redirection.
 func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
+	return RunWithOptions(scanPath, jsonOutput, Options{}, w)
+}
+
+// RunWithOptions executes the scan with caller-supplied options. The
+// dep-aware GH#630 path lives here.
+func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer) int {
 	absPath, err := filepath.Abs(scanPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -72,7 +93,6 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	// 3. Convert parse.Package → storage.HydrationInput via bridge.
 	br := bridgeToHydration(pkg, absPath)
 
-	// Collect all issues: parse-time + bridge-time.
 	var allIssues []ScanIssue
 	allIssues = append(allIssues, parseIssuesToScanIssues(parseIssues)...)
 	allIssues = append(allIssues, br.Issues...)
@@ -84,7 +104,6 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		return 2
 	}
 
-	// 5. Convert hydration issues back into ScanIssue with file context.
 	for nodeID, issues := range hydration.IssuesByNodeID {
 		file := br.NodeFiles[nodeID]
 		for _, issue := range issues {
@@ -106,8 +125,38 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		}
 	}
 
-	// 6. Validate workflows. Workflow-context checks (binding coverage,
-	// step-ref resolution, etc.) need the full DB state.
+	// 5. Dep resolution (GH#630). Only active when the package declares
+	// a `dependencies:` block (pkg.Dependencies != nil). Legacy bundles
+	// without the block bypass this entirely and keep the historical
+	// workflow.execution_*_missing codes verbatim.
+	depProvided := map[string]string{}
+	manifestRel := manifestRelPath(absPath, pkg)
+	if pkg.Dependencies != nil && !opts.NoResolveDeps {
+		resolver, rErr := depresolver.New(depresolver.Config{
+			HubBaseURL: opts.HubBaseURL,
+			CacheDir:   opts.DepCacheDir,
+		})
+		if rErr != nil {
+			fmt.Fprintf(os.Stderr, "Error initialising dep resolver: %v\n", rErr)
+			return 2
+		}
+		result := resolver.Resolve(pkg.Dependencies)
+		depProvided = result.ProvidedSlugs
+		for _, issue := range result.Issues {
+			allIssues = append(allIssues, ScanIssue{
+				File:            manifestRel,
+				ValidationIssue: issue,
+			})
+		}
+	}
+
+	// 6. Validate workflows, then re-code workflow.execution_*_missing
+	// per the three-tier resolution (plan §2):
+	//   - slug in dep-provided set → drop the issue (dep resolves it)
+	//   - else, if pkg has any `dependencies:` block → re-code as
+	//     dependency.unresolved_slug (new code, clearer signal)
+	//   - else (legacy bundle, no dependencies: block at all) → keep
+	//     the historical _missing code verbatim
 	for _, nf := range pkg.Nodes {
 		if nf.Type != "workflow" {
 			continue
@@ -115,6 +164,17 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		rel := relPath(absPath, nf.FilePath)
 		issues := db.ValidateWorkflow(nf.ID)
 		for _, issue := range issues {
+			if isExecutionMissingCode(issue.Code) {
+				slug := extractMissingSlug(issue.Message)
+				if slug != "" {
+					if _, hit := depProvided[slug]; hit {
+						continue // dep resolves it; drop
+					}
+					if pkg.Dependencies != nil {
+						issue = recodeAsUnresolvedDepSlug(issue, slug)
+					}
+				}
+			}
 			allIssues = append(allIssues, ScanIssue{
 				File:            rel,
 				NodeSlug:        nf.ID,
@@ -124,8 +184,6 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 	}
 
 	// 7. Build result and output.
-	// Strip host-specific FilePath from nodes for portable JSON output.
-	// RootDir is kept — it matches result.Path.
 	for i := range pkg.Nodes {
 		pkg.Nodes[i].FilePath = ""
 	}
@@ -153,7 +211,6 @@ func RunTo(scanPath string, jsonOutput bool, w io.Writer) int {
 		OutputTable(result, w)
 	}
 
-	// 8. Exit code.
 	if result.ErrorCount > 0 {
 		return 2
 	}
@@ -180,4 +237,49 @@ func makeIssue(code string, severity string, message, contractRef, field string)
 		ContractRef: contractRef,
 		Field:       field,
 	}
+}
+
+// isExecutionMissingCode identifies the engine codes that signal a
+// workflow.execution[].skill/prompt ref pointing at a slug not present
+// in the local package. Three-tier resolution (plan §2) intercepts
+// these and either drops them (dep-provided) or re-codes them
+// (dep-declared but unresolved).
+func isExecutionMissingCode(code string) bool {
+	return code == "workflow.execution_skill_missing" ||
+		code == "workflow.execution_prompt_missing"
+}
+
+// missingSlugRE matches the slug inside the engine's _missing messages.
+// Engine format (validate.go:847,884):
+//
+//	"<locator> references skill \"<slug>\" which does not exist"
+//	"<locator> references prompt \"<slug>\" which does not exist"
+//
+// If the engine ever changes the message format the dep-referenced-valid
+// scan test will fail loudly (slug extraction returns ""), which is the
+// intended canary.
+var missingSlugRE = regexp.MustCompile(`references (?:skill|prompt) "([^"]+)"`)
+
+func extractMissingSlug(msg string) string {
+	m := missingSlugRE.FindStringSubmatch(msg)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+func recodeAsUnresolvedDepSlug(issue storage.ValidationIssue, slug string) storage.ValidationIssue {
+	issue.Code = "dependency.unresolved_slug"
+	issue.Message = fmt.Sprintf("%s — slug %q is not provided by any declared dependency", issue.Message, slug)
+	return issue
+}
+
+// manifestRelPath returns a stable relative path for skrptiq.yaml so dep
+// resolution issues attribute to the manifest rather than to a random
+// node file. Falls back to "skrptiq.yaml" if the package's manifest path
+// isn't available (the engine's parse.Package doesn't expose it
+// directly in v1.2).
+func manifestRelPath(absPath string, _ parse.Package) string {
+	_ = absPath
+	return "skrptiq.yaml"
 }

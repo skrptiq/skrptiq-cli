@@ -1,0 +1,8 @@
+name: dep-fetch-fails
+version: "1.0.0"
+description: "GH#630 fixture — Hub metadata fetch returns 503"
+author: test
+dependencies:
+  - id: hub-shared/test-dep
+    version: "1.0.0"
+    checksum: "sha256:aaa"

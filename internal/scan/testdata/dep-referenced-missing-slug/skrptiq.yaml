@@ -1,0 +1,8 @@
+name: dep-referenced-missing-slug
+version: "1.0.0"
+description: "GH#630 fixture — workflow refs a slug NEITHER local NOR dep-provided"
+author: test
+dependencies:
+  - id: hub-shared/test-dep
+    version: "1.0.0"
+    checksum: "sha256:aaa"
