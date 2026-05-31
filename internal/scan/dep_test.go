@@ -99,6 +99,74 @@ func TestScan_DepReferencedMissingSlug_UnresolvedDepCode(t *testing.T) {
 	}
 }
 
+// GH#630 plan v2 — connections edge to a dep-provided slug must NOT
+// produce scan.edge_target_unresolved (bridge-side three-tier tier 1).
+// Confirmed regression-fix for the Hub K-035 fail at comment-4588102292.
+func TestScan_DepReferencedValid_ConnectionsEdgeToDepResolves(t *testing.T) {
+	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+		{"id": "dep-skill", "type": "skill"},
+		{"id": "dep-prompt", "type": "prompt"},
+	})
+	result := runScanWithDeps(t, testdataPath("dep-referenced-valid"), h, Options{})
+
+	for _, i := range result.Issues {
+		if i.Code == "scan.edge_target_unresolved" {
+			t.Errorf("connection target dep-skill must NOT error in strict mode: %s", i.Message)
+		}
+	}
+}
+
+// GH#630 plan v2 — connections edge to a non-local non-dep-provided
+// slug must re-code to dependency.unresolved_slug (bridge-side
+// three-tier tier 3), same code the workflow.execution path emits.
+func TestScan_DepReferencedMissingSlug_ConnectionsEdgeRecodes(t *testing.T) {
+	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+		{"id": "dep-prompt", "type": "prompt"},
+	})
+	result := runScanWithDeps(t, testdataPath("dep-referenced-missing-slug"), h, Options{})
+
+	foundEdge := false
+	for _, i := range result.Issues {
+		if i.Code == "dependency.unresolved_slug" && strings.Contains(i.Message, "nowhere-edge") {
+			foundEdge = true
+		}
+		if i.Code == "scan.edge_target_unresolved" {
+			t.Errorf("dep-referenced bundle must re-code edge_target_unresolved → unresolved_slug, got legacy code: %s", i.Message)
+		}
+	}
+	if !foundEdge {
+		t.Errorf("expected dependency.unresolved_slug for connection target nowhere-edge")
+		for _, i := range result.Issues {
+			t.Logf("  [%s] %s", i.Code, i.Message)
+		}
+	}
+}
+
+// GH#630 plan v2 — legacy bundle (no dependencies: block) with an
+// unresolved connection edge target must keep the legacy
+// scan.edge_target_unresolved code. The bridge-side three-tier tier 4.
+// invalid-package fixture has an existing broken connection edge.
+func TestScan_NoDepsBlock_ConnectionsEdgePreservesLegacyCode(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("legacy bundle must not touch Hub; got request to %s", r.URL.Path)
+	})
+	result := runScanWithDeps(t, testdataPath("invalid-package"), h, Options{})
+
+	for _, i := range result.Issues {
+		if i.Code == "dependency.unresolved_slug" {
+			t.Errorf("legacy bundle must not produce dependency.unresolved_slug: %s", i.Message)
+		}
+	}
+	// And the legacy code MUST still fire for the broken edge — this
+	// is the regression guard for legacy-bundle behaviour.
+	if !hasIssueCode(result, "scan.edge_target_unresolved") {
+		t.Error("legacy bundle with broken connection edge must keep scan.edge_target_unresolved code")
+		for _, i := range result.Issues {
+			t.Logf("  [%s] %s", i.Code, i.Message)
+		}
+	}
+}
+
 // Trust-chain guard: manifest-declared checksum != Hub-returned checksum
 // must hard-fail. Closes CTO §F2.1 phantom-dependency hole.
 func TestScan_DepChecksumMismatch_HardError(t *testing.T) {
@@ -147,9 +215,15 @@ func TestScan_NoResolveDeps_AcceptsWithoutFetch(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("--no-resolve-deps must not call Hub; got %d calls", calls)
 	}
-	for _, i := range result.Issues {
-		if i.Code == "workflow.execution_skill_missing" || i.Code == "workflow.execution_prompt_missing" {
-			t.Errorf("--no-resolve-deps must drop _missing for non-local slugs in dep-referenced bundles: %s", i.Message)
+	// Plan v1 §4: "Workflow-execution refs to slugs not in the local
+	// package are accepted as 'potentially dep-provided' — no error."
+	// Plan v2 extends the same permissive treatment to the bridge
+	// (connections edge) surface. Zero errors total for the
+	// dep-referenced-valid fixture under --no-resolve-deps.
+	if result.ErrorCount != 0 {
+		t.Errorf("--no-resolve-deps must produce 0 errors on dep-referenced-valid; got %d", result.ErrorCount)
+		for _, i := range result.Issues {
+			t.Logf("  [%s] %s", i.Code, i.Message)
 		}
 	}
 }
