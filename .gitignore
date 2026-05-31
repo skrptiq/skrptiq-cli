@@ -12,6 +12,8 @@ dist/
 # Claude / orchestrator
 .claude/settings.local.json
 .orchestrator-msg
+
+# Orchestrator-managed docs (overwritten each push cycle)
 docs/BRIEFING.md
 
 # IDE
