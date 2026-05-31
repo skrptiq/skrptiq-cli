@@ -47,7 +47,7 @@ func TestBridgeToHydration_BasicNodes(t *testing.T) {
 		RootDir: "/tmp/test-pkg",
 	}
 
-	result := bridgeToHydration(pkg, "/tmp/test-pkg")
+	result := bridgeToHydration(pkg, "/tmp/test-pkg", depContext{})
 
 	if len(result.Input.Nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(result.Input.Nodes))
@@ -96,7 +96,7 @@ func TestBridgeToHydration_EmptyMetadata(t *testing.T) {
 		RootDir: "/tmp/test",
 	}
 
-	result := bridgeToHydration(pkg, "/tmp/test")
+	result := bridgeToHydration(pkg, "/tmp/test", depContext{})
 	n := result.Input.Nodes[0]
 	if n.Metadata != nil {
 		t.Errorf("expected nil Metadata for empty map, got %q", *n.Metadata)
@@ -123,7 +123,7 @@ func TestBridgeToHydration_CrossPackageEdge(t *testing.T) {
 		RootDir: "/tmp/test",
 	}
 
-	result := bridgeToHydration(pkg, "/tmp/test")
+	result := bridgeToHydration(pkg, "/tmp/test", depContext{})
 
 	// Cross-package edge should NOT produce an EdgeInput.
 	if len(result.Input.Edges) != 0 {
@@ -159,7 +159,7 @@ func TestBridgeToHydration_UnresolvedLocalEdge(t *testing.T) {
 		RootDir: "/tmp/test",
 	}
 
-	result := bridgeToHydration(pkg, "/tmp/test")
+	result := bridgeToHydration(pkg, "/tmp/test", depContext{})
 
 	if len(result.Input.Edges) != 0 {
 		t.Errorf("expected 0 edges (unresolved), got %d", len(result.Input.Edges))
@@ -199,7 +199,7 @@ func TestBridgeToHydration_ResolvedLocalEdge(t *testing.T) {
 		RootDir: "/tmp/test",
 	}
 
-	result := bridgeToHydration(pkg, "/tmp/test")
+	result := bridgeToHydration(pkg, "/tmp/test", depContext{})
 
 	if len(result.Input.Edges) != 1 {
 		t.Fatalf("expected 1 edge, got %d", len(result.Input.Edges))
@@ -219,7 +219,7 @@ func TestBridgeToHydration_NamespaceFallback(t *testing.T) {
 		RootDir:  "/tmp/my-cool-skrpt",
 	}
 
-	result := bridgeToHydration(pkg, "/tmp/my-cool-skrpt")
+	result := bridgeToHydration(pkg, "/tmp/my-cool-skrpt", depContext{})
 	name, ok := result.Input.Manifest["name"]
 	if !ok || name != "my-cool-skrpt" {
 		t.Errorf("manifest name = %v, want %q", name, "my-cool-skrpt")

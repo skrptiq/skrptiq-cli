@@ -90,14 +90,48 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	}
 	defer db.Close()
 
-	// 3. Convert parse.Package → storage.HydrationInput via bridge.
-	br := bridgeToHydration(pkg, absPath)
-
 	var allIssues []ScanIssue
 	allIssues = append(allIssues, parseIssuesToScanIssues(parseIssues)...)
+
+	// 3. Dep resolution (GH#630). Runs BEFORE the bridge so that
+	// connection edges to dep-provided slugs can be filtered out at
+	// bridge time (plan v2 §1). Only active when the package declares
+	// a `dependencies:` block (pkg.Dependencies != nil); legacy bundles
+	// bypass this entirely and keep historical codes verbatim.
+	depProvided := map[string]string{}
+	hasDepsBlock := pkg.Dependencies != nil
+	manifestRel := manifestRelPath(absPath, pkg)
+	if hasDepsBlock && !opts.NoResolveDeps {
+		resolver, rErr := depresolver.New(depresolver.Config{
+			HubBaseURL: opts.HubBaseURL,
+			CacheDir:   opts.DepCacheDir,
+		})
+		if rErr != nil {
+			fmt.Fprintf(os.Stderr, "Error initialising dep resolver: %v\n", rErr)
+			return 2
+		}
+		result := resolver.Resolve(pkg.Dependencies)
+		depProvided = result.ProvidedSlugs
+		for _, issue := range result.Issues {
+			allIssues = append(allIssues, ScanIssue{
+				File:            manifestRel,
+				ValidationIssue: issue,
+			})
+		}
+	}
+
+	// 4. Convert parse.Package → storage.HydrationInput via bridge.
+	// The bridge consults depProvided when validating connection edge
+	// targets so dep-provided slugs neither error nor get added to the
+	// temp DB (which has no dep nodes hydrated).
+	br := bridgeToHydration(pkg, absPath, depContext{
+		Provided:     depProvided,
+		HasDepsBlock: hasDepsBlock,
+		Permissive:   opts.NoResolveDeps && hasDepsBlock,
+	})
 	allIssues = append(allIssues, br.Issues...)
 
-	// 4. Hydrate into the temp DB.
+	// 5. Hydrate into the temp DB.
 	hydration, err := db.HydratePackage(br.Input)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error hydrating package: %v\n", err)
@@ -125,38 +159,17 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		}
 	}
 
-	// 5. Dep resolution (GH#630). Only active when the package declares
-	// a `dependencies:` block (pkg.Dependencies != nil). Legacy bundles
-	// without the block bypass this entirely and keep the historical
-	// workflow.execution_*_missing codes verbatim.
-	depProvided := map[string]string{}
-	manifestRel := manifestRelPath(absPath, pkg)
-	if pkg.Dependencies != nil && !opts.NoResolveDeps {
-		resolver, rErr := depresolver.New(depresolver.Config{
-			HubBaseURL: opts.HubBaseURL,
-			CacheDir:   opts.DepCacheDir,
-		})
-		if rErr != nil {
-			fmt.Fprintf(os.Stderr, "Error initialising dep resolver: %v\n", rErr)
-			return 2
-		}
-		result := resolver.Resolve(pkg.Dependencies)
-		depProvided = result.ProvidedSlugs
-		for _, issue := range result.Issues {
-			allIssues = append(allIssues, ScanIssue{
-				File:            manifestRel,
-				ValidationIssue: issue,
-			})
-		}
-	}
-
 	// 6. Validate workflows, then re-code workflow.execution_*_missing
-	// per the three-tier resolution (plan §2):
+	// per the three-tier resolution (plan §2 + v2 §2 — same algorithm
+	// the bridge applied to connection edges in step 4):
 	//   - slug in dep-provided set → drop the issue (dep resolves it)
-	//   - else, if pkg has any `dependencies:` block → re-code as
-	//     dependency.unresolved_slug (new code, clearer signal)
-	//   - else (legacy bundle, no dependencies: block at all) → keep
-	//     the historical _missing code verbatim
+	//   - else, if hasDepsBlock → re-code as dependency.unresolved_slug
+	//   - else (legacy bundle) → keep the historical _missing code
+	//
+	// Engine doesn't expose the referenced slug structurally yet (GH#631
+	// queues the structural fix), so we regex it out of the message.
+	// The dep-referenced-valid fixture is the canary — engine message
+	// format change would fail TestScan_DepReferencedValid_NoErrors.
 	for _, nf := range pkg.Nodes {
 		if nf.Type != "workflow" {
 			continue
@@ -170,7 +183,10 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 					if _, hit := depProvided[slug]; hit {
 						continue // dep resolves it; drop
 					}
-					if pkg.Dependencies != nil {
+					if opts.NoResolveDeps && hasDepsBlock {
+						continue // permissive mode; treat as dep-provided
+					}
+					if hasDepsBlock {
 						issue = recodeAsUnresolvedDepSlug(issue, slug)
 					}
 				}

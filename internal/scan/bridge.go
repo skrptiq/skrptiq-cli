@@ -20,13 +20,41 @@ type bridgeResult struct {
 	EdgeFiles map[string]edgeFileCtx // edgeID → file context
 }
 
+// depContext carries dep-resolution state into the bridge so that
+// connection edges with dep-provided targets resolve without
+// surfacing as errors (GH#630 plan v2).
+//
+// Zero value means "legacy bundle mode" — no dependencies block, no
+// dep resolution, three-tier collapses to its first tier (local-only
+// with legacy code on miss).
+type depContext struct {
+	// Provided maps a dep-provided slug to the dep ID that supplies it
+	// (e.g. "llm-service" → "hub-shared/llm-service").
+	Provided map[string]string
+	// HasDepsBlock is true iff pkg.Dependencies != nil — i.e. the
+	// manifest declared a `dependencies:` block (even if empty). The
+	// discriminator for "re-code unresolved as dependency.unresolved_slug"
+	// (true) vs "keep legacy scan.edge_target_unresolved code" (false).
+	HasDepsBlock bool
+	// Permissive is true under `--no-resolve-deps` when HasDepsBlock is
+	// also true — i.e. the author has opted into structural-only
+	// validation. Per plan v1 §4 ("accepted as potentially dep-provided
+	// — no error, no fetch"), the scanner treats every non-local
+	// reference as if it were dep-provided rather than emitting either
+	// the legacy code or the re-coded dependency.unresolved_slug.
+	Permissive bool
+}
+
 // bridgeToHydration converts a parse.Package into a storage.HydrationInput
 // plus any scan-level issues (cross-package edges, unresolved targets).
 //
 // The bridge is the sole point where parse.Package types are translated
 // into storage types. No other scan code touches parse types directly
 // beyond calling ReadPackage.
-func bridgeToHydration(pkg parse.Package, absPath string) bridgeResult {
+//
+// deps carries dep-resolution context (GH#630 plan v2). Pass
+// depContext{} for legacy / no-deps bundles.
+func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridgeResult {
 	manifestRaw := pkg.Manifest.Raw
 	if manifestRaw == nil {
 		manifestRaw = make(map[string]any)
@@ -104,12 +132,33 @@ func bridgeToHydration(pkg parse.Package, absPath string) bridgeResult {
 			}
 
 			if !nodeIDSet[conn.Target] {
+				// GH#630 plan v2 three-tier for edge targets:
+				//   1. dep-provided slug → drop both error and edge
+				//      (runtime resolution handles it via App
+				//      commit.ts:175 ComposedStagingError).
+				//   2. --no-resolve-deps + has-deps-block → drop, treat
+				//      as potentially dep-provided (plan v1 §4 semantics
+				//      extended to the edge surface).
+				//   3. non-local + manifest has dependencies block →
+				//      re-code as dependency.unresolved_slug.
+				//   4. non-local + no dependencies block → keep legacy
+				//      scan.edge_target_unresolved (no regression).
+				if _, hit := deps.Provided[conn.Target]; hit {
+					continue
+				}
+				if deps.Permissive {
+					continue
+				}
+				code := "scan.edge_target_unresolved"
+				message := fmt.Sprintf("connection target %q not found", conn.Target)
+				if deps.HasDepsBlock {
+					code = "dependency.unresolved_slug"
+					message = fmt.Sprintf("connection target %q is not local and is not provided by any declared dependency", conn.Target)
+				}
 				issues = append(issues, ScanIssue{
 					File:     rel,
 					NodeSlug: nf.ID,
-					ValidationIssue: makeIssue("scan.edge_target_unresolved", "error",
-						fmt.Sprintf("connection target %q not found", conn.Target),
-						"§6.4", "connections"),
+					ValidationIssue: makeIssue(code, "error", message, "§6.4", "connections"),
 				})
 				continue
 			}
