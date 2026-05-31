@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/skrptiq/engine/parse"
 	"github.com/skrptiq/engine/storage"
@@ -165,11 +164,6 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	//   - slug in dep-provided set → drop the issue (dep resolves it)
 	//   - else, if hasDepsBlock → re-code as dependency.unresolved_slug
 	//   - else (legacy bundle) → keep the historical _missing code
-	//
-	// Engine doesn't expose the referenced slug structurally yet (GH#631
-	// queues the structural fix), so we regex it out of the message.
-	// The dep-referenced-valid fixture is the canary — engine message
-	// format change would fail TestScan_DepReferencedValid_NoErrors.
 	for _, nf := range pkg.Nodes {
 		if nf.Type != "workflow" {
 			continue
@@ -178,7 +172,7 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		issues := db.ValidateWorkflow(nf.ID)
 		for _, issue := range issues {
 			if isExecutionMissingCode(issue.Code) {
-				slug := extractMissingSlug(issue.Message)
+				slug := issue.ReferencedSlug
 				if slug != "" {
 					if _, hit := depProvided[slug]; hit {
 						continue // dep resolves it; drop
@@ -263,25 +257,6 @@ func makeIssue(code string, severity string, message, contractRef, field string)
 func isExecutionMissingCode(code string) bool {
 	return code == "workflow.execution_skill_missing" ||
 		code == "workflow.execution_prompt_missing"
-}
-
-// missingSlugRE matches the slug inside the engine's _missing messages.
-// Engine format (validate.go:847,884):
-//
-//	"<locator> references skill \"<slug>\" which does not exist"
-//	"<locator> references prompt \"<slug>\" which does not exist"
-//
-// If the engine ever changes the message format the dep-referenced-valid
-// scan test will fail loudly (slug extraction returns ""), which is the
-// intended canary.
-var missingSlugRE = regexp.MustCompile(`references (?:skill|prompt) "([^"]+)"`)
-
-func extractMissingSlug(msg string) string {
-	m := missingSlugRE.FindStringSubmatch(msg)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
 }
 
 func recodeAsUnresolvedDepSlug(issue storage.ValidationIssue, slug string) storage.ValidationIssue {
