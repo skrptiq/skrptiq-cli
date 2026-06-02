@@ -99,6 +99,32 @@ func TestScan_DepReferencedMissingSlug_UnresolvedDepCode(t *testing.T) {
 	}
 }
 
+// GH#634 — loops[].steps[] referencing dep-provided slugs must NOT
+// produce workflow.loop_step_missing. The fourth dep-blind surface in
+// the scanner family (after workflow.execution + connections-edge +
+// Hub's own output_step). Closes the engine GH#636 trust chain on
+// the CLI consumer side. K-035 reproduction: Hub's
+// `scripts/cli-scan.sh examples/blog-refinement-loop` halt state.
+func TestScan_DepReferencedLoopStep_NoErrors(t *testing.T) {
+	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+		{"id": "dep-skill", "type": "skill"},
+		{"id": "dep-prompt", "type": "prompt"},
+	})
+	result := runScanWithDeps(t, testdataPath("dep-referenced-loop-valid"), h, Options{})
+
+	if result.ErrorCount > 0 {
+		t.Errorf("expected 0 errors, got %d", result.ErrorCount)
+		for _, i := range result.Issues {
+			t.Logf("  %s [%s]: %s (%s)", i.Severity, i.Code, i.Message, i.File)
+		}
+	}
+	for _, i := range result.Issues {
+		if i.Code == "workflow.loop_step_missing" {
+			t.Errorf("dep-provided slug must not produce workflow.loop_step_missing: %s", i.Message)
+		}
+	}
+}
+
 // GH#630 plan v2 — connections edge to a dep-provided slug must NOT
 // produce scan.edge_target_unresolved (bridge-side three-tier tier 1).
 // Confirmed regression-fix for the Hub K-035 fail at comment-4588102292.

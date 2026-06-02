@@ -1,0 +1,8 @@
+name: dep-referenced-loop-valid
+version: "1.0.0"
+description: "GH#634 fixture — loops[].steps[] references dep-provided slugs"
+author: test
+dependencies:
+  - id: hub-shared/test-dep
+    version: "1.0.0"
+    checksum: "sha256:aaa"

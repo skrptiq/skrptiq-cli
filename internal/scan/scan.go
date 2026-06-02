@@ -158,9 +158,10 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		}
 	}
 
-	// 6. Validate workflows, then re-code workflow.execution_*_missing
-	// per the three-tier resolution (plan §2 + v2 §2 — same algorithm
-	// the bridge applied to connection edges in step 4):
+	// 6. Validate workflows, then re-code resolvable-missing codes
+	// (workflow.execution_*_missing + workflow.loop_step_missing) per
+	// the three-tier resolution (same algorithm the bridge applied to
+	// connection edges in step 4):
 	//   - slug in dep-provided set → drop the issue (dep resolves it)
 	//   - else, if hasDepsBlock → re-code as dependency.unresolved_slug
 	//   - else (legacy bundle) → keep the historical _missing code
@@ -171,7 +172,7 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		rel := relPath(absPath, nf.FilePath)
 		issues := db.ValidateWorkflow(nf.ID)
 		for _, issue := range issues {
-			if isExecutionMissingCode(issue.Code) {
+			if isResolvableMissingCode(issue.Code) {
 				slug := issue.ReferencedSlug
 				if slug != "" {
 					if _, hit := depProvided[slug]; hit {
@@ -249,14 +250,18 @@ func makeIssue(code string, severity string, message, contractRef, field string)
 	}
 }
 
-// isExecutionMissingCode identifies the engine codes that signal a
-// workflow.execution[].skill/prompt ref pointing at a slug not present
-// in the local package. Three-tier resolution (plan §2) intercepts
-// these and either drops them (dep-provided) or re-codes them
-// (dep-declared but unresolved).
-func isExecutionMissingCode(code string) bool {
+// isResolvableMissingCode identifies the engine codes that signal a
+// slug reference (workflow.execution[].skill/prompt, loops[].steps[])
+// pointing at a slug not present in the local package. Three-tier
+// resolution intercepts these and either drops them (dep-provided) or
+// re-codes them (dep-declared but unresolved). Each code in this set
+// must populate ValidationIssue.ReferencedSlug structurally — adding
+// a new code here without engine support would crash the re-coding
+// silently (slug = "" → noop).
+func isResolvableMissingCode(code string) bool {
 	return code == "workflow.execution_skill_missing" ||
-		code == "workflow.execution_prompt_missing"
+		code == "workflow.execution_prompt_missing" ||
+		code == "workflow.loop_step_missing"
 }
 
 func recodeAsUnresolvedDepSlug(issue storage.ValidationIssue, slug string) storage.ValidationIssue {
