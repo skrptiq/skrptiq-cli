@@ -22,6 +22,11 @@ import (
 // The bundle is immutable per Cache-Control: max-age=31536000, immutable
 // on the metadata endpoint — checksum drift here means Hub broke its
 // immutability contract, not a transient flake.
+//
+// Per K-037 (UUID canonical identity) the manifest's id: is now a UUID
+// rather than the legacy `hub-shared/<slug>` form. Catalogue UUID for
+// llm-service@1.0.0 captured from the same sampled-verification
+// response.
 func TestResolve_LiveHub_SampledBundle(t *testing.T) {
 	hubURL := os.Getenv("SKRPTIQ_HUB_URL")
 	if hubURL == "" {
@@ -33,9 +38,12 @@ func TestResolve_LiveHub_SampledBundle(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	const sampledChecksum = "sha256:9940a8d84c3240b3dcea7fe8b88939ac43898ea4138c706ca17d783e7894bb23"
+	const (
+		sampledUUID     = "fcab9536-a13e-49c9-b0c3-bb3097682e69"
+		sampledChecksum = "sha256:9940a8d84c3240b3dcea7fe8b88939ac43898ea4138c706ca17d783e7894bb23"
+	)
 	res := r.Resolve([]parse.DependencyRef{
-		{ID: "hub-shared/llm-service", Version: "1.0.0", Checksum: sampledChecksum},
+		{ID: sampledUUID, Name: "llm-service", Version: "1.0.0", Checksum: sampledChecksum},
 	})
 
 	// Transient unreachability (DNS, network drop, CF outage) →
@@ -53,7 +61,8 @@ func TestResolve_LiveHub_SampledBundle(t *testing.T) {
 	if !hit {
 		t.Fatalf("expected llm-service in ProvidedSlugs; got %+v", res.ProvidedSlugs)
 	}
-	if dep != "hub-shared/llm-service" {
-		t.Errorf("ProvidedSlugs[llm-service] = %q; want hub-shared/llm-service", dep)
+	// Values are the dep's logical slug (Name) for human readability.
+	if dep != "llm-service" {
+		t.Errorf("ProvidedSlugs[llm-service] = %q; want llm-service", dep)
 	}
 }

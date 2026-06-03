@@ -3,10 +3,15 @@
 //
 // Background: GH#630. Under the dep-referenced model (GH#612), a consumer
 // bundle's `workflow.execution[].skill` / `.prompt` refs may resolve to
-// nodes that live in a declared dep (`hub-shared/<slug>@<v>`) rather than
-// the local package. The scanner needs to know which slugs each dep
-// provides so the three-tier resolution (local → dep-provided → ERROR)
-// can fire.
+// nodes that live in a declared dep rather than the local package. The
+// scanner needs to know which slugs each dep provides so the three-tier
+// resolution (local → dep-provided → ERROR) can fire.
+//
+// Identity (K-037, GH#638): every dep ref carries an immutable UUID
+// (`ID`) plus a logical slug (`Name`). UUID is the canonical identity
+// for cache keying + comparison; slug is for URL routing and human
+// readability only. No `hub-shared/` prefix anywhere — that namespace
+// convention is gone.
 //
 // Trust chain (plan §3): manifest `DependencyRef.Checksum` is the trust
 // anchor. The resolver fetches metadata from Hub, verifies the returned
@@ -33,10 +38,6 @@ import (
 
 // DefaultHubBaseURL is used when Config.HubBaseURL is empty.
 const DefaultHubBaseURL = "https://hub.skrptiq.ai"
-
-// hubIDPrefix is the only catalogue namespace v1 supports. Plan §1:
-// dep IDs are `hub-shared/<slug>`.
-const hubIDPrefix = "hub-shared/"
 
 // Config controls resolver behaviour.
 type Config struct {
@@ -125,7 +126,7 @@ func (r *Resolver) Resolve(deps []parse.DependencyRef) Result {
 			dirty = true
 		}
 		for _, n := range entry.Nodes {
-			res.ProvidedSlugs[n.ID] = dep.ID
+			res.ProvidedSlugs[n.ID] = dep.Name
 		}
 	}
 
@@ -146,15 +147,6 @@ func (r *Resolver) Resolve(deps []parse.DependencyRef) Result {
 // + verified) or nil if resolution failed. Failure issues are returned
 // alongside.
 func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEntry) (*cacheEntry, []storage.ValidationIssue) {
-	if !strings.HasPrefix(dep.ID, hubIDPrefix) {
-		return nil, []storage.ValidationIssue{{
-			Code:     "dependency.unsupported_id_prefix",
-			Severity: storage.SeverityError,
-			Message:  fmt.Sprintf("dependency %q: only %q prefix supported in v1", dep.ID, hubIDPrefix),
-			Field:    "dependencies",
-		}}
-	}
-
 	if entry, hit := cache[cacheKey(dep)]; hit {
 		return &entry, nil
 	}
@@ -164,7 +156,7 @@ func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEnt
 		return nil, []storage.ValidationIssue{{
 			Code:     "dependency.fetch_failed",
 			Severity: storage.SeverityError,
-			Message:  fmt.Sprintf("dependency %s@%s: %v", dep.ID, dep.Version, err),
+			Message:  fmt.Sprintf("dependency %s@%s: %v", dep.Name, dep.Version, err),
 			Field:    "dependencies",
 		}}
 	}
@@ -173,7 +165,7 @@ func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEnt
 		return nil, []storage.ValidationIssue{{
 			Code:     "dependency.checksum_mismatch",
 			Severity: storage.SeverityError,
-			Message:  fmt.Sprintf("dependency %s@%s: manifest checksum %s != Hub-reported %s", dep.ID, dep.Version, dep.Checksum, meta.Checksum),
+			Message:  fmt.Sprintf("dependency %s@%s: manifest checksum %s != Hub-reported %s", dep.Name, dep.Version, dep.Checksum, meta.Checksum),
 			Field:    "dependencies",
 		}}
 	}
@@ -206,11 +198,10 @@ type NodeInfo struct {
 }
 
 func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) {
-	slug := strings.TrimPrefix(dep.ID, hubIDPrefix)
-	if slug == "" {
-		return nil, fmt.Errorf("empty slug in dependency id %q", dep.ID)
+	if dep.Name == "" {
+		return nil, fmt.Errorf("dependency %q has empty name field — K-037 requires logical slug", dep.ID)
 	}
-	url := fmt.Sprintf("%s/api/shared/%s/%s/metadata", r.hubBaseURL, slug, dep.Version)
+	url := fmt.Sprintf("%s/api/shared/%s/%s/metadata", r.hubBaseURL, dep.Name, dep.Version)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err

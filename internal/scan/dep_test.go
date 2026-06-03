@@ -10,11 +10,22 @@ import (
 	"testing"
 )
 
+// Shared synthetic UUID used by every test-dep manifest fixture +
+// mockHubMetadata call. Per K-037 the dep's catalogue id is a UUID;
+// the slug (`test-dep`) lives separately on Name + appears in URL paths.
+const testDepUUID = "33333333-3333-3333-3333-cccccccccccc"
+
 // mockHubMetadata returns a handler that serves Hub metadata for one
 // dep. Callers thread it into Options.HubBaseURL via httptest.Server.
-func mockHubMetadata(t *testing.T, id, version, checksum string, nodes []map[string]string) http.Handler {
+//
+// Per K-037: `id` is the catalogue UUID (returned verbatim in the
+// metadata body); `slug` is the logical name appearing in the URL path
+// `/api/shared/<slug>/<version>/metadata`. Both must match the
+// consumer manifest's `dependencies[].id` (UUID) and `.name` (slug)
+// respectively.
+func mockHubMetadata(t *testing.T, id, slug, version, checksum string, nodes []map[string]string) http.Handler {
 	t.Helper()
-	wantPath := "/api/shared/" + strings.TrimPrefix(id, "hub-shared/") + "/" + version + "/metadata"
+	wantPath := "/api/shared/" + slug + "/" + version + "/metadata"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != wantPath {
 			http.Error(w, "unexpected path: "+r.URL.Path, http.StatusNotFound)
@@ -54,7 +65,7 @@ func runScanWithDeps(t *testing.T, path string, h http.Handler, opts Options) Sc
 // declared dep. Without the GH#630 fix this fails with 2 errors
 // (workflow.execution_skill_missing + workflow.execution_prompt_missing).
 func TestScan_DepReferencedValid_NoErrors(t *testing.T) {
-	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
 		{"id": "dep-skill", "type": "skill"},
 		{"id": "dep-prompt", "type": "prompt"},
 	})
@@ -77,7 +88,7 @@ func TestScan_DepReferencedValid_NoErrors(t *testing.T) {
 // surface dependency.unresolved_slug (not the legacy workflow.execution_*_missing
 // code, which is reserved for no-deps-at-all bundles).
 func TestScan_DepReferencedMissingSlug_UnresolvedDepCode(t *testing.T) {
-	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
 		{"id": "dep-prompt", "type": "prompt"}, // dep-skill not provided
 	})
 	result := runScanWithDeps(t, testdataPath("dep-referenced-missing-slug"), h, Options{})
@@ -106,7 +117,7 @@ func TestScan_DepReferencedMissingSlug_UnresolvedDepCode(t *testing.T) {
 // the CLI consumer side. K-035 reproduction: Hub's
 // `scripts/cli-scan.sh examples/blog-refinement-loop` halt state.
 func TestScan_DepReferencedLoopStep_NoErrors(t *testing.T) {
-	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
 		{"id": "dep-skill", "type": "skill"},
 		{"id": "dep-prompt", "type": "prompt"},
 	})
@@ -129,7 +140,7 @@ func TestScan_DepReferencedLoopStep_NoErrors(t *testing.T) {
 // produce scan.edge_target_unresolved (bridge-side three-tier tier 1).
 // Confirmed regression-fix for the Hub K-035 fail at comment-4588102292.
 func TestScan_DepReferencedValid_ConnectionsEdgeToDepResolves(t *testing.T) {
-	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
 		{"id": "dep-skill", "type": "skill"},
 		{"id": "dep-prompt", "type": "prompt"},
 	})
@@ -146,7 +157,7 @@ func TestScan_DepReferencedValid_ConnectionsEdgeToDepResolves(t *testing.T) {
 // slug must re-code to dependency.unresolved_slug (bridge-side
 // three-tier tier 3), same code the workflow.execution path emits.
 func TestScan_DepReferencedMissingSlug_ConnectionsEdgeRecodes(t *testing.T) {
-	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:aaa", []map[string]string{
+	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
 		{"id": "dep-prompt", "type": "prompt"},
 	})
 	result := runScanWithDeps(t, testdataPath("dep-referenced-missing-slug"), h, Options{})
@@ -196,7 +207,7 @@ func TestScan_NoDepsBlock_ConnectionsEdgePreservesLegacyCode(t *testing.T) {
 // Trust-chain guard: manifest-declared checksum != Hub-returned checksum
 // must hard-fail. Closes CTO §F2.1 phantom-dependency hole.
 func TestScan_DepChecksumMismatch_HardError(t *testing.T) {
-	h := mockHubMetadata(t, "hub-shared/test-dep", "1.0.0", "sha256:something-else", []map[string]string{
+	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:something-else", []map[string]string{
 		{"id": "dep-skill", "type": "skill"},
 	})
 	result := runScanWithDeps(t, testdataPath("dep-checksum-mismatch"), h, Options{})

@@ -3,6 +3,7 @@ version: "1.0.0"
 description: "GH#630 fixture — consumer bundle with dep-provided slugs in workflow.execution"
 author: test
 dependencies:
-  - id: hub-shared/test-dep
+  - id: "33333333-3333-3333-3333-cccccccccccc"
+    name: test-dep
     version: "1.0.0"
     checksum: "sha256:aaa"
