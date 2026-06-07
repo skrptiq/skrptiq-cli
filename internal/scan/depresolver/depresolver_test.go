@@ -58,8 +58,8 @@ func TestResolve_Empty(t *testing.T) {
 func TestResolve_Happy(t *testing.T) {
 	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
-			{ID: "skill-a", Type: "skill"},
-			{ID: "prompt-a", Type: "prompt"},
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+			{ID: "uuid-prompt-a", Slug: "prompt-a", Type: "prompt"},
 		})
 	})
 	r := newTestResolver(t, srv.URL)
@@ -79,7 +79,7 @@ func TestResolve_Happy(t *testing.T) {
 func TestResolve_ChecksumMismatch(t *testing.T) {
 	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeMetadata(w, uuidDepA, "1.0.0", "sha256:WRONG", []NodeInfo{
-			{ID: "skill-a", Type: "skill"},
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
 		})
 	})
 	r := newTestResolver(t, srv.URL)
@@ -131,7 +131,7 @@ func TestResolve_EmptyName_HardError(t *testing.T) {
 func TestResolve_UUIDPrefix_NoLegacyError(t *testing.T) {
 	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
 		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
-			{ID: "skill-a", Type: "skill"},
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
 		})
 	})
 	r := newTestResolver(t, srv.URL)
@@ -151,7 +151,7 @@ func TestResolve_URLUsesNameNotID(t *testing.T) {
 	var seenPath string
 	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
 		seenPath = r.URL.Path
-		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{{ID: "skill-a", Type: "skill"}})
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"}})
 	})
 	r := newTestResolver(t, srv.URL)
 	_ = r.Resolve([]parse.DependencyRef{
@@ -169,7 +169,7 @@ func TestResolve_CacheHitSkipsFetch(t *testing.T) {
 	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
-			{ID: "skill-a", Type: "skill"},
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
 		})
 	})
 	cacheDir := t.TempDir()
@@ -196,7 +196,7 @@ func TestResolve_CacheKeyInvalidatesOnChecksumChange(t *testing.T) {
 		// Respond with whatever the request expects — checksum derived
 		// from the URL is not encoded here, so we just return v1.
 		writeMetadata(w, uuidDepA, "1.0.0", "sha256:v1", []NodeInfo{
-			{ID: "skill-a", Type: "skill"},
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
 		})
 	})
 	cacheDir := t.TempDir()
@@ -230,7 +230,7 @@ func TestResolve_ConcurrentWritesStable(t *testing.T) {
 		// id in response uses a synthetic UUID derived from the slug so
 		// each entry stays distinct.
 		writeMetadata(w, "uuid-"+r.URL.Path, "1.0.0", "sha256:x", []NodeInfo{
-			{ID: "skill-from-" + r.URL.Path, Type: "skill"},
+			{ID: "uuid-skill-from-" + r.URL.Path, Slug: "skill-from-" + r.URL.Path, Type: "skill"},
 		})
 	})
 	cacheDir := t.TempDir()
@@ -276,7 +276,7 @@ func TestResolve_CorruptCacheTreatedAsMiss(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
-		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{{ID: "skill-a", Type: "skill"}})
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"}})
 	})
 	r, _ := New(Config{HubBaseURL: srv.URL, CacheDir: cacheDir})
 	res := r.Resolve([]parse.DependencyRef{

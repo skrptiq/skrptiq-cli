@@ -1,0 +1,9 @@
+name: dep-referenced-for-each-valid
+version: "1.0.0"
+description: "GH#650 fixture — for_each loop body resolves through dep prompt Content"
+author: test
+dependencies:
+  - id: "33333333-3333-3333-3333-cccccccccccc"
+    name: test-dep
+    version: "1.0.0"
+    checksum: "sha256:aaa"

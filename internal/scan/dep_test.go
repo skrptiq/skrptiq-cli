@@ -66,8 +66,8 @@ func runScanWithDeps(t *testing.T, path string, h http.Handler, opts Options) Sc
 // (workflow.execution_skill_missing + workflow.execution_prompt_missing).
 func TestScan_DepReferencedValid_NoErrors(t *testing.T) {
 	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
-		{"id": "dep-skill", "type": "skill"},
-		{"id": "dep-prompt", "type": "prompt"},
+		{"id": "uuid-dep-skill", "slug": "dep-skill", "type": "skill", "title": "Dep Skill"},
+		{"id": "uuid-dep-prompt", "slug": "dep-prompt", "type": "prompt", "title": "Dep Prompt"},
 	})
 	result := runScanWithDeps(t, testdataPath("dep-referenced-valid"), h, Options{})
 
@@ -89,7 +89,7 @@ func TestScan_DepReferencedValid_NoErrors(t *testing.T) {
 // code, which is reserved for no-deps-at-all bundles).
 func TestScan_DepReferencedMissingSlug_UnresolvedDepCode(t *testing.T) {
 	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
-		{"id": "dep-prompt", "type": "prompt"}, // dep-skill not provided
+		{"id": "uuid-dep-prompt", "slug": "dep-prompt", "type": "prompt", "title": "Dep Prompt"}, // dep-skill not provided
 	})
 	result := runScanWithDeps(t, testdataPath("dep-referenced-missing-slug"), h, Options{})
 
@@ -110,6 +110,50 @@ func TestScan_DepReferencedMissingSlug_UnresolvedDepCode(t *testing.T) {
 	}
 }
 
+// GH#650 — a for_each loop whose body resolves through a dep-provided
+// prompt's Content must NOT produce
+// workflow.loop_for_each_no_loop_item_usage. The engine's dep-aware
+// validator merges the dep prompt's Content into slugToNode where
+// loopBodyReferencesLoopItem walks it for {{loop.item}}.
+func TestScan_DepReferencedForEachLoopBody_NoErrors(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":       testDepUUID,
+			"version":  "1.0.0",
+			"checksum": "sha256:aaa",
+			"nodes": []map[string]string{
+				{
+					"id":    "uuid-dep-skill",
+					"slug":  "dep-skill",
+					"type":  "skill",
+					"title": "Dep Skill",
+				},
+				{
+					"id":      "uuid-dep-prompt",
+					"slug":    "dep-prompt",
+					"type":    "prompt",
+					"title":   "Dep Prompt",
+					"content": "Process this item: {{loop.item}}",
+				},
+			},
+		})
+	})
+	result := runScanWithDeps(t, testdataPath("dep-referenced-for-each-valid"), h, Options{})
+
+	if result.ErrorCount > 0 {
+		t.Errorf("expected 0 errors, got %d", result.ErrorCount)
+		for _, i := range result.Issues {
+			t.Logf("  %s [%s]: %s (%s)", i.Severity, i.Code, i.Message, i.File)
+		}
+	}
+	for _, i := range result.Issues {
+		if i.Code == "workflow.loop_for_each_no_loop_item_usage" {
+			t.Errorf("dep-provided prompt with {{loop.item}} content must satisfy loop body check: %s", i.Message)
+		}
+	}
+}
+
 // GH#634 — loops[].steps[] referencing dep-provided slugs must NOT
 // produce workflow.loop_step_missing. The fourth dep-blind surface in
 // the scanner family (after workflow.execution + connections-edge +
@@ -118,8 +162,8 @@ func TestScan_DepReferencedMissingSlug_UnresolvedDepCode(t *testing.T) {
 // `scripts/cli-scan.sh examples/blog-refinement-loop` halt state.
 func TestScan_DepReferencedLoopStep_NoErrors(t *testing.T) {
 	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
-		{"id": "dep-skill", "type": "skill"},
-		{"id": "dep-prompt", "type": "prompt"},
+		{"id": "uuid-dep-skill", "slug": "dep-skill", "type": "skill", "title": "Dep Skill"},
+		{"id": "uuid-dep-prompt", "slug": "dep-prompt", "type": "prompt", "title": "Dep Prompt"},
 	})
 	result := runScanWithDeps(t, testdataPath("dep-referenced-loop-valid"), h, Options{})
 
@@ -141,8 +185,8 @@ func TestScan_DepReferencedLoopStep_NoErrors(t *testing.T) {
 // Confirmed regression-fix for the Hub K-035 fail at comment-4588102292.
 func TestScan_DepReferencedValid_ConnectionsEdgeToDepResolves(t *testing.T) {
 	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
-		{"id": "dep-skill", "type": "skill"},
-		{"id": "dep-prompt", "type": "prompt"},
+		{"id": "uuid-dep-skill", "slug": "dep-skill", "type": "skill", "title": "Dep Skill"},
+		{"id": "uuid-dep-prompt", "slug": "dep-prompt", "type": "prompt", "title": "Dep Prompt"},
 	})
 	result := runScanWithDeps(t, testdataPath("dep-referenced-valid"), h, Options{})
 
@@ -158,7 +202,7 @@ func TestScan_DepReferencedValid_ConnectionsEdgeToDepResolves(t *testing.T) {
 // three-tier tier 3), same code the workflow.execution path emits.
 func TestScan_DepReferencedMissingSlug_ConnectionsEdgeRecodes(t *testing.T) {
 	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:aaa", []map[string]string{
-		{"id": "dep-prompt", "type": "prompt"},
+		{"id": "uuid-dep-prompt", "slug": "dep-prompt", "type": "prompt", "title": "Dep Prompt"},
 	})
 	result := runScanWithDeps(t, testdataPath("dep-referenced-missing-slug"), h, Options{})
 
@@ -208,7 +252,7 @@ func TestScan_NoDepsBlock_ConnectionsEdgePreservesLegacyCode(t *testing.T) {
 // must hard-fail. Closes CTO §F2.1 phantom-dependency hole.
 func TestScan_DepChecksumMismatch_HardError(t *testing.T) {
 	h := mockHubMetadata(t, testDepUUID, "test-dep", "1.0.0", "sha256:something-else", []map[string]string{
-		{"id": "dep-skill", "type": "skill"},
+		{"id": "uuid-dep-skill", "slug": "dep-skill", "type": "skill", "title": "Dep Skill"},
 	})
 	result := runScanWithDeps(t, testdataPath("dep-checksum-mismatch"), h, Options{})
 

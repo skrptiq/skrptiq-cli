@@ -89,12 +89,15 @@ func New(cfg Config) (*Resolver, error) {
 
 // Result is what Resolve returns.
 type Result struct {
-	// ProvidedSlugs maps slug → the dep ID providing it (e.g.
-	// "llm-service" → "hub-shared/llm-service"). If two deps provide the
-	// same slug the last one wins; this is currently not a configured
-	// failure mode (multi-dep collision is rare given the convention
-	// one-bundle-one-slug); future contract amendment may tighten.
+	// ProvidedSlugs maps slug → the dep slug providing it (e.g.
+	// "llm-service" → "llm-service"). Last-wins on multi-dep collision
+	// (rare given one-bundle-one-slug convention).
 	ProvidedSlugs map[string]string
+	// DepNodes is the flattened set of dep node summaries from every
+	// resolved dependency, in the shape engine.storage.ValidateWorkflowWithDeps
+	// expects (GH#650). Pass-through to the validator so binding /
+	// for_each / plumbing checks resolve through K-037 dep references.
+	DepNodes []storage.DepNodeSummary
 	// Issues are per-dep validation issues with file context attached by
 	// the caller (the manifest path).
 	Issues []storage.ValidationIssue
@@ -126,7 +129,14 @@ func (r *Resolver) Resolve(deps []parse.DependencyRef) Result {
 			dirty = true
 		}
 		for _, n := range entry.Nodes {
-			res.ProvidedSlugs[n.ID] = dep.Name
+			res.ProvidedSlugs[n.Slug] = dep.Name
+			res.DepNodes = append(res.DepNodes, storage.DepNodeSummary{
+				ID:      n.ID,
+				Slug:    n.Slug,
+				Type:    n.Type,
+				Title:   n.Title,
+				Content: n.Content,
+			})
 		}
 	}
 
@@ -189,12 +199,23 @@ type hubMetadata struct {
 	Nodes    []NodeInfo `json:"nodes"`
 }
 
-// NodeInfo is one entry in the dep's node list. Type is informational
-// for v1 (scanner doesn't yet distinguish skill-vs-prompt resolution by
-// dep-provided type).
+// NodeInfo is one entry in the dep's node list. Wire shape mirrors
+// engine.storage.DepNodeSummary so the validator (GH#650
+// ValidateWorkflowWithDeps) can consume it after a trivial mapping.
+//
+//   - ID is the catalogue UUID (K-037 canonical identity).
+//   - Slug is the logical slug (= FileSlug on the synthetic node).
+//   - Type is the node type ("skill", "prompt", "service", …).
+//   - Title is the display title; seeds the validator's priorTitles
+//     for plumbing/binding from_step checks.
+//   - Content is the node body; required only for prompt nodes that a
+//     for_each loop body resolves through {{loop.item}}.
 type NodeInfo struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID      string `json:"id"`
+	Slug    string `json:"slug"`
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	Content string `json:"content,omitempty"`
 }
 
 func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) {

@@ -97,7 +97,8 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// bridge time (plan v2 §1). Only active when the package declares
 	// a `dependencies:` block (pkg.Dependencies != nil); legacy bundles
 	// bypass this entirely and keep historical codes verbatim.
-	depProvided := map[string]string{}
+	depSummaries := map[string]storage.DepNodeSummary{}
+	var depNodes []storage.DepNodeSummary
 	hasDepsBlock := pkg.Dependencies != nil
 	manifestRel := manifestRelPath(absPath, pkg)
 	if hasDepsBlock && !opts.NoResolveDeps {
@@ -110,7 +111,12 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 			return 2
 		}
 		result := resolver.Resolve(pkg.Dependencies)
-		depProvided = result.ProvidedSlugs
+		depNodes = result.DepNodes
+		for _, n := range depNodes {
+			if n.Slug != "" {
+				depSummaries[n.Slug] = n
+			}
+		}
 		for _, issue := range result.Issues {
 			allIssues = append(allIssues, ScanIssue{
 				File:            manifestRel,
@@ -124,7 +130,7 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// targets so dep-provided slugs neither error nor get added to the
 	// temp DB (which has no dep nodes hydrated).
 	br := bridgeToHydration(pkg, absPath, depContext{
-		Provided:     depProvided,
+		Summaries:    depSummaries,
 		HasDepsBlock: hasDepsBlock,
 		Permissive:   opts.NoResolveDeps && hasDepsBlock,
 	})
@@ -158,26 +164,37 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		}
 	}
 
-	// 6. Validate workflows, then re-code resolvable-missing codes
-	// (workflow.execution_*_missing + workflow.loop_step_missing) per
-	// the three-tier resolution (same algorithm the bridge applied to
-	// connection edges in step 4):
-	//   - slug in dep-provided set → drop the issue (dep resolves it)
-	//   - else, if hasDepsBlock → re-code as dependency.unresolved_slug
-	//   - else (legacy bundle) → keep the historical _missing code
+	// 6. Validate workflows with dep-awareness (GH#650). The engine's
+	// ValidateWorkflowWithDeps merges depNodes into slugToNode + Title
+	// indexes so workflow.execution_*_missing /
+	// workflow.loop_step_missing don't false-fire on dep-provided
+	// slugs, and bindings.from_step / loop_for_each_no_loop_item_usage
+	// resolve through dep target Title / Content.
+	//
+	// The three-tier re-coding loop only re-codes the residual cases
+	// the dep-aware validator can't resolve:
+	//   - opts.NoResolveDeps + hasDepsBlock → drop (permissive: caller
+	//     opted out of dep resolution; treat any non-local ref as
+	//     potentially dep-provided)
+	//   - hasDepsBlock + still _missing → re-code as
+	//     dependency.unresolved_slug (slug isn't in any declared dep
+	//     either)
+	//   - else (legacy bundle, no dependencies: block) → keep the
+	//     historical _missing code verbatim
+	//
+	// The "dep-provided → drop" tier from GH#630 plan v1 is gone: the
+	// engine no longer emits _missing for dep-provided slugs once
+	// depNodes is supplied.
 	for _, nf := range pkg.Nodes {
 		if nf.Type != "workflow" {
 			continue
 		}
 		rel := relPath(absPath, nf.FilePath)
-		issues := db.ValidateWorkflow(nf.ID)
+		issues := db.ValidateWorkflowWithDeps(nf.ID, depNodes)
 		for _, issue := range issues {
 			if isResolvableMissingCode(issue.Code) {
 				slug := issue.ReferencedSlug
 				if slug != "" {
-					if _, hit := depProvided[slug]; hit {
-						continue // dep resolves it; drop
-					}
 					if opts.NoResolveDeps && hasDepsBlock {
 						continue // permissive mode; treat as dep-provided
 					}

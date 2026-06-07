@@ -22,15 +22,19 @@ type bridgeResult struct {
 
 // depContext carries dep-resolution state into the bridge so that
 // connection edges with dep-provided targets resolve without
-// surfacing as errors (GH#630 plan v2).
+// surfacing as errors (GH#630 plan v2 + GH#650).
 //
 // Zero value means "legacy bundle mode" — no dependencies block, no
 // dep resolution, three-tier collapses to its first tier (local-only
 // with legacy code on miss).
 type depContext struct {
-	// Provided maps a dep-provided slug to the dep ID that supplies it
-	// (e.g. "llm-service" → "hub-shared/llm-service").
-	Provided map[string]string
+	// Summaries maps dep-provided slug → its DepNodeSummary. The bridge
+	// hydrates a synthetic NodeInput for each summary (so engine's edge
+	// FK + uses-target checks resolve through it) and rewrites any
+	// connection edge whose target hits a summary slug to use the
+	// summary's UUID as TargetID (so engine's `usesTargets[node.ID]`
+	// matches the dep-merged slugToNode entry).
+	Summaries map[string]storage.DepNodeSummary
 	// HasDepsBlock is true iff pkg.Dependencies != nil — i.e. the
 	// manifest declared a `dependencies:` block (even if empty). The
 	// discriminator for "re-code unresolved as dependency.unresolved_slug"
@@ -105,6 +109,32 @@ func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridg
 		})
 	}
 
+	// Hydrate synthetic nodes for each dep summary whose slug isn't
+	// already shadowed by a local node (local wins on slug collision,
+	// mirroring the engine's depNodes-merge semantics in
+	// ValidateWorkflowWithDeps). Synth nodes are needed in the temp DB
+	// so (a) connection-edge FK validation against a dep target
+	// satisfies, and (b) engine's `usesTargets[node.ID]` check in
+	// ValidateWorkflow* matches against the dep target's UUID.
+	for slug, summary := range deps.Summaries {
+		if nodeIDSet[slug] {
+			continue // local slug wins
+		}
+		synthSlug := summary.Slug
+		var synthContent *string
+		if summary.Content != "" {
+			c := summary.Content
+			synthContent = &c
+		}
+		nodes = append(nodes, storage.NodeInput{
+			ID:       summary.ID,
+			Type:     summary.Type,
+			Title:    summary.Title,
+			Content:  synthContent,
+			FileSlug: &synthSlug,
+		})
+	}
+
 	// Build edges, handling cross-package targets (GH#580).
 	var issues []ScanIssue
 	edges := make([]storage.EdgeInput, 0)
@@ -131,11 +161,14 @@ func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridg
 				continue
 			}
 
+			targetID := conn.Target
 			if !nodeIDSet[conn.Target] {
-				// GH#630 plan v2 three-tier for edge targets:
-				//   1. dep-provided slug → drop both error and edge
-				//      (runtime resolution handles it via App
-				//      commit.ts:175 ComposedStagingError).
+				// GH#630 plan v2 + GH#650 four-tier for edge targets:
+				//   1. dep-provided slug → hydrate edge with TargetID
+				//      rewritten to the dep summary's UUID; the
+				//      synthetic node hydrated above satisfies the FK
+				//      check and feeds engine's slugToNode +
+				//      usesTargets resolution.
 				//   2. --no-resolve-deps + has-deps-block → drop, treat
 				//      as potentially dep-provided (plan v1 §4 semantics
 				//      extended to the edge surface).
@@ -143,30 +176,31 @@ func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridg
 				//      re-code as dependency.unresolved_slug.
 				//   4. non-local + no dependencies block → keep legacy
 				//      scan.edge_target_unresolved (no regression).
-				if _, hit := deps.Provided[conn.Target]; hit {
+				if summary, hit := deps.Summaries[conn.Target]; hit {
+					targetID = summary.ID
+				} else {
+					if deps.Permissive {
+						continue
+					}
+					code := "scan.edge_target_unresolved"
+					message := fmt.Sprintf("connection target %q not found", conn.Target)
+					if deps.HasDepsBlock {
+						code = "dependency.unresolved_slug"
+						message = fmt.Sprintf("connection target %q is not local and is not provided by any declared dependency", conn.Target)
+					}
+					issues = append(issues, ScanIssue{
+						File:     rel,
+						NodeSlug: nf.ID,
+						ValidationIssue: makeIssue(code, "error", message, "§6.4", "connections"),
+					})
 					continue
 				}
-				if deps.Permissive {
-					continue
-				}
-				code := "scan.edge_target_unresolved"
-				message := fmt.Sprintf("connection target %q not found", conn.Target)
-				if deps.HasDepsBlock {
-					code = "dependency.unresolved_slug"
-					message = fmt.Sprintf("connection target %q is not local and is not provided by any declared dependency", conn.Target)
-				}
-				issues = append(issues, ScanIssue{
-					File:     rel,
-					NodeSlug: nf.ID,
-					ValidationIssue: makeIssue(code, "error", message, "§6.4", "connections"),
-				})
-				continue
 			}
 
 			edges = append(edges, storage.EdgeInput{
 				ID:       edgeID,
 				SourceID: nf.ID,
-				TargetID: conn.Target,
+				TargetID: targetID,
 				Type:     conn.Type,
 				Position: conn.Position,
 			})
