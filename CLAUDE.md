@@ -80,6 +80,23 @@ If you ever build import, file write, or DB write functionality: read `../skrpti
 - `go fmt` and `go vet` before every commit
 - **No silent failures on critical paths** — if engine or DB fails to load, exit immediately with actionable stderr. Never continue with a broken subsystem.
 
+## Architectural Invariants — MANDATORY
+
+Rules that hold across every session. Violations are bugs, not trade-offs. Briefings will not repeat these — they live here.
+
+**Module boundary:**
+- **Import the `engine` module only.** Never import `electron-app`-internal packages. The CLI is a separate consumer of the engine; the engine is the only contract.
+- **Single binary distribution.** No native add-ons, no companion processes. One Go binary.
+- **Fail fast on startup-critical errors.** If the engine can't initialise, DB can't open, or required config is missing, exit non-zero with actionable stderr. Reinforces the Code Conventions entry on no-silent-failures.
+
+**Auto-release chain (GH#539):**
+- **CLI releases auto-fire on App releases.** No manual `git tag` for engine-driven CLI patches.
+- **Caller-release.yml fetches latest** — no version pin in Hub's CI.
+- **Trigger to act manually:** dispatch workflow fails OR a new CLI tag doesn't appear after an App release. Otherwise stand watch.
+
+**Process:**
+- **Plan Mode Gate** — every non-trivial plan goes to orchestrator review before code. See Plan Mode Gate section.
+
 ## Failure Classification
 
 | Class | CLI behaviour |
@@ -106,13 +123,11 @@ The CLI must never enter the interactive session with a broken engine or DB. Fai
 When you enter plan mode for ANY feature — regardless of scope — you must:
 
 1. Write the plan
-2. **Deliver the plan to the orchestrator.** Two methods (use whichever works):
-   - **Method A (preferred):** Write directly to `../skrptiq-orchestrator/inbox.md` — append your plan review request after the `------` separator. The orchestrator reads this file at session start and when checking for updates. This works because both repos are on the same machine.
-   - **Method B (via push hook):** Write to `.orchestrator-msg` in this repo, then `git commit` and `git push`. The pre-push hook delivers the message to the orchestrator's inbox automatically. **Note:** the message only arrives when you PUSH — writing the file alone does nothing. You must commit and push for delivery.
+2. **Post the plan as a comment on the GH issue named in the briefing** (the issue is the durable plan record). For cross-repo work, post on the umbrella issue. Use `gh issue comment <N> --repo skrptiq/skrptiq-issues --body "$(cat <<'EOF' ... EOF)"`.
 3. **STOP. Do not implement. Do not start coding. Do not approve your own plan.**
-4. Wait for an approval entry to appear in `../skrptiq-orchestrator/inbox.md` before proceeding. Check the file directly — don't wait for a push notification.
+4. Wait for the orchestrator's approval comment on the same GH issue before proceeding.
 
-**Common mistake:** Writing to `.orchestrator-msg` but not pushing, or writing the plan to a local file that the orchestrator can't see. The orchestrator reads `../skrptiq-orchestrator/inbox.md` — if your plan isn't in that file, it hasn't been submitted.
+**Why GH issue comments, not `inbox.md` or `docs/plans/` files:** the GH issue is the canonical record for the work. Plans posted there are immutable history searchable via `gh issue view`. `inbox.md` is for push notifications and gets cleared every cycle; `docs/plans/` files drift from the issue thread and aren't surfaced in the orchestrator's review path. **Plan and review live on the issue.**
 
 You do NOT have authority to approve your own plans. Only the orchestrator approves plans. If you implement before receiving approval, the work may be rejected.
 
