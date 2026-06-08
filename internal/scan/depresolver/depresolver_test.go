@@ -269,6 +269,132 @@ func TestResolve_ConcurrentWritesStable(t *testing.T) {
 	}
 }
 
+// GH#654 — a cache file written by an older CLI (no schemaVersion
+// field → defaults to 0 on unmarshal) must be silently dropped, not
+// served. Otherwise pre-GH#650 cache entries with empty Slug would
+// survive into v0.0.19+ and false-positive as dependency.unresolved_slug.
+func TestResolve_LegacyCacheSchemaDropped(t *testing.T) {
+	cacheDir := t.TempDir()
+	// Write a cache file in the pre-GH#654 shape: no schemaVersion,
+	// entries present.
+	legacy := []byte(`{
+  "entries": {
+    "uuid-stale@1.0.0@sha256:stale": {
+      "id": "uuid-stale",
+      "version": "1.0.0",
+      "checksum": "sha256:stale",
+      "nodes": [{"id": "uuid-skill-a", "type": "skill"}],
+      "fetched_at": "2026-06-01T00:00:00Z"
+    }
+  }
+}`)
+	if err := os.WriteFile(filepath.Join(cacheDir, "dep-nodes.json"), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolver must NOT serve the stale entry; instead it should fetch
+	// fresh and overwrite the cache at the current schema version.
+	var fetched int32
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetched, 1)
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+		})
+	})
+	r, _ := New(Config{HubBaseURL: srv.URL, CacheDir: cacheDir})
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+
+	if fetched != 1 {
+		t.Errorf("legacy cache must not be served; expected 1 fresh fetch, got %d", fetched)
+	}
+	if _, hit := res.ProvidedSlugs["skill-a"]; !hit {
+		t.Errorf("post-fetch ProvidedSlugs missing skill-a: %+v", res.ProvidedSlugs)
+	}
+
+	// File must now be rewritten at the current schema version.
+	data, err := os.ReadFile(filepath.Join(cacheDir, "dep-nodes.json"))
+	if err != nil {
+		t.Fatalf("cache file missing after fresh fetch: %v", err)
+	}
+	var cf cacheFile
+	if err := json.Unmarshal(data, &cf); err != nil {
+		t.Fatalf("cache file unparseable: %v", err)
+	}
+	if cf.SchemaVersion != currentCacheSchemaVersion {
+		t.Errorf("cache schema version = %d; want %d", cf.SchemaVersion, currentCacheSchemaVersion)
+	}
+	if len(cf.Entries) != 1 {
+		t.Errorf("expected 1 entry post-fetch, got %d", len(cf.Entries))
+	}
+}
+
+// GH#654 — a cache file with a future (unknown) schema version must
+// be dropped too, not interpreted. Future schemas may add fields the
+// current reader can't model safely.
+func TestResolve_FutureCacheSchemaDropped(t *testing.T) {
+	cacheDir := t.TempDir()
+	future := []byte(`{
+  "schemaVersion": 999,
+  "entries": {
+    "uuid-future@1.0.0@sha256:f": {
+      "id": "uuid-future",
+      "version": "1.0.0",
+      "checksum": "sha256:f",
+      "nodes": []
+    }
+  }
+}`)
+	if err := os.WriteFile(filepath.Join(cacheDir, "dep-nodes.json"), future, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var fetched int32
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetched, 1)
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+		})
+	})
+	r, _ := New(Config{HubBaseURL: srv.URL, CacheDir: cacheDir})
+	_ = r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+	if fetched != 1 {
+		t.Errorf("future-version cache must not be served; expected 1 fresh fetch, got %d", fetched)
+	}
+}
+
+// GH#654 — within the same schema version, a normal write/read
+// round-trip preserves entries (no spurious miss).
+func TestResolve_CurrentCacheSchemaRoundtrip(t *testing.T) {
+	cacheDir := t.TempDir()
+	var fetched int32
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetched, 1)
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+		})
+	})
+
+	deps := []parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	}
+	r1, _ := New(Config{HubBaseURL: srv.URL, CacheDir: cacheDir})
+	_ = r1.Resolve(deps)
+
+	r2, _ := New(Config{HubBaseURL: srv.URL, CacheDir: cacheDir})
+	res := r2.Resolve(deps)
+
+	if fetched != 1 {
+		t.Errorf("schema-matching cache must serve on second call; expected 1 fetch, got %d", fetched)
+	}
+	if _, hit := res.ProvidedSlugs["skill-a"]; !hit {
+		t.Errorf("cache-hit ProvidedSlugs missing skill-a: %+v", res.ProvidedSlugs)
+	}
+}
+
 // Corrupt cache file must be treated as a miss, not fatal.
 func TestResolve_CorruptCacheTreatedAsMiss(t *testing.T) {
 	cacheDir := t.TempDir()

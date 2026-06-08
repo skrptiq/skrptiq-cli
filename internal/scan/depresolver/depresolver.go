@@ -255,6 +255,25 @@ func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) 
 
 // --- cache ---
 
+// currentCacheSchemaVersion is the on-disk version of the dep-nodes
+// cache file format. Bump this whenever cacheEntry, cacheFile, or
+// any nested type (NodeInfo, hubMetadata, etc.) changes shape in a
+// way that would silently misinterpret an older payload.
+//
+// GH#654 motivation: before this constant existed, a cache populated
+// with the pre-GH#650 NodeInfo (id + type only) would survive an
+// upgrade to v0.0.19's NodeInfo (id + slug + title + content) but
+// deserialise with empty Slug fields. The validator's depNodes-merge
+// then silently skipped those entries (engine guard:
+// `if dep.Slug == "" { continue }`), surfacing as false-positive
+// `dependency.unresolved_slug` errors that only `rm ~/.skrptiq/cache/`
+// could fix.
+//
+// Schema version 1 corresponds to v0.0.19's GH#650 NodeInfo shape
+// (id, slug, type, title, content?). v0.0.16–v0.0.18 wrote no
+// version field; readCache treats that as v0 and drops the file.
+const currentCacheSchemaVersion = 1
+
 type cacheEntry struct {
 	ID        string     `json:"id"`
 	Version   string     `json:"version"`
@@ -264,7 +283,12 @@ type cacheEntry struct {
 }
 
 type cacheFile struct {
-	Entries map[string]cacheEntry `json:"entries"`
+	// SchemaVersion is checked on read; a mismatch (including absent /
+	// zero, which is what pre-GH#654 cache files have) causes the
+	// reader to return an empty entry map without surfacing an error.
+	// The next writeCache rewrites the file at the current version.
+	SchemaVersion int                   `json:"schemaVersion"`
+	Entries       map[string]cacheEntry `json:"entries"`
 }
 
 func cacheKey(dep parse.DependencyRef) string {
@@ -286,6 +310,13 @@ func (r *Resolver) readCache() (map[string]cacheEntry, error) {
 	var cf cacheFile
 	if err := json.Unmarshal(data, &cf); err != nil {
 		return map[string]cacheEntry{}, err
+	}
+	// Schema-version gate (GH#654). Mismatch means the on-disk shape
+	// can't be trusted to match what cacheEntry/NodeInfo currently
+	// model — treat as a miss and let writeCache replace the file at
+	// the current version on the next merge.
+	if cf.SchemaVersion != currentCacheSchemaVersion {
+		return map[string]cacheEntry{}, nil
 	}
 	if cf.Entries == nil {
 		cf.Entries = map[string]cacheEntry{}
@@ -312,7 +343,10 @@ func (r *Resolver) writeCache(entries map[string]cacheEntry) error {
 		merged[k] = v
 	}
 
-	data, err := json.MarshalIndent(cacheFile{Entries: merged}, "", "  ")
+	data, err := json.MarshalIndent(cacheFile{
+		SchemaVersion: currentCacheSchemaVersion,
+		Entries:       merged,
+	}, "", "  ")
 	if err != nil {
 		return err
 	}
