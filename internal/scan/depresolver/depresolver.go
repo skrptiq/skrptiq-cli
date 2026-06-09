@@ -191,7 +191,31 @@ func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEnt
 }
 
 // hubMetadata is the wire shape returned by GET /api/shared/<slug>/<v>/metadata
-// (Option A endpoint extension per GH#630 plan approval).
+// (Option A endpoint extension per GH#630 plan approval; node-shape
+// fields slug/title/content added per GH#650).
+//
+// ── Hub API type-drift surface (GH#528) ─────────────────────────────
+//
+// Four type sources for the Hub HTTP API exist today; none are
+// auto-generated. Updates to one MUST be propagated to the others
+// manually — there is no canonical schema source yet.
+//
+//	1. Hub server (canonical de facto) — defines the wire shape.
+//	2. engine/hubapi.Skrpt — used by CLI's `hub list/search/import`
+//	   commands. Lives in skrptiq-app/engine/hubapi/types.go.
+//	3. depresolver.hubMetadata + NodeInfo (here) — used by `scan`'s
+//	   dep resolution. The only Go-side shape for /api/shared/.
+//	4. electron-app/src/main/hub/api-client.ts:HubSkrpt + HubSharedMetadata
+//	   — TS client used by the desktop app.
+//
+// Live drift-detection tests (`SKRPTIQ_HUB_URL`-gated) live at:
+//	internal/engine/hub_drift_test.go — pins engine/hubapi.Skrpt
+//	internal/scan/depresolver/live_test.go — pins this hubMetadata shape
+//
+// CI skips them by default; run locally or in coordinated cross-repo
+// verification when touching any of the four sources above. The
+// architectural reform (single canonical schema source) is tracked in
+// GH#528 and deferred until #525-#527 land.
 type hubMetadata struct {
 	ID       string     `json:"id"`
 	Version  string     `json:"version"`

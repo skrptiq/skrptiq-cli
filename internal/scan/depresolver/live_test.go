@@ -66,3 +66,47 @@ func TestResolve_LiveHub_SampledBundle(t *testing.T) {
 		t.Errorf("ProvidedSlugs[llm-service] = %q; want llm-service", dep)
 	}
 }
+
+// TestResolve_LiveHub_DepNodesHaveNonEmptySlug — GH#528 / GH#650 / GH#654
+// drift guard. The `/api/shared/<slug>/<v>/metadata` wire shape must
+// populate `nodes[].slug` (post-GH#650). If Hub silently drops the
+// field, NodeInfo.Slug deserialises to "" and the engine's
+// depNodes-merge skips the entry (engine guard: `if dep.Slug == ""`),
+// surfacing as false-positive `dependency.unresolved_slug` at scan
+// time with no other signal. This test pins that wire-shape
+// expectation explicitly so wire-drift fails loudly here instead of
+// silently breaking real consumer scans.
+func TestResolve_LiveHub_DepNodesHaveNonEmptySlug(t *testing.T) {
+	hubURL := os.Getenv("SKRPTIQ_HUB_URL")
+	if hubURL == "" {
+		t.Skip("SKRPTIQ_HUB_URL not set — skipping live-Hub drift test")
+	}
+	r, err := New(Config{HubBaseURL: hubURL, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	const (
+		sampledUUID     = "fcab9536-a13e-49c9-b0c3-bb3097682e69"
+		sampledChecksum = "sha256:9940a8d84c3240b3dcea7fe8b88939ac43898ea4138c706ca17d783e7894bb23"
+	)
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: sampledUUID, Name: "llm-service", Version: "1.0.0", Checksum: sampledChecksum},
+	})
+	for _, i := range res.Issues {
+		if i.Code == "dependency.fetch_failed" {
+			t.Skipf("Hub unreachable: %s", i.Message)
+		}
+	}
+	if len(res.DepNodes) == 0 {
+		t.Fatalf("expected at least one DepNode; got %d", len(res.DepNodes))
+	}
+	for i, n := range res.DepNodes {
+		if n.Slug == "" {
+			t.Errorf("DepNodes[%d].Slug is empty — Hub wire shape did not populate `nodes[].slug` "+
+				"(GH#650 extension regression). NodeInfo: %+v", i, n)
+		}
+		if n.ID == "" {
+			t.Errorf("DepNodes[%d].ID is empty — Hub wire shape did not populate `nodes[].id`", i)
+		}
+	}
+}
