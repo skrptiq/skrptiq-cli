@@ -1,7 +1,6 @@
 package scan
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -52,70 +51,51 @@ type depContext struct {
 // bridgeToHydration converts a parse.Package into a storage.HydrationInput
 // plus any scan-level issues (cross-package edges, unresolved targets).
 //
-// The bridge is the sole point where parse.Package types are translated
-// into storage types. No other scan code touches parse types directly
-// beyond calling ReadPackage.
+// GH#530 Phase 3b: the local-nodes-and-edges portion is delegated to
+// storage.HydrationInputFrom — the canonical engine-side translation
+// every consumer (App workspace, App Hub import, CLI scanner) now
+// shares. The bridge keeps responsibility for:
+//
+//   - The CLI-specific namespace fallback for unnamed packages.
+//   - Setting HubImportID = "scan-import".
+//   - Building NodeFiles / EdgeFiles maps so the scanner can attribute
+//     issues back to source files.
+//   - Dep-aware enrichment that depends on the depresolver's runtime
+//     state: synth NodeInputs for dep summaries, TargetID rewriting on
+//     connection edges that hit a dep-provided slug, and the four-tier
+//     error classification for unresolved / cross-package / permissive
+//     edges.
 //
 // deps carries dep-resolution context (GH#630 plan v2). Pass
 // depContext{} for legacy / no-deps bundles.
 func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridgeResult {
-	manifestRaw := pkg.Manifest.Raw
-	if manifestRaw == nil {
-		manifestRaw = make(map[string]any)
-	}
-	// Namespace fallback — same logic the old scanner used.
-	if manifestRaw["name"] == nil || manifestRaw["name"] == "" {
-		manifestRaw["name"] = filepath.Base(absPath)
-	}
+	// 1. Engine builds the trivial local-only base.
+	input, _ := storage.HydrationInputFrom(pkg)
 
+	// 2. CLI-specific manifest fixups.
+	if input.Manifest == nil {
+		input.Manifest = make(map[string]any)
+	}
+	if input.Manifest["name"] == nil || input.Manifest["name"] == "" {
+		input.Manifest["name"] = filepath.Base(absPath)
+	}
+	input.HubImportID = "scan-import"
+
+	// 3. Local node set (for the connection walk below) and file-path
+	// attribution map (the engine helper doesn't surface paths).
 	nodeIDSet := make(map[string]bool, len(pkg.Nodes))
 	nodeFiles := make(map[string]string, len(pkg.Nodes))
-	nodes := make([]storage.NodeInput, 0, len(pkg.Nodes))
-
 	for _, nf := range pkg.Nodes {
-		rel := relPath(absPath, nf.FilePath)
 		nodeIDSet[nf.ID] = true
-		nodeFiles[nf.ID] = rel
-
-		var desc, content, metadata, fileSlug, fileHash *string
-		if nf.Description != "" {
-			d := nf.Description
-			desc = &d
-		}
-		if nf.Content != "" {
-			c := nf.Content
-			content = &c
-		}
-		if len(nf.Metadata) > 0 {
-			mj := marshalJSON(nf.Metadata)
-			metadata = &mj
-		}
-		slug := nf.ID
-		fileSlug = &slug
-		if nf.FileHash != "" {
-			h := nf.FileHash
-			fileHash = &h
-		}
-
-		nodes = append(nodes, storage.NodeInput{
-			ID:          nf.ID,
-			Type:        nf.Type,
-			Title:       nf.Title,
-			Description: desc,
-			Content:     content,
-			Metadata:    metadata,
-			FileSlug:    fileSlug,
-			FileHash:    fileHash,
-		})
+		nodeFiles[nf.ID] = relPath(absPath, nf.FilePath)
 	}
 
-	// Hydrate synthetic nodes for each dep summary whose slug isn't
-	// already shadowed by a local node (local wins on slug collision,
-	// mirroring the engine's depNodes-merge semantics in
-	// ValidateWorkflowWithDeps). Synth nodes are needed in the temp DB
-	// so (a) connection-edge FK validation against a dep target
-	// satisfies, and (b) engine's `usesTargets[node.ID]` check in
-	// ValidateWorkflow* matches against the dep target's UUID.
+	// 4. Dep-aware enrichment: synthetic NodeInputs for each dep
+	// summary whose slug isn't shadowed by a local node (local wins on
+	// slug collision, mirroring engine's depNodes-merge semantics).
+	// Synth nodes are needed in the temp DB so (a) connection-edge FK
+	// validation against a dep target satisfies and (b) engine's
+	// `usesTargets[node.ID]` resolves against the dep target's UUID.
 	for slug, summary := range deps.Summaries {
 		if nodeIDSet[slug] {
 			continue // local slug wins
@@ -126,7 +106,7 @@ func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridg
 			c := summary.Content
 			synthContent = &c
 		}
-		nodes = append(nodes, storage.NodeInput{
+		input.Nodes = append(input.Nodes, storage.NodeInput{
 			ID:       summary.ID,
 			Type:     summary.Type,
 			Title:    summary.Title,
@@ -135,9 +115,12 @@ func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridg
 		})
 	}
 
-	// Build edges, handling cross-package targets (GH#580).
+	// 5. Walk connections to (a) classify cross-package + unresolved
+	// targets the engine helper skipped, (b) emit dep-aware edges with
+	// rewritten TargetIDs, and (c) build the EdgeFiles map for ALL
+	// emitted edges (both the engine-built local ones and the
+	// CLI-emitted dep-rewritten ones).
 	var issues []ScanIssue
-	edges := make([]storage.EdgeInput, 0)
 	edgeFiles := make(map[string]edgeFileCtx)
 
 	for _, nf := range pkg.Nodes {
@@ -161,60 +144,54 @@ func bridgeToHydration(pkg parse.Package, absPath string, deps depContext) bridg
 				continue
 			}
 
-			targetID := conn.Target
-			if !nodeIDSet[conn.Target] {
-				// GH#630 plan v2 + GH#650 four-tier for edge targets:
-				//   1. dep-provided slug → hydrate edge with TargetID
-				//      rewritten to the dep summary's UUID; the
-				//      synthetic node hydrated above satisfies the FK
-				//      check and feeds engine's slugToNode +
-				//      usesTargets resolution.
-				//   2. --no-resolve-deps + has-deps-block → drop, treat
-				//      as potentially dep-provided (plan v1 §4 semantics
-				//      extended to the edge surface).
-				//   3. non-local + manifest has dependencies block →
-				//      re-code as dependency.unresolved_slug.
-				//   4. non-local + no dependencies block → keep legacy
-				//      scan.edge_target_unresolved (no regression).
-				if summary, hit := deps.Summaries[conn.Target]; hit {
-					targetID = summary.ID
-				} else {
-					if deps.Permissive {
-						continue
-					}
-					code := "scan.edge_target_unresolved"
-					message := fmt.Sprintf("connection target %q not found", conn.Target)
-					if deps.HasDepsBlock {
-						code = "dependency.unresolved_slug"
-						message = fmt.Sprintf("connection target %q is not local and is not provided by any declared dependency", conn.Target)
-					}
-					issues = append(issues, ScanIssue{
-						File:     rel,
-						NodeSlug: nf.ID,
-						ValidationIssue: makeIssue(code, "error", message, "§6.4", "connections"),
-					})
-					continue
-				}
+			// Local target: engine helper already emitted the edge.
+			// Just record file attribution.
+			if nodeIDSet[conn.Target] {
+				edgeFiles[edgeID] = edgeFileCtx{file: rel, sourceSlug: nf.ID}
+				continue
 			}
 
-			edges = append(edges, storage.EdgeInput{
-				ID:       edgeID,
-				SourceID: nf.ID,
-				TargetID: targetID,
-				Type:     conn.Type,
-				Position: conn.Position,
+			// Non-local target — four-tier handling matching GH#630
+			// plan v2 + GH#650:
+			//   1. dep-provided slug → emit edge with TargetID
+			//      rewritten to the dep summary's UUID (the synth
+			//      node hydrated above satisfies FK + usesTargets).
+			//   2. --no-resolve-deps + has-deps-block → drop, treat
+			//      as potentially dep-provided.
+			//   3. non-local + has-deps-block → re-code as
+			//      dependency.unresolved_slug.
+			//   4. non-local + no deps block → keep legacy
+			//      scan.edge_target_unresolved (no regression).
+			if summary, hit := deps.Summaries[conn.Target]; hit {
+				input.Edges = append(input.Edges, storage.EdgeInput{
+					ID:       edgeID,
+					SourceID: nf.ID,
+					TargetID: summary.ID,
+					Type:     conn.Type,
+					Position: conn.Position,
+				})
+				edgeFiles[edgeID] = edgeFileCtx{file: rel, sourceSlug: nf.ID}
+				continue
+			}
+			if deps.Permissive {
+				continue
+			}
+			code := "scan.edge_target_unresolved"
+			message := fmt.Sprintf("connection target %q not found", conn.Target)
+			if deps.HasDepsBlock {
+				code = "dependency.unresolved_slug"
+				message = fmt.Sprintf("connection target %q is not local and is not provided by any declared dependency", conn.Target)
+			}
+			issues = append(issues, ScanIssue{
+				File:     rel,
+				NodeSlug: nf.ID,
+				ValidationIssue: makeIssue(code, "error", message, "§6.4", "connections"),
 			})
-			edgeFiles[edgeID] = edgeFileCtx{file: rel, sourceSlug: nf.ID}
 		}
 	}
 
 	return bridgeResult{
-		Input: storage.HydrationInput{
-			HubImportID: "scan-import",
-			Manifest:    manifestRaw,
-			Nodes:       nodes,
-			Edges:       edges,
-		},
+		Input:     input,
 		Issues:    issues,
 		NodeFiles: nodeFiles,
 		EdgeFiles: edgeFiles,
@@ -263,11 +240,3 @@ func relPath(base, full string) string {
 	return rel
 }
 
-// marshalJSON marshals a value to a JSON string.
-func marshalJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
-}
