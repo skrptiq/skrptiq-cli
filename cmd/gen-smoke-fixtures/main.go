@@ -42,6 +42,8 @@ import (
 
 	"github.com/skrptiq/engine/manifest"
 	"github.com/skrptiq/engine/parse"
+	"github.com/skrptiq/engine/storage"
+	"github.com/skrptiq/skrptiq-cli/internal/scan/depresolver"
 )
 
 func main() {
@@ -51,6 +53,12 @@ func main() {
 	includeGlob := flag.String("include", "", "Glob: only generate for matching slugs")
 	excludeGlob := flag.String("exclude", "", "Glob: skip matching slugs")
 	verbose := flag.Bool("v", false, "Verbose per-skrpt logging")
+	withShared := flag.Bool("with-shared", false,
+		"Resolve each skrpt's `dependencies:` block via the CLI scanner's depresolver and synthesise node files for each shared dep node into the consumer fixture. Opt-in (GH#678).")
+	hubURL := flag.String("hub-url", "",
+		"Hub origin for `/api/shared/<slug>/<v>/metadata` lookups (overrides $SKRPTIQ_HUB_URL; falls back to depresolver default)")
+	cacheDir := flag.String("cache-dir", "",
+		"Dep-resolver cache dir override (falls back to ~/.skrptiq/cache)")
 	flag.Parse()
 
 	examplesDir := filepath.Join(*hubPath, "examples")
@@ -62,6 +70,27 @@ func main() {
 	if err := os.MkdirAll(*outPath, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "create out dir: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Build the dep resolver up-front when --with-shared is set so all
+	// generations share one cache instance (and one underlying HTTP
+	// client). Resolution failures during a per-skrpt run fail that
+	// skrpt loud, per the plan's no-silent-degradation invariant.
+	var resolver *depresolver.Resolver
+	if *withShared {
+		resolved := *hubURL
+		if resolved == "" {
+			resolved = os.Getenv("SKRPTIQ_HUB_URL")
+		}
+		r, err := depresolver.New(depresolver.Config{
+			HubBaseURL: resolved,
+			CacheDir:   *cacheDir,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "init dep resolver: %v\n", err)
+			os.Exit(1)
+		}
+		resolver = r
 	}
 
 	var generated, skipped, failed int
@@ -90,7 +119,7 @@ func main() {
 
 		srcDir := filepath.Join(examplesDir, slug)
 		dstDir := filepath.Join(*outPath, slug)
-		if err := generateFixture(srcDir, dstDir); err != nil {
+		if err := generateFixture(srcDir, dstDir, resolver); err != nil {
 			failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", slug, err))
 			// Roll back the partial output so reruns are deterministic.
@@ -136,7 +165,13 @@ func globMatch(s, pattern string) bool {
 // generateFixture produces a minimal fixture at dstDir from the
 // source skrpt at srcDir. Returns nil on success; an error on any
 // IO, parse, or validation failure (caller cleans up dstDir on error).
-func generateFixture(srcDir, dstDir string) error {
+//
+// resolver is non-nil iff --with-shared was set. When non-nil, the
+// consumer's `dependencies:` block is resolved through the CLI
+// scanner's depresolver and each dep node summary is materialised as
+// a synthetic node file inside the consumer fixture. Local files win
+// on slug collision (mirrors engine ValidateWorkflowWithDeps).
+func generateFixture(srcDir, dstDir string, resolver *depresolver.Resolver) error {
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", dstDir, err)
 	}
@@ -180,6 +215,15 @@ func generateFixture(srcDir, dstDir string) error {
 		}
 	}
 
+	// Resolve + synthesise shared dep nodes when --with-shared is on.
+	// Done BEFORE validation so the validator sees the full fixture
+	// shape (including shared nodes the workflow `uses`).
+	if resolver != nil {
+		if err := materialiseSharedDeps(dstDir, resolver); err != nil {
+			return fmt.Errorf("shared deps: %w", err)
+		}
+	}
+
 	// Validate the generated fixture parses cleanly via the same
 	// canonical reader the scanner uses. This catches generation
 	// bugs (mangled frontmatter, missing required fields) at gen
@@ -192,6 +236,90 @@ func generateFixture(srcDir, dstDir string) error {
 			len(errs), first.Code, first.File, first.Line, first.Message)
 	}
 	return nil
+}
+
+// nodeTypeToDir maps an engine node type to its standard directory
+// inside a skrpt package. Mirrors the reverse of parse.DirToType
+// (engine doesn't expose the forward direction yet).
+var nodeTypeToDir = map[string]string{
+	"workflow": "workflows",
+	"skill":    "skills",
+	"prompt":   "prompts",
+	"service":  "services",
+	"source":   "sources",
+	"document": "documents",
+	"asset":    "assets",
+}
+
+// materialiseSharedDeps reads dstDir's already-written manifest, walks
+// the declared dependencies through the depresolver, and writes a
+// synthesised node file for each returned DepNodeSummary inside the
+// consumer fixture. Local files win on slug collision (the depresolver
+// caller doesn't need to know this — we just skip when the file
+// already exists).
+//
+// On any resolver failure (missing Hub, missing cache, checksum
+// mismatch, fetch error), this returns the error so the caller fails
+// the whole fixture loud. Silent half-resolution is the failure mode
+// GH#678's "no silent degradation" rule guards against.
+func materialiseSharedDeps(dstDir string, resolver *depresolver.Resolver) error {
+	pkg, _, err := parse.ReadPackage(dstDir)
+	if err != nil {
+		return fmt.Errorf("re-parse: %w", err)
+	}
+	if pkg.Dependencies == nil || len(pkg.Dependencies) == 0 {
+		return nil
+	}
+	res := resolver.Resolve(pkg.Dependencies)
+	for _, issue := range res.Issues {
+		if issue.Severity == "error" {
+			return fmt.Errorf("dep resolution: %s: %s", issue.Code, issue.Message)
+		}
+	}
+	for _, dn := range res.DepNodes {
+		if err := writeSyntheticNode(dstDir, dn); err != nil {
+			return fmt.Errorf("synth %s/%s: %w", dn.Type, dn.Slug, err)
+		}
+	}
+	return nil
+}
+
+// writeSyntheticNode materialises one DepNodeSummary as a node file
+// under dstDir. Skips when a local file at the same slug already
+// exists (mirrors engine's depNodes-merge "local wins" semantics).
+func writeSyntheticNode(dstDir string, dn storage.DepNodeSummary) error {
+	dir, ok := nodeTypeToDir[dn.Type]
+	if !ok {
+		// Unrecognised node type — skip rather than fail. The engine
+		// validator catches anything material; we shouldn't invent a
+		// directory the engine doesn't recognise.
+		return nil
+	}
+	subDir := filepath.Join(dstDir, dir)
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		return err
+	}
+	dst := filepath.Join(subDir, dn.Slug+".md")
+	// Local wins on slug collision (engine depNodes-merge semantics).
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	}
+	body := dn.Content
+	if strings.TrimSpace(body) == "" {
+		body = "(stripped for smoke corpus)\n"
+	} else if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	// Frontmatter mirrors what engine NodeFile expects: id, type,
+	// title, description. fileSlug is implicit from the filename so
+	// we don't emit it in the frontmatter.
+	front := fmt.Sprintf(
+		"id: %q\ntype: %q\ntitle: %q\ndescription: %q\n",
+		dn.ID, dn.Type, dn.Title,
+		fmt.Sprintf("(synthesised from hub-shared/%s)", dn.Slug),
+	)
+	out := "---\n" + front + "---\n" + body
+	return os.WriteFile(dst, []byte(out), 0o644)
 }
 
 // generateNodeFile reads srcFile, preserves the frontmatter verbatim,
