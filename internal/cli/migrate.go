@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/skrptiq/engine/manifest"
-	"gopkg.in/yaml.v3"
 )
 
 // MigrateIdentity handles `skrptiq migrate-identity <dir>`.
@@ -25,20 +24,21 @@ func MigrateIdentity(args []string) int {
 		return ExitFailed
 	}
 
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	// Decode the manifest through the engine — the single YAML parse
+	// authority (GH#530 Phase 3b). The manifest-only reader is the
+	// minimal correct dependency here: migrate-identity runs on legacy /
+	// pre-canonical bundles, so it must surface the raw id string (any
+	// validation findings are returned as issues, which we deliberately
+	// ignore) without the full-package parse rejecting the very drift it
+	// exists to fix. Raw bytes are retained only for the write-back.
+	m, _, err := manifest.ParseManifestYAML(data)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid skrptiq.yaml: %v\n", err)
 		return ExitFailed
 	}
 
-	idVal, ok := raw["id"]
-	if !ok || idVal == nil {
-		fmt.Println("No manifest.id present — nothing to migrate.")
-		return ExitOK
-	}
-
-	currentID, ok := idVal.(string)
-	if !ok || currentID == "" {
+	currentID := m.ID
+	if currentID == "" {
 		fmt.Println("No manifest.id present — nothing to migrate.")
 		return ExitOK
 	}

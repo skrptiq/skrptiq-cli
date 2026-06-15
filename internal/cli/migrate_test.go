@@ -69,3 +69,31 @@ func TestMigrateIdentity_MissingArgs(t *testing.T) {
 		t.Errorf("expected exit %d for missing args, got %d", ExitBadArgs, code)
 	}
 }
+
+// TestMigrateIdentity_InvalidYAML exercises the engine reader's
+// unrecoverable-parse branch (GH#530 Phase 3b): manifest.ParseManifestYAML
+// returns an error, which migrate-identity surfaces as ExitFailed.
+func TestMigrateIdentity_InvalidYAML(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "skrptiq.yaml"), []byte("{{ not valid yaml"), 0644)
+
+	code := MigrateIdentity([]string{tmp})
+	if code != ExitFailed {
+		t.Errorf("expected exit %d for invalid YAML, got %d", ExitFailed, code)
+	}
+}
+
+// TestMigrateIdentity_NonStringID locks behaviour parity after the swap to
+// the engine reader: a non-string id is treated as absent (engine sets
+// Manifest.ID="" and flags an issue we ignore) → nothing to migrate.
+func TestMigrateIdentity_NonStringID(t *testing.T) {
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "skrptiq.yaml"), []byte(
+		"id: 12345\nname: test\nversion: \"1.0.0\"\n",
+	), 0644)
+
+	code := MigrateIdentity([]string{tmp})
+	if code != ExitOK {
+		t.Errorf("expected exit 0 for non-string id (treated as absent), got %d", code)
+	}
+}
