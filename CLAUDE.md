@@ -37,9 +37,9 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
   - `<repo>-pr-<P>` — you opened/updated PR `<P>`.
   - `project-issue-<N>` — you opened a NEW issue, or materially updated an existing one (especially cross-repo), that the orchestrator needs to triage/route/own. Use whenever you surface work to the tracker — the orchestrator keeps triage, scope, routing, and close authority; the trigger just hands it the pointer.
 
-  Examples: plan on issue 667 → `cli-plan-667.trigger`; opened PR 61 → `cli-pr-61.trigger`; filed a cross-repo bug as issue 700 → `project-issue-700.trigger`. The orchestrator consumes the trigger after it acts. (Substantive pushes also auto-signal via the pre-push hook → orchestrator inbox; the trigger is the explicit "come look at this" pointer.)
+  Examples: plan on issue 667 → `cli-plan-667.trigger`; opened PR 61 → `cli-pr-61.trigger`; filed a cross-repo bug as issue 700 → `project-issue-700.trigger`. The orchestrator consumes the trigger after it acts. (A substantive push also reaches the orchestrator automatically; the trigger is the explicit "come look at this" pointer.)
 
-**Never write to the orchestrator's `inbox.md`.** It is fed only by the pre-push hook and the cross-repo webhook — manual edits are out-of-band noise the orchestrator does not expect there. To surface a finding or a newly-filed issue, file/comment the GH issue and drop `project-issue-<N>.trigger`. That is the only channel.
+**Don't message the orchestrator out-of-band.** To surface a finding or a newly-filed issue, file/comment the GH issue and drop `project-issue-<N>.trigger` — that's the only channel. Your message reaches the orchestrator, and it signals back with a trigger when there's follow-up for you.
 
 **Cost model — why the loop is cheap, and your part in keeping it cheap:**
 - Every wake has a FLOOR cost: the system prompt + this `CLAUDE.md` (cached only when cycles are <5 min apart — that's why the interval is 3 min). You can't dodge the floor; you CAN avoid everything above it.
@@ -53,7 +53,7 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 **Steps:**
 1. Write `.orchestrator-msg` in the repo root (contents below).
 2. Do NOT `git add` or commit it — it's a working-tree file the hook reads during push.
-3. **Hand Ben the `git push` command — Ben pushes, not you.** The hook reads the file, appends it to the orchestrator's inbox, then deletes it automatically.
+3. **Hand Ben the `git push` command — Ben pushes, not you.** The hook delivers your message to the orchestrator automatically, then cleans it up.
 4. **If you forget:** the hook rejects with a clear message. Write the file, hand Ben the push again (no empty commit needed — the hook re-fires).
 
 **What to include:** issues closed/progressed with commit hashes; test results (pass count, any skipped); cross-repo implications; plan-review requests; **if a fix was discovered during live testing, say so explicitly** (that's the context lost without a message); the current state of the work (committed vs published vs verified end-to-end).
@@ -72,7 +72,7 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 3. **STOP. Do not implement, do not start coding, do not approve your own plan.** Drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-plan-<N>.trigger`.
 4. Wait for the orchestrator's approval comment on the same issue before proceeding.
 
-**Why the issue, not `inbox.md` or `docs/plans/`:** the issue is the canonical record — immutable, searchable via `gh issue view`. `inbox.md` is cleared every cycle; `docs/plans/` files drift. **Plan and review live on the issue.** Only the orchestrator approves plans; implementing before approval risks rejection. Applies to everything that enters plan mode: features, engine boundary changes, storage changes.
+**Why the issue, not a scratch file:** it's the canonical record — immutable and searchable via `gh issue view`; ad-hoc files drift. **Plan and review live on the issue.** Only the orchestrator approves plans; implementing before approval risks rejection. Applies to everything that enters plan mode: features, engine boundary changes, storage changes.
 
 ## Communication Protocol
 - **British English** throughout all code, docs, and UI copy.
