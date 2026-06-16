@@ -13,7 +13,13 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 
 You do NOT self-start a loop — Ben starts it with `/loop 3m run your work cycle`. There is **no briefing file**; GitHub issues are the single source of truth. Each cycle runs a near-free gate first, so idle cycles cost almost nothing:
 
-0. **Trigger gate — do this FIRST, before reading anything.** Run exactly `ls triggers/*.trigger 2>/dev/null` from the repo root — no `cd`, no echo/debug wrapper, nothing else (you already run in this repo). If there are NONE, **STOP this cycle immediately** — no issue reads, no `gh` calls, no work. The orchestrator drops `triggers/issue-<N>.trigger` in this repo ONLY when it has assigned you work. No trigger = nothing to do.
+0. **Trigger gate — FIRST, before reading anything.** Run this ONE command, EXACTLY as written, from the repo root (you are already there — do NOT `cd`, do NOT append `echo`, `$?`, or any debug wrapper):
+   ```
+   ls triggers/ 2>/dev/null | grep '[.]trigger$'
+   ```
+   - **No output → idle.** Reply with exactly one line — `idle — no trigger` — and STOP the cycle. Nothing else: no `gh` calls, no file reads, no recap, no reschedule/interval note, no commentary, no extra commands.
+   - **One or more `issue-<N>.trigger` listed → that is your work.** Continue to step 1.
+   (The orchestrator drops `triggers/issue-<N>.trigger` here only when it has assigned you work; no trigger = nothing to do. This command is zsh-safe and silent when empty — don't substitute a `*.trigger` glob, which errors in zsh.)
 1. **For each `triggers/issue-<N>.trigger`:** read the directive — `gh issue view <N> --repo skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'` (read earlier comments only if you need the full plan/detail). Then `rm triggers/issue-<N>.trigger` to consume it.
 2. **Act on the directive:**
    - **Asks for a plan** → post a tight plan as an issue comment, drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-plan-<N>.trigger`, and STOP. Wait for approval (it returns as a new directive trigger).
@@ -31,7 +37,7 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 - **The issue's latest orchestrator-directive comment is your work order** — short, current, naming your single task. Earlier comments hold the plan/detail. There is NO briefing file.
 
 **Two-way trigger signalling** (the cross-session channel; issues carry the content):
-- **Inbound (orchestrator → you):** `triggers/issue-<N>.trigger` in THIS repo = work assigned. Your cycle's step 0 (`ls triggers/*.trigger`) is the near-free check.
+- **Inbound (orchestrator → you):** `triggers/issue-<N>.trigger` in THIS repo = work assigned. Your cycle's step 0 (the trigger-gate check above) is the near-free check.
 - **Outbound (you → orchestrator):** `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<signal>.trigger` so the orchestrator goes straight to the item instead of polling GitHub. Signal forms:
   - `<repo>-plan-<N>` — you posted a plan on issue `<N>`, awaiting review.
   - `<repo>-pr-<P>` — you opened/updated PR `<P>`.
