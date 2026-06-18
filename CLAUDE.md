@@ -9,24 +9,30 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 
 ---
 
-## Operating Mode — issue-driven, trigger-gated (Ben-started)
+## Operating Mode — issue-driven, trigger-gated (background watcher)
 
-You do NOT self-start a loop — Ben starts it with `/loop 3m run your work cycle`. There is **no briefing file**; GitHub issues are the single source of truth. Each cycle runs a near-free gate first, so idle cycles cost almost nothing:
+There is **no briefing file**; GitHub issues are the single source of truth. You do **NOT** run a `/loop` and you do **NOT** print "idle" lines. Instead you run a **background watcher** on `triggers/` that wakes you the instant the orchestrator assigns work and stays completely silent otherwise.
 
-0. **Trigger gate — FIRST, before reading anything.** Run this ONE command, EXACTLY as written, from the repo root (you are already there — do NOT `cd`, do NOT append `echo`, `$?`, or any debug wrapper):
+0. **On session start (or when Ben bootstraps you), launch the watcher — ONCE.** Start it as a **persistent background Monitor** (description "trigger watcher"). It polls `triggers/` every ~20s and emits a line ONLY when a NEW trigger appears:
    ```
-   ls triggers/ 2>/dev/null | grep '[.]trigger$'
+   prev=""
+   while true; do
+     sleep 20
+     cur=$(ls triggers/ 2>/dev/null | grep '[.]trigger$' | sort | tr '\n' ' ')
+     for t in $cur; do case " $prev " in *" $t "*) ;; *) echo "work: $t" ;; esac; done
+     prev="$cur"
+   done
    ```
-   - **No output → idle.** Reply with exactly one line — `idle — no trigger` — and STOP the cycle. Nothing else: no `gh` calls, no file reads, no recap, no reschedule/interval note, no commentary, no extra commands.
-   - **One or more `issue-<N>.trigger` listed → that is your work.** Continue to step 1.
-   (The orchestrator drops `triggers/issue-<N>.trigger` here only when it has assigned you work; no trigger = nothing to do. This command is zsh-safe and silent when empty — don't substitute a `*.trigger` glob, which errors in zsh.)
+   Then go idle — **say nothing, do nothing** until the watcher wakes you. No `/loop`, no `ls`-on-a-timer, no "idle" output. Silence is correct when there is no trigger. (zsh-safe; do not substitute a `*.trigger` glob, which errors in zsh.)
+
+   **When the watcher emits `work: issue-<N>.trigger`, that line IS your assignment** — proceed to step 1. After you finish (step 3), say nothing and let the watcher wake you for the next one.
 1. **For each `triggers/issue-<N>.trigger`:** read the directive — `gh issue view <N> --repo skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'` (read earlier comments only if you need the full plan/detail). Then `rm triggers/issue-<N>.trigger` to consume it.
 2. **Act on the directive:**
    - **Asks for a plan** → post a tight plan as an issue comment, drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-plan-<N>.trigger`, and STOP. Wait for approval (it returns as a new directive trigger).
    - **Says implement (plan approved)** → implement to the approved scope, run the full test/build gates, commit, write `.orchestrator-msg`, then **hand Ben the `git push` command — never run `git push` yourself**. After Ben pushes, open the PR and drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-pr-<P>.trigger`. **Never merge.**
 3. **When no trigger remains:** idle until the orchestrator assigns the next item.
 
-**Within a work cycle:** run `go test ./...` for every code change; commit atomically as you go (one feature/fix/refactor per commit); if context gets heavy between items, `/compact` and re-read this `CLAUDE.md`; after fixing an issue, comment with the commit hash and close it (single-repo) or remove your label (cross-repo, don't close).
+**While working an assigned item:** run `go test ./...` for every code change; commit atomically as you go (one feature/fix/refactor per commit); if context gets heavy between items, `/compact` and re-read this `CLAUDE.md`; after fixing an issue, comment with the commit hash and close it (single-repo) or remove your label (cross-repo, don't close).
 
 Never implement scope the orchestrator hasn't approved. You never run `git push` or `gh pr merge`. `<repo>` = this repo's name without the `skrptiq-` prefix (`app`/`cli`/`hub`/`internal`/`web`) — here, `cli`.
 
@@ -37,7 +43,7 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 - **The issue's latest orchestrator-directive comment is your work order** — short, current, naming your single task. Earlier comments hold the plan/detail. There is NO briefing file.
 
 **Two-way trigger signalling** (the cross-session channel; issues carry the content):
-- **Inbound (orchestrator → you):** `triggers/issue-<N>.trigger` in THIS repo = work assigned. Your cycle's step 0 (the trigger-gate check above) is the near-free check.
+- **Inbound (orchestrator → you):** `triggers/issue-<N>.trigger` in THIS repo = work assigned. The background watcher (step 0 above) detects it and wakes you — you do no polling.
 - **Outbound (you → orchestrator):** `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<signal>.trigger` so the orchestrator goes straight to the item instead of polling GitHub. Signal forms:
   - `<repo>-plan-<N>` — you posted a plan on issue `<N>`, awaiting review.
   - `<repo>-pr-<P>` — you opened/updated PR `<P>`.
@@ -47,9 +53,9 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 
 **Don't message the orchestrator out-of-band.** To surface a finding or a newly-filed issue, file/comment the GH issue and drop `project-issue-<N>.trigger` — that's the only channel. Your message reaches the orchestrator, and it signals back with a trigger when there's follow-up for you.
 
-**Cost model — why the loop is cheap, and your part in keeping it cheap:**
-- Every wake has a FLOOR cost: the system prompt + this `CLAUDE.md` (cached only when cycles are <5 min apart — that's why the interval is 3 min). You can't dodge the floor; you CAN avoid everything above it.
-- On an idle cycle, step 0 finds nothing → STOP. No issue reads, no file reads, no `gh` calls. That keeps the ~95% of do-nothing cycles nearly free.
+**Cost model — why the watcher is cheap, and your part in keeping it cheap:**
+- The watcher is a tiny background shell loop — it does **not** wake you or burn context on its own. You spend tokens only when it emits a real `work:` line and starts a turn; periodic silence is free.
+- There are no "idle cycles" to keep cheap — when the watcher is quiet, do nothing at all (no issue reads, no file reads, no `gh` calls, no output).
 - **Never read an issue or file "just to check" for work.** The trigger IS the check. Reading to discover "nothing changed" is the exact waste this design removes.
 
 ## Push Protocol — MANDATORY
