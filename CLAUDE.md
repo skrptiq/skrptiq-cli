@@ -43,7 +43,10 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 - **The issue's latest orchestrator-directive comment is your work order** — short, current, naming your single task. Earlier comments hold the plan/detail. There is NO briefing file.
 
 **Two-way trigger signalling** (the cross-session channel; issues carry the content):
-- **Inbound (orchestrator → you):** `triggers/issue-<N>.trigger` in THIS repo = work assigned. The background watcher (step 0 above) detects it and wakes you — you do no polling.
+- **Inbound (orchestrator → you):** the background watcher (step 0 above) detects any new `triggers/*.trigger` and wakes you — you do **no** polling, and you **never** infer review state from GitHub's `reviewDecision` field. It is permanently blank: the orchestrator shares your gh identity (`skrptiq-prime`), and GitHub forbids approving your own account's PR, so an approval can never appear as a formal GitHub review — it arrives as a trigger:
+  - `issue-<N>.trigger` — work assigned; read the issue's latest orchestrator-directive comment (step 1), then `rm` it.
+  - `pr-<P>-approved.trigger` — the orchestrator reviewed PR `<P>` and **signed it off**. Ben gates the merge, so there is nothing further for you to do: `rm` the trigger and idle until your next assignment. (The full review is the orchestrator's comment on the PR, kept for the record.)
+  - `pr-<P>-changes.trigger` — the orchestrator requested changes on PR `<P>`. Read its review comment on the PR, address every point, re-push (hand Ben the `git push`), then drop a fresh `<repo>-pr-<P>` trigger when the branch is updated; `rm` the changes trigger once read.
 - **Outbound (you → orchestrator):** `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<signal>.trigger` so the orchestrator goes straight to the item instead of polling GitHub. Signal forms:
   - `<repo>-plan-<N>` — you posted a plan on issue `<N>`, awaiting review.
   - `<repo>-pr-<P>` — you opened/updated PR `<P>`.
