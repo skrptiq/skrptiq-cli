@@ -94,6 +94,78 @@ func TestResolve_ChecksumMismatch(t *testing.T) {
 	}
 }
 
+// §6.2c online-path identity gate (GH#722): a metadata response whose
+// canonical id differs from the manifest-declared dep.ID must fail loud
+// as dependency.id_mismatch, even when checksum and version match. This
+// is the hole checksum-only verification left open — the metadata URL is
+// keyed on name+version, so a checksum collision against a *different*
+// catalogue object would otherwise pass.
+func TestResolve_IDMismatch(t *testing.T) {
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// Checksum + version match the manifest; only the id diverges.
+		writeMetadata(w, uuidDepB, "1.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+		})
+	})
+	r := newTestResolver(t, srv.URL)
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+	if len(res.Issues) == 0 || res.Issues[0].Code != "dependency.id_mismatch" {
+		t.Errorf("expected dependency.id_mismatch, got %+v", res.Issues)
+	}
+	if res.Issues[0].Severity != "error" {
+		t.Errorf("id_mismatch must be an error, got severity %q", res.Issues[0].Severity)
+	}
+	if _, hit := res.ProvidedSlugs["skill-a"]; hit {
+		t.Errorf("must not record slugs on id mismatch: %+v", res.ProvidedSlugs)
+	}
+}
+
+// §6.2c belt-and-braces (GH#722): the metadata URL keys on version, so a
+// version divergence is near-impossible, but a Hub returning a divergent
+// version must fail loud rather than pass silently.
+func TestResolve_VersionMismatch(t *testing.T) {
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// id + checksum match; only the version diverges.
+		writeMetadata(w, uuidDepA, "2.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+		})
+	})
+	r := newTestResolver(t, srv.URL)
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+	if len(res.Issues) == 0 || res.Issues[0].Code != "dependency.version_mismatch" {
+		t.Errorf("expected dependency.version_mismatch, got %+v", res.Issues)
+	}
+	if _, hit := res.ProvidedSlugs["skill-a"]; hit {
+		t.Errorf("must not record slugs on version mismatch: %+v", res.ProvidedSlugs)
+	}
+}
+
+// GH#722 happy path: when id, version, AND checksum all match the
+// declared dep, resolution still succeeds and records the slugs. Guards
+// against the identity assertions over-rejecting valid objects.
+func TestResolve_FullIdentityMatchResolves(t *testing.T) {
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+			{ID: "uuid-prompt-a", Slug: "prompt-a", Type: "prompt"},
+		})
+	})
+	r := newTestResolver(t, srv.URL)
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+	if len(res.Issues) != 0 {
+		t.Fatalf("full identity match must resolve clean, got %+v", res.Issues)
+	}
+	if res.ProvidedSlugs["skill-a"] != "dep-a" || res.ProvidedSlugs["prompt-a"] != "dep-a" {
+		t.Errorf("ProvidedSlugs = %+v", res.ProvidedSlugs)
+	}
+}
+
 func TestResolve_FetchFailed(t *testing.T) {
 	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusServiceUnavailable)

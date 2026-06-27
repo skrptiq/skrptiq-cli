@@ -13,12 +13,15 @@
 // readability only. No `hub-shared/` prefix anywhere — that namespace
 // convention is gone.
 //
-// Trust chain (plan §3): manifest `DependencyRef.Checksum` is the trust
-// anchor. The resolver fetches metadata from Hub, verifies the returned
-// checksum equals the manifest-declared checksum, then accepts the
-// returned node list. A mismatch is a hard ERROR — closes the CTO §F2.1
-// phantom-dependency hole. There is no fallback path; if verification
-// fails the scan fails.
+// Trust chain (plan §3; GH#722): the resolver fetches metadata from Hub
+// and asserts the full identity triple — the Hub-reported checksum, id
+// (canonical K-037 UUID), and version must each equal the manifest-
+// declared value — before accepting the returned node list. Any mismatch
+// is a hard ERROR (`dependency.{checksum,id,version}_mismatch`) — closes
+// the CTO §F2.1 phantom-dependency hole and the §6.2c checksum-only-
+// identity hole (the metadata URL keys on name+version, not id, so
+// checksum match alone does not prove the object is the declared one).
+// There is no fallback path; if verification fails the scan fails.
 package depresolver
 
 import (
@@ -180,6 +183,33 @@ func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEnt
 		}}
 	}
 
+	// §6.2c identity assertion (GH#722): checksum match alone is not
+	// identity. The metadata URL is keyed on name+version, so a manifest
+	// could declare dep.ID = <UUID-A> while name/version resolve to a
+	// *different* catalogue object whose checksum happens to match. Assert
+	// the Hub-reported canonical UUID equals the declared one — reject,
+	// never warn. This is the online-path sibling of the GH#714 offline
+	// gate; both trust paths now assert id+version+checksum.
+	if meta.ID != dep.ID {
+		return nil, []storage.ValidationIssue{{
+			Code:     "dependency.id_mismatch",
+			Severity: storage.SeverityError,
+			Message:  fmt.Sprintf("dependency %s@%s: manifest id %s != Hub-reported %s", dep.Name, dep.Version, dep.ID, meta.ID),
+			Field:    "dependencies",
+		}}
+	}
+
+	// Belt-and-braces: the URL keys on version so this is near-redundant,
+	// but a Hub returning a divergent version must fail loud, not pass.
+	if meta.Version != dep.Version {
+		return nil, []storage.ValidationIssue{{
+			Code:     "dependency.version_mismatch",
+			Severity: storage.SeverityError,
+			Message:  fmt.Sprintf("dependency %s@%s: manifest version %s != Hub-reported %s", dep.Name, dep.Version, dep.Version, meta.Version),
+			Field:    "dependencies",
+		}}
+	}
+
 	entry := cacheEntry{
 		ID:        dep.ID,
 		Version:   dep.Version,
@@ -200,15 +230,16 @@ func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEnt
 // auto-generated. Updates to one MUST be propagated to the others
 // manually — there is no canonical schema source yet.
 //
-//	1. Hub server (canonical de facto) — defines the wire shape.
-//	2. engine/hubapi.Skrpt — used by CLI's `hub list/search/import`
-//	   commands. Lives in skrptiq-app/engine/hubapi/types.go.
-//	3. depresolver.hubMetadata + NodeInfo (here) — used by `scan`'s
-//	   dep resolution. The only Go-side shape for /api/shared/.
-//	4. electron-app/src/main/hub/api-client.ts:HubSkrpt + HubSharedMetadata
-//	   — TS client used by the desktop app.
+//  1. Hub server (canonical de facto) — defines the wire shape.
+//  2. engine/hubapi.Skrpt — used by CLI's `hub list/search/import`
+//     commands. Lives in skrptiq-app/engine/hubapi/types.go.
+//  3. depresolver.hubMetadata + NodeInfo (here) — used by `scan`'s
+//     dep resolution. The only Go-side shape for /api/shared/.
+//  4. electron-app/src/main/hub/api-client.ts:HubSkrpt + HubSharedMetadata
+//     — TS client used by the desktop app.
 //
 // Live drift-detection tests (`SKRPTIQ_HUB_URL`-gated) live at:
+//
 //	internal/engine/hub_drift_test.go — pins engine/hubapi.Skrpt
 //	internal/scan/depresolver/live_test.go — pins this hubMetadata shape
 //
