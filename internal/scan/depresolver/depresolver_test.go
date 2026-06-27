@@ -438,6 +438,65 @@ func TestResolve_FutureCacheSchemaDropped(t *testing.T) {
 	}
 }
 
+// GH#722 — a v1 cache file (the pre-fix schema, written by code that
+// asserted checksum only) must be dropped, not served. Otherwise a dep
+// blessed under the weaker checksum-only gate would be returned on the
+// next scan before the new id/version assertion runs, leaving the §6.2c
+// hole open for already-cached deps. The schema bump (1 → 2) forces a
+// re-resolve under the full id+version+checksum triple.
+func TestResolve_V1CacheSchemaDropped(t *testing.T) {
+	cacheDir := t.TempDir()
+	// A well-formed v1 cache file blessed under checksum-only acceptance.
+	v1 := []byte(`{
+  "schemaVersion": 1,
+  "entries": {
+    "` + uuidDepA + `@1.0.0@sha256:a": {
+      "id": "` + uuidDepA + `",
+      "version": "1.0.0",
+      "checksum": "sha256:a",
+      "nodes": [{"id": "uuid-skill-a", "slug": "skill-a", "type": "skill"}],
+      "fetched_at": "2026-06-01T00:00:00Z"
+    }
+  }
+}`)
+	if err := os.WriteFile(filepath.Join(cacheDir, "dep-nodes.json"), v1, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The v1 entry must NOT be served; the dep must re-resolve via Hub so
+	// the id/version assertion runs.
+	var fetched int32
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&fetched, 1)
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+		})
+	})
+	r, _ := New(Config{HubBaseURL: srv.URL, CacheDir: cacheDir})
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+	if fetched != 1 {
+		t.Errorf("v1 cache must not be served; expected 1 fresh fetch, got %d", fetched)
+	}
+	if _, hit := res.ProvidedSlugs["skill-a"]; !hit {
+		t.Errorf("post-fetch ProvidedSlugs missing skill-a: %+v", res.ProvidedSlugs)
+	}
+
+	// File must be rewritten at the current (v2) schema version.
+	data, err := os.ReadFile(filepath.Join(cacheDir, "dep-nodes.json"))
+	if err != nil {
+		t.Fatalf("cache file missing after fresh fetch: %v", err)
+	}
+	var cf cacheFile
+	if err := json.Unmarshal(data, &cf); err != nil {
+		t.Fatalf("cache file unparseable: %v", err)
+	}
+	if cf.SchemaVersion != currentCacheSchemaVersion {
+		t.Errorf("cache schema version = %d; want %d", cf.SchemaVersion, currentCacheSchemaVersion)
+	}
+}
+
 // GH#654 — within the same schema version, a normal write/read
 // round-trip preserves entries (no spurious miss).
 func TestResolve_CurrentCacheSchemaRoundtrip(t *testing.T) {

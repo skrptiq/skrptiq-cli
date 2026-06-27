@@ -327,7 +327,17 @@ func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) 
 // Schema version 1 corresponds to v0.0.19's GH#650 NodeInfo shape
 // (id, slug, type, title, content?). v0.0.16–v0.0.18 wrote no
 // version field; readCache treats that as v0 and drops the file.
-const currentCacheSchemaVersion = 1
+//
+// GH#722 bump (1 → 2): the cache key is the *declared* id@version@checksum
+// and a cache hit returns before fetchMetadata + the new id/version
+// assertion ever run (resolveDep). A dep cached under the old
+// checksum-only code would therefore be served on the next scan without
+// the §6.2c identity gate firing, leaving the hole open for already-cached
+// deps until natural expiry. A v1 entry is a checksum-keyed acceptance —
+// not trustworthy under the stricter id+version+checksum gate — so it must
+// be dropped and re-resolved under the full triple. Bumping invalidates
+// every pre-fix cache file via the readCache schema-version gate.
+const currentCacheSchemaVersion = 2
 
 type cacheEntry struct {
 	ID        string     `json:"id"`
