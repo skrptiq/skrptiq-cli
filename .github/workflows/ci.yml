@@ -24,6 +24,30 @@ jobs:
         with:
           path: skrptiq-cli
 
+      # CI builds against app main HEAD (deliberate — catch engine breakage
+      # early), but the RELEASE build pins the engine to .engine-pin. Validate
+      # that pin here so a stale/invalid pin fails in PR, not at release time.
+      - name: Pin sanity (.engine-pin valid + reachable from app main)
+        working-directory: skrptiq-cli
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if [ ! -f .engine-pin ]; then
+            echo "::error::.engine-pin is missing — the release build would have no engine to pin to."
+            exit 1
+          fi
+          PIN=$(tr -d '[:space:]' < .engine-pin)
+          if [[ ! "$PIN" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::.engine-pin is not a 40-hex commit SHA (got '${PIN}')."
+            exit 1
+          fi
+          STATUS=$(gh api "repos/skrptiq/skrptiq-app/compare/${PIN}...main" --jq '.status')
+          echo "engine pin ${PIN:0:7}; compare ...main => $STATUS"
+          case "$STATUS" in
+            ahead|identical) echo "Pin is reachable from app main — OK." ;;
+            *) echo "::error::Engine pin ${PIN} is not an ancestor of app main (status=${STATUS})."; exit 1 ;;
+          esac
+
       - name: Checkout engine (app repo)
         uses: actions/checkout@v4
         with:

@@ -13,9 +13,10 @@ env:
   BINARY_NAME: skrptiq
 
 jobs:
-  # Auto-tag job — runs only on repository_dispatch.
-  # Computes next patch version from the latest tag, creates + pushes it.
-  # The new tag triggers a second run of this workflow via push:tags.
+  # Auto-tag job — runs only on repository_dispatch (App release -> engine-updated).
+  # Pins the engine to the released SHA (client_payload.engine_sha), commits that
+  # pin to main, then computes + pushes the next patch tag. The new tag triggers a
+  # second run of this workflow via push:tags, which builds against the pinned SHA.
   auto-tag:
     if: github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
@@ -35,10 +36,30 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Compute next patch version and tag
+      - name: Pin engine to the released SHA
+        env:
+          ENGINE_SHA: ${{ github.event.client_payload.engine_sha }}
         run: |
+          # Fail loud: the dispatch MUST carry a full 40-hex engine SHA. No SHA
+          # -> no reproducible pin -> refuse to release (never fall back to HEAD).
+          if [[ ! "$ENGINE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::engine-updated dispatch carried no valid engine_sha (got '${ENGINE_SHA}'). Cannot pin — aborting."
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf '%s\n' "$ENGINE_SHA" > .engine-pin
+          if git diff --quiet .engine-pin; then
+            echo "Engine pin already at ${ENGINE_SHA:0:7} — no bump commit needed."
+          else
+            git add .engine-pin
+            git commit -m "chore: pin engine to ${ENGINE_SHA:0:7} (App release ${{ github.event.client_payload.release_tag }})"
+            git push origin HEAD:main
+            echo "Pinned engine -> ${ENGINE_SHA} and pushed to main."
+          fi
+
+      - name: Compute next patch version and tag
+        run: |
           LATEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
           if [ -z "$LATEST" ]; then
             NEXT="v0.0.1"
@@ -49,11 +70,61 @@ jobs:
             PATCH=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f3)
             NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
           fi
-          echo "Tagging $NEXT (previous: $LATEST)"
+          echo "Tagging $NEXT (previous: $LATEST) at $(git rev-parse --short HEAD)"
           git tag -a "$NEXT" -m "$NEXT — automated patch release (engine update)"
           git push origin "$NEXT"
 
+  # Verify the engine pin ONCE per tag build (cheap, authoritative) before the
+  # per-arch matrix builds. Guards the "unpinned build" failure mode loudly.
+  verify-pin:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      engine_sha: ${{ steps.pin.outputs.sha }}
+    steps:
+      - name: Generate pipeline app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          owner: skrptiq
+          repositories: skrptiq-cli,skrptiq-app
+
+      - name: Checkout CLI (at the tag)
+        uses: actions/checkout@v4
+
+      - name: Read + validate engine pin
+        id: pin
+        run: |
+          if [ ! -f .engine-pin ]; then
+            echo "::error::.engine-pin is missing — the release build has no engine to pin to. Aborting."
+            exit 1
+          fi
+          PIN=$(tr -d '[:space:]' < .engine-pin)
+          if [[ ! "$PIN" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::.engine-pin is not a 40-hex commit SHA (got '${PIN}'). Aborting."
+            exit 1
+          fi
+          echo "sha=$PIN" >> "$GITHUB_OUTPUT"
+          echo "Engine pin: $PIN"
+
+      - name: Assert pin is an ancestor of app main
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          PIN="${{ steps.pin.outputs.sha }}"
+          # compare/<pin>...main == ahead (main ahead of pin) or identical => pin
+          # is reachable from main. behind/diverged => pin is off-main; refuse.
+          STATUS=$(gh api "repos/skrptiq/skrptiq-app/compare/${PIN}...main" --jq '.status')
+          echo "compare ${PIN:0:7}...main => $STATUS"
+          case "$STATUS" in
+            ahead|identical) echo "Pin is reachable from app main — OK." ;;
+            *) echo "::error::Engine pin ${PIN} is not an ancestor of app main (status=${STATUS}). Refusing to release an off-main engine."; exit 1 ;;
+          esac
+
   build:
+    needs: verify-pin
     if: github.event_name == 'push'
     strategy:
       matrix:
@@ -94,12 +165,24 @@ jobs:
         with:
           path: skrptiq-cli
 
-      - name: Checkout engine (app repo)
+      - name: Checkout engine (app repo) at the pinned SHA
         uses: actions/checkout@v4
         with:
           repository: skrptiq/skrptiq-app
+          ref: ${{ needs.verify-pin.outputs.engine_sha }}
           path: skrptiq-app
           token: ${{ steps.app-token.outputs.token }}
+
+      - name: Assert engine checkout matches the pin
+        shell: bash
+        run: |
+          PIN="${{ needs.verify-pin.outputs.engine_sha }}"
+          HEAD=$(git -C skrptiq-app rev-parse HEAD)
+          if [ "$HEAD" != "$PIN" ]; then
+            echo "::error::Engine checkout HEAD ($HEAD) != pinned SHA ($PIN). Aborting non-reproducible build."
+            exit 1
+          fi
+          echo "Engine pinned + verified at $HEAD"
 
       - name: Set up Go
         uses: actions/setup-go@v5
