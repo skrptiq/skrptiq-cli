@@ -26,3 +26,8 @@ docs/BRIEFING.md
 # OS
 .DS_Store
 Thumbs.db
+docs/.briefing-updated
+triggers/
+
+# Agent-local config
+.claude/
