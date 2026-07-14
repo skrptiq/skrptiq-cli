@@ -417,3 +417,44 @@ func TestHelpFlagInterceptsCommand(t *testing.T) {
 	}
 }
 
+// GH#842 — deprecationNotice renders the "deprecated — superseded by X"
+// note for the /hub import detail surface, and stays silent for
+// non-deprecated skrpts.
+func TestDeprecationNotice(t *testing.T) {
+	succ := "word-count-gated-writer-v2"
+	empty := ""
+	cases := []struct {
+		name         string
+		deprecated   bool
+		supersededBy *string
+		wantOK       bool
+		wantContains string
+		wantOmits    string
+	}{
+		{"not deprecated", false, &succ, false, "", ""},
+		{"not deprecated nil successor", false, nil, false, "", ""},
+		{"deprecated with successor", true, &succ, true, "superseded by " + succ, ""},
+		{"deprecated no successor", true, nil, true, "deprecated", "superseded by"},
+		{"deprecated empty successor", true, &empty, true, "deprecated", "superseded by"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			note, ok := deprecationNotice(c.deprecated, c.supersededBy)
+			if ok != c.wantOK {
+				t.Fatalf("ok = %v, want %v (note=%q)", ok, c.wantOK, note)
+			}
+			if !ok {
+				if note != "" {
+					t.Errorf("expected empty note when not shown, got %q", note)
+				}
+				return
+			}
+			if c.wantContains != "" && !strings.Contains(note, c.wantContains) {
+				t.Errorf("note %q should contain %q", note, c.wantContains)
+			}
+			if c.wantOmits != "" && strings.Contains(note, c.wantOmits) {
+				t.Errorf("note %q should omit %q", note, c.wantOmits)
+			}
+		})
+	}
+}

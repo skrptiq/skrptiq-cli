@@ -340,7 +340,10 @@ func (m *Model) handleHub(sub, args string) {
 		skrpt, err := m.engine.Hub.GetSkrpt(slug)
 		if err != nil { m.Print(theme.ErrorText.Render("Hub error: " + err.Error())); return }
 		if skrpt == nil { m.Print(theme.ErrorText.Render("Skrpt not found: " + slug)); return }
-		m.Print(fmt.Sprintf("Found: %s v%s (%d nodes)\nImport download not yet wired.", theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
+		m.Print(fmt.Sprintf("Found: %s v%s (%d nodes)", theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
+		// GH#842 — a deprecated skrpt is still importable (K-033); warn and point to the successor, don't block.
+		if note, ok := deprecationNotice(skrpt.Deprecated, skrpt.SupersededBy); ok { m.Print(theme.WarningText.Render(note)) }
+		m.Print("Import download not yet wired.")
 	case "update":
 		imports, err := m.engine.HubImports()
 		if err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
@@ -360,6 +363,21 @@ func (m *Model) handleHub(sub, args string) {
 	default:
 		m.Print(usageBlock("/hub", []string{"list", "search", "import", "update"}))
 	}
+}
+
+// deprecationNotice builds the "deprecated — superseded by X" note for a
+// skrpt (GH#842). Returns ("", false) when not deprecated so the caller
+// prints nothing. Pure + free of the Hub client so it's unit-testable
+// without a network round-trip.
+func deprecationNotice(deprecated bool, supersededBy *string) (string, bool) {
+	if !deprecated {
+		return "", false
+	}
+	note := "⚠ deprecated"
+	if supersededBy != nil && *supersededBy != "" {
+		note += " — superseded by " + *supersededBy
+	}
+	return note, true
 }
 
 // --- /runs ---

@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/skrptiq/engine/parse"
+	"github.com/skrptiq/engine/storage"
 )
 
 // Synthetic UUIDs used across the test suite. Per K-037 the catalogue ID
@@ -547,6 +549,110 @@ func TestResolve_CorruptCacheTreatedAsMiss(t *testing.T) {
 			if i.Severity == "error" {
 				t.Errorf("corrupt cache must not produce error: %+v", i)
 			}
+		}
+	}
+}
+
+// GH#842 — a deprecated dependency must still resolve (K-033), surfacing a
+// single non-blocking warning that points to the successor. It must NOT
+// become a hard error / block the scan.
+func TestResolve_Deprecated_WarnsButResolves(t *testing.T) {
+	successor := "word-count-gated-writer-v2"
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":       uuidDepA,
+			"version":  "1.0.0",
+			"checksum": "sha256:a",
+			"nodes": []NodeInfo{
+				{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+			},
+			"deprecated":   true,
+			"supersededBy": successor,
+		})
+	})
+	r := newTestResolver(t, srv.URL)
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+
+	// Still resolves — nodes flow through.
+	if res.ProvidedSlugs["skill-a"] != "dep-a" {
+		t.Errorf("deprecated dep must still resolve; ProvidedSlugs = %+v", res.ProvidedSlugs)
+	}
+
+	// Exactly one warning, non-blocking, pointing to the successor.
+	var deprec []storage.ValidationIssue
+	for _, i := range res.Issues {
+		if i.Severity == storage.SeverityError {
+			t.Fatalf("deprecation must not be a hard error: %+v", i)
+		}
+		if i.Code == "dependency.deprecated" {
+			deprec = append(deprec, i)
+		}
+	}
+	if len(deprec) != 1 {
+		t.Fatalf("expected 1 dependency.deprecated warning, got %d (%+v)", len(deprec), res.Issues)
+	}
+	got := deprec[0]
+	if got.Severity != storage.SeverityWarning {
+		t.Errorf("deprecation severity = %q, want warning", got.Severity)
+	}
+	if got.ReferencedSlug != "dep-a" {
+		t.Errorf("ReferencedSlug = %q, want dep-a", got.ReferencedSlug)
+	}
+	if !strings.Contains(got.Message, successor) {
+		t.Errorf("message %q should point to successor %q", got.Message, successor)
+	}
+}
+
+// A deprecated dep with no successor still warns, just without the
+// "superseded by" clause.
+func TestResolve_Deprecated_NoSuccessor(t *testing.T) {
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":         uuidDepA,
+			"version":    "1.0.0",
+			"checksum":   "sha256:a",
+			"nodes":      []NodeInfo{{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"}},
+			"deprecated": true,
+		})
+	})
+	r := newTestResolver(t, srv.URL)
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+	var found bool
+	for _, i := range res.Issues {
+		if i.Code == "dependency.deprecated" {
+			found = true
+			if i.Severity != storage.SeverityWarning {
+				t.Errorf("severity = %q, want warning", i.Severity)
+			}
+			if strings.Contains(i.Message, "superseded by") {
+				t.Errorf("message %q should omit successor clause", i.Message)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a dependency.deprecated warning, got %+v", res.Issues)
+	}
+}
+
+// A non-deprecated dep produces no deprecation warning (happy path
+// unchanged — the helper returns nil, not an empty issue).
+func TestResolve_NotDeprecated_NoWarning(t *testing.T) {
+	srv := mockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeMetadata(w, uuidDepA, "1.0.0", "sha256:a", []NodeInfo{
+			{ID: "uuid-skill-a", Slug: "skill-a", Type: "skill"},
+		})
+	})
+	r := newTestResolver(t, srv.URL)
+	res := r.Resolve([]parse.DependencyRef{
+		{ID: uuidDepA, Name: "dep-a", Version: "1.0.0", Checksum: "sha256:a"},
+	})
+	for _, i := range res.Issues {
+		if i.Code == "dependency.deprecated" {
+			t.Errorf("unexpected deprecation warning for non-deprecated dep: %+v", i)
 		}
 	}
 }
