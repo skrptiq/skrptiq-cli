@@ -161,7 +161,7 @@ func (r *Resolver) Resolve(deps []parse.DependencyRef) Result {
 // alongside.
 func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEntry) (*cacheEntry, []storage.ValidationIssue) {
 	if entry, hit := cache[cacheKey(dep)]; hit {
-		return &entry, nil
+		return &entry, deprecationIssues(dep, entry)
 	}
 
 	meta, err := r.fetchMetadata(dep)
@@ -211,13 +211,38 @@ func (r *Resolver) resolveDep(dep parse.DependencyRef, cache map[string]cacheEnt
 	}
 
 	entry := cacheEntry{
-		ID:        dep.ID,
-		Version:   dep.Version,
-		Checksum:  dep.Checksum,
-		Nodes:     meta.Nodes,
-		FetchedAt: time.Now().UTC().Format(time.RFC3339),
+		ID:           dep.ID,
+		Version:      dep.Version,
+		Checksum:     dep.Checksum,
+		Nodes:        meta.Nodes,
+		FetchedAt:    time.Now().UTC().Format(time.RFC3339),
+		Deprecated:   meta.Deprecated,
+		SupersededBy: meta.SupersededBy,
 	}
-	return &entry, nil
+	return &entry, deprecationIssues(dep, entry)
+}
+
+// deprecationIssues surfaces a non-blocking warning when a referenced
+// dependency is deprecated (GH#835/#842). K-033: the dep is still
+// resolvable — we warn and point to the successor, we never fail the
+// scan on it. Returns nil (not an empty slice) when not deprecated, so
+// the happy path is unchanged.
+func deprecationIssues(dep parse.DependencyRef, entry cacheEntry) []storage.ValidationIssue {
+	if !entry.Deprecated {
+		return nil
+	}
+	msg := fmt.Sprintf("dependency %s@%s is deprecated", dep.Name, dep.Version)
+	if entry.SupersededBy != nil && *entry.SupersededBy != "" {
+		msg += fmt.Sprintf(" — superseded by %s", *entry.SupersededBy)
+	}
+	return []storage.ValidationIssue{{
+		Code:           "dependency.deprecated",
+		Severity:       storage.SeverityWarning,
+		Message:        msg,
+		Field:          "dependencies",
+		ReferencedSlug: dep.Name,
+		ReferenceKind:  "dependency",
+	}}
 }
 
 // hubMetadata is the wire shape returned by GET /api/shared/<slug>/<v>/metadata
@@ -252,6 +277,12 @@ type hubMetadata struct {
 	Version  string     `json:"version"`
 	Checksum string     `json:"checksum"`
 	Nodes    []NodeInfo `json:"nodes"`
+	// GH#835/#842 — discovery-only deprecation flag + successor pointer,
+	// additive on the resolution response. A deprecated dep is still
+	// resolvable (K-033); scan surfaces a non-blocking warning, never a
+	// hard failure. SupersededBy is nil when absent/null.
+	Deprecated   bool    `json:"deprecated,omitempty"`
+	SupersededBy *string `json:"supersededBy,omitempty"`
 }
 
 // NodeInfo is one entry in the dep's node list. Wire shape mirrors
@@ -345,6 +376,11 @@ type cacheEntry struct {
 	Checksum  string     `json:"checksum"`
 	Nodes     []NodeInfo `json:"nodes"`
 	FetchedAt string     `json:"fetched_at"`
+	// Deprecation carried in the cache so a cache HIT warns identically to a
+	// fresh fetch (GH#842). Old cache entries lack these → zero value =
+	// not deprecated, which is correct.
+	Deprecated   bool    `json:"deprecated,omitempty"`
+	SupersededBy *string `json:"superseded_by,omitempty"`
 }
 
 type cacheFile struct {
