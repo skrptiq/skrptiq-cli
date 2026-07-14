@@ -465,7 +465,10 @@ func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[str
 
 // ResumeExecution resumes a paused execution with gate input.
 func (a *App) ResumeExecution(ctx context.Context, executionID string, gateInput string, onProgress exec.ProgressCallback) (string, error) {
-	return exec.ResumeExecution(ctx, a.DB, executionID, gateInput, onProgress)
+	// runOptions is nil: the CLI threads no run-secrets on RUN either (see
+	// RunWorkflow above — all RunOptions args nil), so resume resolves
+	// secrets identically. No #761-equivalent resume-secrets bug here.
+	return exec.ResumeExecution(ctx, a.DB, executionID, gateInput, onProgress, nil)
 }
 
 // ListDeps returns workspace dependencies from skrptiq.yaml in the given directory.
