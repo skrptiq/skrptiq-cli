@@ -330,7 +330,7 @@ func (m *Model) handleHub(sub, args string) {
 		m.Print(fmt.Sprintf("%d results for %q:", len(results), query))
 		for _, r := range results {
 			line := fmt.Sprintf("  %s", theme.Bold.Render(r.Name))
-			if r.Category != "" { line += theme.Faint.Render(" [" + r.Category + "]") }
+			if r.CategoryName != "" { line += theme.Faint.Render(" [" + r.CategoryName + "]") }
 			m.Print(line)
 			if r.Description != "" { m.Print("    " + theme.Faint.Render(r.Description)) }
 		}
@@ -340,7 +340,7 @@ func (m *Model) handleHub(sub, args string) {
 		skrpt, err := m.engine.Hub.GetSkrpt(slug)
 		if err != nil { m.Print(theme.ErrorText.Render("Hub error: " + err.Error())); return }
 		if skrpt == nil { m.Print(theme.ErrorText.Render("Skrpt not found: " + slug)); return }
-		m.Print(fmt.Sprintf("Found: %s v%s (%d nodes)", theme.Bold.Render(skrpt.Name), skrpt.Version, skrpt.NodeCount))
+		m.Print(fmt.Sprintf("Found: %s v%s (%d nodes)", theme.Bold.Render(skrpt.Name), latestVersionString(skrpt.LatestVersion), skrpt.NodeCount))
 		// GH#842 — a deprecated skrpt is still importable (K-033); warn and point to the successor, don't block.
 		if note, ok := deprecationNotice(skrpt.Deprecated, skrpt.SupersededBy); ok { m.Print(theme.WarningText.Render(note)) }
 		m.Print("Import download not yet wired.")
@@ -378,6 +378,32 @@ func deprecationNotice(deprecated bool, supersededBy *string) (string, bool) {
 		note += " — superseded by " + *supersededBy
 	}
 	return note, true
+}
+
+// latestVersionString extracts the display version from the polymorphic
+// hubapi.Skrpt.LatestVersion (GH#528): a bare JSON string on the list
+// endpoint, an object {version, gitCommit, …} on the detail endpoint
+// (/api/skrpts/:slug — what GetSkrpt hits). Returns "" for absent/null/
+// unparseable input so callers render gracefully.
+func latestVersionString(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	if trimmed[0] == '{' { // object form: {"version": "...", ...}
+		var obj struct {
+			Version string `json:"version"`
+		}
+		if err := json.Unmarshal(raw, &obj); err == nil {
+			return obj.Version
+		}
+		return ""
+	}
+	var s string // string form: "1.2.3"
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return ""
 }
 
 // --- /runs ---

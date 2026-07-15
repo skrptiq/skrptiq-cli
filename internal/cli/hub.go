@@ -79,8 +79,8 @@ func Hub(args []string, dbPath string) int {
 		fmt.Printf("%d results for %q:\n", len(results), query)
 		for _, r := range results {
 			line := fmt.Sprintf("  %s", r.Name)
-			if r.Category != "" {
-				line += " [" + r.Category + "]"
+			if r.CategoryName != "" {
+				line += " [" + r.CategoryName + "]"
 			}
 			fmt.Println(line)
 			if r.Description != "" {

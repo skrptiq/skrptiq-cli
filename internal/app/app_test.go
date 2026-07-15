@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -454,6 +455,34 @@ func TestDeprecationNotice(t *testing.T) {
 			}
 			if c.wantOmits != "" && strings.Contains(note, c.wantOmits) {
 				t.Errorf("note %q should omit %q", note, c.wantOmits)
+			}
+		})
+	}
+}
+
+// GH#846/#528 — LatestVersion is polymorphic: an object {version, …} on the
+// detail endpoint (what GetSkrpt hits), a bare string on the list endpoint.
+// latestVersionString must extract the version from either, and degrade to ""
+// for absent/null/garbage rather than render a broken "v".
+func TestLatestVersionString(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"detail object", `{"version":"1.2.3","gitCommit":"abc123","publishedAt":"2026-01-01"}`, "1.2.3"},
+		{"object missing version", `{"gitCommit":"abc123"}`, ""},
+		{"list bare string", `"2.0.0"`, "2.0.0"},
+		{"empty raw", ``, ""},
+		{"json null", `null`, ""},
+		{"whitespace padded object", "  {\"version\":\"9.9.9\"}  ", "9.9.9"},
+		{"malformed", `{oops`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := latestVersionString(json.RawMessage(c.raw))
+			if got != c.want {
+				t.Errorf("latestVersionString(%q) = %q, want %q", c.raw, got, c.want)
 			}
 		})
 	}
