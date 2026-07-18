@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/skrptiq/skrptiq-cli/internal/app"
+	"github.com/skrptiq/skrptiq-cli/internal/bridge"
 	"github.com/skrptiq/skrptiq-cli/internal/cli"
 	"github.com/skrptiq/skrptiq-cli/internal/scan"
 	"github.com/skrptiq/skrptiq-cli/internal/version"
@@ -33,6 +34,8 @@ Commands:
   catalogue <dir>             List all skrpts in a directory (JSON)
   sign <dir> --key-env <VAR>  Sign a bundle (adds integrity + trust blocks)
   verify <bundle.zip>         Verify a signed bundle
+  bridge <status|enable|disable>
+                              Manage the browser native-messaging bridge
   help                        Show this help message
   version                     Print version and exit
 
@@ -76,6 +79,13 @@ Examples:
 }
 
 func main() {
+	// Hidden native-messaging bridge modes (GH#866) — spawned by the engine
+	// (--mode mcp) or by Chrome via the native-messaging wrapper (--mode host),
+	// never by a user. Handle before any flag parsing or engine init.
+	if handled, code := bridge.Dispatch(os.Args[1:]); handled {
+		os.Exit(code)
+	}
+
 	dbPath := flag.String("db-path", "", "Path to SQLite database (overrides default)")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Usage = func() { printHelp() }
@@ -128,6 +138,8 @@ func main() {
 			os.Exit(cli.Sign(args[1:]))
 		case "verify":
 			os.Exit(cli.Verify(args[1:]))
+		case "bridge":
+			os.Exit(cli.Bridge(args[1:], *dbPath))
 		case "version":
 			fmt.Println("skrptiq " + version.Full())
 			return

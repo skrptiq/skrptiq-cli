@@ -17,6 +17,7 @@ import (
 	"github.com/skrptiq/engine/llm"
 	"github.com/skrptiq/engine/storage"
 
+	"github.com/skrptiq/skrptiq-cli/internal/bridge"
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 	"github.com/skrptiq/skrptiq-cli/internal/prompt"
 	"github.com/skrptiq/skrptiq-cli/internal/theme"
@@ -99,6 +100,10 @@ func New(dbPath string) (Model, error) {
 			os.Chdir(ws)
 		}
 	}
+
+	// Reconnect the browser bridge if the user enabled it (default-OFF ⇒ no-op).
+	// Enhancement-class (GH#866): never blocks session start.
+	bridge.NewManager(engine.DB).ConnectIfEnabled()
 
 	m := Model{
 		engine: engine,
