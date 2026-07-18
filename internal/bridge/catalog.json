@@ -1,0 +1,194 @@
+[
+  {
+    "name": "read_page",
+    "description": "Read the visible text of a browser tab the user is logged into. Returns { url, title, text }. Read-only; requires read consent for the tab's origin.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabId": {
+          "type": "number",
+          "description": "Optional tab id. Defaults to the active tab of the last focused window."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "snapshot",
+    "description": "Accessibility snapshot of a tab: interactive elements as { ref, role, name, value } (semantic, not CSS selectors). Read-only. Use the refs with find/extract.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabId": {
+          "type": "number",
+          "description": "Optional tab id. Defaults to the active tab of the last focused window."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "find",
+    "description": "Find elements on a tab by semantic query. Returns matching { ref, role, name }. Set query.expectUnique to require exactly one (else selector_not_found / ambiguous_target). Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabId": {
+          "type": "number",
+          "description": "Optional tab id. Defaults to the active tab of the last focused window."
+        },
+        "query": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "type": "string",
+              "description": "e.g. button, link, textbox, heading"
+            },
+            "name": {
+              "type": "string",
+              "description": "accessible-name substring"
+            },
+            "text": {
+              "type": "string",
+              "description": "visible-text substring"
+            },
+            "expectUnique": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "extract",
+    "description": "Read the text of a previously found element by ref (from snapshot/find). Returns { ref, role, name, text }. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabId": {
+          "type": "number",
+          "description": "Optional tab id. Defaults to the active tab of the last focused window."
+        },
+        "ref": {
+          "type": "string",
+          "description": "a ref from a prior snapshot/find on this tab"
+        },
+        "snapshotId": {
+          "type": "string",
+          "description": "optional; guards against a stale snapshot"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "click",
+    "description": "Click a previously found element by ref (from find/snapshot). STATE-CHANGING — gated for approval and requires write consent for the tab's origin. Pass expectRole/expectName from the find result: the click only fires if the ref still resolves to a live element whose role and name match (TOCTOU guard), else it fails loud. Returns { ref, role, name, clicked }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabId": {
+          "type": "number",
+          "description": "Optional tab id. Defaults to the active tab of the last focused window."
+        },
+        "ref": {
+          "type": "string",
+          "description": "a ref from a prior find/snapshot on this tab"
+        },
+        "expectName": {
+          "type": "string",
+          "description": "the element's accessible name from find (e.g. \"Submit\"); verified against the live element before clicking"
+        },
+        "expectRole": {
+          "type": "string",
+          "description": "the element's role from find (e.g. \"button\"); verified against the live element before clicking"
+        },
+        "snapshotId": {
+          "type": "string",
+          "description": "optional; guards against a stale snapshot"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "fill",
+    "description": "Set the value of a previously found editable field by ref (from find/snapshot). STATE-CHANGING — gated for approval and requires write consent for the tab's origin. Pass expectRole/expectName from the find result (TOCTOU guard: fails loud if the ref drifted). The value is entered as-is; secret values (e.g. into a password field) are redacted in the approval prompt and action log but still filled. Returns { ref, role, name, filled }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabId": {
+          "type": "number",
+          "description": "Optional tab id. Defaults to the active tab of the last focused window."
+        },
+        "ref": {
+          "type": "string",
+          "description": "a ref from a prior find/snapshot on this tab"
+        },
+        "value": {
+          "type": "string",
+          "description": "the text to set as the field value"
+        },
+        "expectName": {
+          "type": "string",
+          "description": "the field's accessible name from find; verified before filling"
+        },
+        "expectRole": {
+          "type": "string",
+          "description": "the field's role from find (e.g. textbox); verified before filling"
+        },
+        "snapshotId": {
+          "type": "string",
+          "description": "optional; guards against a stale snapshot"
+        }
+      },
+      "required": [
+        "ref",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "navigate",
+    "description": "Navigate a browser tab to a URL. STATE-CHANGING — gated for approval and requires write consent for the tab's current origin. The destination must be an origin you have already granted (else fails loud); the full URL including query string is shown in the approval prompt. Returns { url, navigated }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tabId": {
+          "type": "number",
+          "description": "Optional tab id. Defaults to the active tab of the last focused window."
+        },
+        "url": {
+          "type": "string",
+          "description": "the absolute URL to navigate the tab to (must be a granted origin)"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  }
+]
