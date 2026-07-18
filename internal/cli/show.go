@@ -106,7 +106,11 @@ func showRun(engine *eng.App, idPrefix string, stepNum int, jsonOut bool) int {
 					outputJSON(os.Stdout, s)
 					return ExitOK
 				}
-				fmt.Printf("%s — step %d\n", s.NodeTitle, s.Position)
+				title := s.NodeTitle
+				if s.ToolObject != nil {
+					title = s.ToolObject.Label()
+				}
+				fmt.Printf("%s — step %d\n", title, s.Position)
 				fmt.Printf("  Status: %s\n", s.Status)
 				if s.Provider != "" {
 					p := s.Provider
@@ -154,6 +158,11 @@ func showRun(engine *eng.App, idPrefix string, stepNum int, jsonOut bool) int {
 	if len(run.Steps) > 0 {
 		fmt.Println("\nSteps")
 		for _, s := range run.Steps {
+			// GH#873 — render node-less builtins as distinct, read-only objects.
+			if s.ToolObject != nil {
+				fmt.Printf("  %d. %s [%s]\n", s.Position, s.ToolObject.Label(), s.Status)
+				continue
+			}
 			line := fmt.Sprintf("  %d. %s [%s]", s.Position, s.NodeTitle, s.Status)
 			if s.Provider != "" {
 				line += " (" + s.Provider + ")"

@@ -486,7 +486,9 @@ func (m *Model) handleRunShow(args string) {
 			fmt.Sscanf(stepNum, "%d", &n)
 			for _, s := range run.Steps {
 				if s.Position == n {
-					m.Print(theme.Title.Render(s.NodeTitle) + " — step " + fmt.Sprintf("%d", s.Position))
+					title := s.NodeTitle
+					if s.ToolObject != nil { title = s.ToolObject.Label() }
+					m.Print(theme.Title.Render(title) + " — step " + fmt.Sprintf("%d", s.Position))
 					m.Print(theme.Faint.Render("Status: ") + statusIcon(s.Status) + " " + s.Status)
 					if s.Provider != "" {
 						p := s.Provider
@@ -514,6 +516,13 @@ func (m *Model) handleRunShow(args string) {
 	if len(run.Steps) > 0 {
 		m.Print("\n" + theme.Bold.Render("Steps"))
 		for _, s := range run.Steps {
+			// GH#873 — node-less builtins render as distinct, read-only objects.
+			if s.ToolObject != nil {
+				line := fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, theme.Faint.Render(s.ToolObject.Label()))
+				if s.Duration != "" { line += theme.Faint.Render(" " + s.Duration) }
+				m.Print(line)
+				continue
+			}
 			line := fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, s.NodeTitle)
 			if s.Provider != "" { line += theme.Faint.Render(" (" + s.Provider + ")") }
 			if s.Duration != "" { line += theme.Faint.Render(" " + s.Duration) }
@@ -927,6 +936,13 @@ func (m *Model) handleStatus() {
 	if len(run.Steps) > 0 {
 		m.Print("")
 		for _, s := range run.Steps {
+			// GH#873 — node-less builtins render as distinct, read-only objects.
+			if s.ToolObject != nil {
+				line := fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, theme.Faint.Render(s.ToolObject.Label()))
+				if s.Duration != "" { line += theme.Faint.Render(" " + s.Duration) }
+				m.Print(line)
+				continue
+			}
 			line := fmt.Sprintf("  %s %d. %s", statusIcon(s.Status), s.Position, s.NodeTitle)
 			if s.Provider != "" { line += theme.Faint.Render(" (" + s.Provider + ")") }
 			if s.Duration != "" { line += theme.Faint.Render(" " + s.Duration) }

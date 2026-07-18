@@ -16,6 +16,8 @@ import (
 	"github.com/skrptiq/engine/llm"
 	"github.com/skrptiq/engine/storage"
 	"github.com/skrptiq/engine/workspace"
+
+	"github.com/skrptiq/skrptiq-cli/internal/toolobject"
 )
 
 // DefaultDBPath returns the database path, checking locations in order:
@@ -254,14 +256,15 @@ func (a *App) ListExecutions(limit int) ([]ExecutionSummary, error) {
 
 // RunDetail is a full execution record with resolved titles.
 type RunDetail struct {
-	ID            string
-	WorkflowTitle string
-	Status        string
-	TotalTokens   int
-	StartedAt     string
-	CompletedAt   *string
-	Error         *string
-	Steps         []StepDetail
+	ID             string
+	WorkflowNodeID string // GH#873 — lets run views BuildPlan to recover builtin ops
+	WorkflowTitle  string
+	Status         string
+	TotalTokens    int
+	StartedAt      string
+	CompletedAt    *string
+	Error          *string
+	Steps          []StepDetail
 }
 
 // StepDetail is a step with its node title resolved.
@@ -275,6 +278,10 @@ type StepDetail struct {
 	Error     string
 	StartedAt string
 	Duration  string
+	// GH#873 / K-057 — set for node-less builtin steps: the read-only ToolObject
+	// the run surfaces render. nil for authorable-node steps. Derived once here so
+	// text, --json, and the interactive views share one derivation (K-049).
+	ToolObject *toolobject.ToolObject `json:"toolObject,omitempty"`
 }
 
 // GetRunDetail returns a full execution with resolved node titles and steps.
@@ -307,6 +314,15 @@ func (a *App) GetRunDetail(id string) (*RunDetail, error) {
 		}
 	}
 
+	// GH#873 — recover node-less builtin ops by correlating run steps to the
+	// workflow plan (best-effort; a drifted/missing plan just yields a generic
+	// builtin object, never a crash).
+	reg := toolobject.NewRegistry()
+	var builtinsByPos map[int]toolobject.ToolObject
+	if plan, perr := a.BuildPlan(exec.WorkflowNodeID); perr == nil {
+		builtinsByPos = reg.ByPosition(plan)
+	}
+
 	var details []StepDetail
 	for _, s := range steps {
 		d := StepDetail{
@@ -332,18 +348,22 @@ func (a *App) GetRunDetail(id string) (*RunDetail, error) {
 		if s.StartedAt != nil && s.CompletedAt != nil {
 			d.Duration = formatDuration(*s.StartedAt, *s.CompletedAt)
 		}
+		if obj, ok := reg.ForRunStep(builtinsByPos, d.Position, d.Provider, d.Model); ok {
+			d.ToolObject = &obj
+		}
 		details = append(details, d)
 	}
 
 	return &RunDetail{
-		ID:            exec.ID,
-		WorkflowTitle: wfTitle,
-		Status:        exec.Status,
-		TotalTokens:   exec.TotalTokens,
-		StartedAt:     exec.StartedAt,
-		CompletedAt:   exec.CompletedAt,
-		Error:         exec.Error,
-		Steps:         details,
+		ID:             exec.ID,
+		WorkflowNodeID: exec.WorkflowNodeID,
+		WorkflowTitle:  wfTitle,
+		Status:         exec.Status,
+		TotalTokens:    exec.TotalTokens,
+		StartedAt:      exec.StartedAt,
+		CompletedAt:    exec.CompletedAt,
+		Error:          exec.Error,
+		Steps:          details,
 	}, nil
 }
 
