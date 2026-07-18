@@ -12,6 +12,7 @@ import (
 
 	exec "github.com/skrptiq/engine/execution"
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
+	"github.com/skrptiq/skrptiq-cli/internal/toolobject"
 )
 
 // inputFlag collects multiple --input k=v flags.
@@ -97,7 +98,11 @@ func Run(args []string, dbPath string) int {
 		gateMode = gateStrict
 	}
 
-	result := runWorkflow(ctx, engine, node.ID, inputMap, gateMode, *gateTimeout, &lastOutput, &executionID)
+	// GH#873 — map builtin steps by position so the live timeline renders them as
+	// distinct, read-only objects rather than plain node rows.
+	builtins := toolobject.NewRegistry().ByPosition(plan)
+
+	result := runWorkflow(ctx, engine, node.ID, inputMap, gateMode, *gateTimeout, &lastOutput, &executionID, builtins)
 
 	// Output.
 	if *jsonOut {
@@ -138,29 +143,41 @@ type runResult struct {
 	exitCode int
 }
 
-func runWorkflow(ctx context.Context, engine *eng.App, nodeID string, inputs map[string]string, gate gateHandling, gateTimeoutSec int, lastOutput *string, execID *string) runResult {
+func runWorkflow(ctx context.Context, engine *eng.App, nodeID string, inputs map[string]string, gate gateHandling, gateTimeoutSec int, lastOutput *string, execID *string, builtins map[int]toolobject.ToolObject) runResult {
 	var finalErr string
+
+	// stepLabel is the builtin object's label for a builtin step, else the node title.
+	stepLabel := func(evt exec.ProgressEvent) string {
+		if obj, ok := builtins[evt.Position]; ok {
+			return obj.Label()
+		}
+		return evt.NodeTitle
+	}
 
 	_, err := engine.RunWorkflow(ctx, nodeID, inputs, func(evt exec.ProgressEvent) {
 		switch evt.Type {
 		case "execution-started":
 			*execID = evt.ExecutionID
 		case "step-started":
-			fmt.Fprintf(os.Stderr, "  ◌ %s\n", evt.NodeTitle)
+			fmt.Fprintf(os.Stderr, "  ◌ %s\n", stepLabel(evt))
 		case "step-chunk":
 			fmt.Fprint(os.Stderr, evt.Chunk)
 			*lastOutput += evt.Chunk
 		case "step-completed":
-			line := fmt.Sprintf("  ✓ %s", evt.NodeTitle)
-			if evt.Provider != "" {
-				line += " (" + evt.Provider + ")"
-			}
-			if evt.TokenUsage != nil {
-				line += fmt.Sprintf(" %d tokens", evt.TokenUsage.Total)
+			line := fmt.Sprintf("  ✓ %s", stepLabel(evt))
+			// Builtins carry their offline/0-token treatment in the label; only
+			// authorable-node steps show provider + token counts.
+			if _, isBuiltin := builtins[evt.Position]; !isBuiltin {
+				if evt.Provider != "" {
+					line += " (" + evt.Provider + ")"
+				}
+				if evt.TokenUsage != nil {
+					line += fmt.Sprintf(" %d tokens", evt.TokenUsage.Total)
+				}
 			}
 			fmt.Fprintln(os.Stderr, line)
 		case "step-failed":
-			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", evt.NodeTitle, evt.Error)
+			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", stepLabel(evt), evt.Error)
 			finalErr = evt.Error
 		case "step-awaiting-input":
 			handleGate(engine, *execID, evt, gate, gateTimeoutSec)
