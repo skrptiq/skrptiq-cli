@@ -21,7 +21,11 @@ const (
 	// the SAME pinned id as the app's manifest, which is what makes K-055
 	// port-per-host routing return a CLI-engine invoke to the CLI's engine. Must
 	// match skrptiq-extension's manifest key + the app's PINNED_EXTENSION_ID.
-	PinnedExtensionID = "bnjefodmfiegaepelegdagnjkgdbfjpd"
+	//
+	// GH#904 — re-pinned to the extension's NEW id (the original signing key was
+	// unrecoverable, so a fresh key/id was minted). Clean cutover: the old id's
+	// key is dead, so we trust the new id ONLY (never dual-list).
+	PinnedExtensionID = "llmehdmoagnnonamndehimjnogiioneh"
 )
 
 // nativeHostManifest is the on-disk native-messaging host manifest.
