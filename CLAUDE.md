@@ -13,17 +13,17 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 
 There is **no briefing file**; GitHub issues are the single source of truth. You do **NOT** run a `/loop` and you do **NOT** print "idle" lines. Instead you run a **background watcher** on `triggers/` that wakes you the instant the orchestrator assigns work and stays completely silent otherwise.
 
-0. **On session start (or when Ben bootstraps you), launch the watcher — ONCE.** Start it as a **persistent background Monitor** (description "trigger watcher"). It polls `triggers/` every ~20s and emits a line ONLY when a NEW trigger appears:
+0. **On session start (or when Ben bootstraps you), launch the watcher — ONCE.** **Launch it with the `Monitor` TOOL** — call the `Monitor` tool with `persistent: true`, `description: "trigger watcher"`, and the poll command below as its `command`. **Do NOT run this loop in a foreground Bash shell** — a shell loop blocks you and delivers no notifications (that's the "shell" failure mode). The `Monitor` tool runs the loop in the background and turns each `work:` stdout line into a notification that wakes you while you stay free. It polls `triggers/` every ~20s and re-emits any present (unconsumed) trigger every ~20s (level-triggered — a missed appearance-event can never strand you idle with work waiting; you `rm` a trigger on pickup so consumed work stops re-emitting):
    ```
    prev=""
    while true; do
      sleep 20
      cur=$(ls triggers/ 2>/dev/null | grep '[.]trigger$' | sort | tr '\n' ' ')
-     for t in $cur; do case " $prev " in *" $t "*) ;; *) echo "work: $t" ;; esac; done
+     for t in $cur; do echo "work: $t"; done   # LEVEL-TRIGGERED BACKSTOP: re-emit every present (unconsumed) trigger each cycle, so a missed appearance-event can never leave you idle with work waiting
      prev="$cur"
    done
    ```
-   Then go idle — **say nothing, do nothing** until the watcher wakes you. No `/loop`, no `ls`-on-a-timer, no "idle" output. Silence is correct when there is no trigger. (zsh-safe; do not substitute a `*.trigger` glob, which errors in zsh.)
+   Then go idle — **say nothing, do nothing** until the watcher wakes you. No `/loop`, no separate `ls`-on-a-timer (the watcher above IS your poll backstop), no "idle" output. Silence is correct when there is no trigger. (zsh-safe; do not substitute a `*.trigger` glob, which errors in zsh.)
 
    **When the watcher emits `work: issue-<N>.trigger`, that line IS your assignment** — proceed to step 1. After you finish (step 3), say nothing and let the watcher wake you for the next one.
 1. **For each `triggers/issue-<N>.trigger`:** read the directive — `gh issue view <N> --repo skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'` (read earlier comments only if you need the full plan/detail). Then `rm triggers/issue-<N>.trigger` to consume it.
