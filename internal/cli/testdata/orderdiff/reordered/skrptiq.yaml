@@ -1,0 +1,3 @@
+name: reordered-fixture
+version: "1.0.0"
+description: A workflow whose first step consumes a later step's output, forcing a reorder under derivation

@@ -1,0 +1,3 @@
+name: cycle-fixture
+version: "1.0.0"
+description: Two steps that reference each other's output, forming a dependency cycle under derivation

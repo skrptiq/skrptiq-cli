@@ -1,0 +1,3 @@
+name: unchanged-fixture
+version: "1.0.0"
+description: A workflow whose named ref preserves authored order, so derivation changes nothing

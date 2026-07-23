@@ -37,6 +37,7 @@ Commands:
   bridge <status|enable|disable>
                               Manage the browser native-messaging bridge
   builtins [--json]           List the engine's built-in operations
+  order-diff [--json] <dir>   Diff catalogue step-ordering under derivation (GH#941)
   help                        Show this help message
   version                     Print version and exit
 
@@ -143,6 +144,8 @@ func main() {
 			os.Exit(cli.Bridge(args[1:], *dbPath))
 		case "builtins":
 			os.Exit(cli.Builtins(args[1:]))
+		case "order-diff":
+			os.Exit(cli.OrderDiff(args[1:]))
 		case "version":
 			fmt.Println("skrptiq " + version.Full())
 			return
