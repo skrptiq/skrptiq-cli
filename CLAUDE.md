@@ -181,6 +181,20 @@ Rules that hold across every session. Violations are bugs, not trade-offs. Direc
 
 The CLI must never enter the interactive session with a broken engine or DB. Fail fast, fail loud.
 
+## Shell discipline — never `cd`
+
+**Never use `cd <path> &&` in a Bash call.** Every `cd` trips a permission prompt Ben has to approve by hand, and a long session produces dozens of them. There is always a path that doesn't need it:
+
+| Instead of | Use |
+|---|---|
+| `cd <repo> && git ...` | `git -C <repo> ...` |
+| `cd <repo> && gh ...` | `gh ... --repo <owner>/<name>` |
+| `cd <repo> && cat x` | `cat <repo>/x` (absolute path) |
+| `cd <dir> && npx <tool> --config c.toml` | `npx <tool> --config <dir>/c.toml` (absolute config path) |
+| `cd <dir> && <script>` | invoke the script by absolute path |
+
+If a tool genuinely cannot accept a path (rare), say so and ask rather than reaching for `cd`.
+
 ## Testing — MANDATORY
 - `go test ./...` — required for ALL changes. Do not commit without tests passing.
 - **Write tests alongside code.** Every new handler, function, or behaviour change must include tests that validate it works and will catch regressions.
