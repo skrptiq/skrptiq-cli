@@ -181,6 +181,53 @@ Rules that hold across every session. Violations are bugs, not trade-offs. Direc
 
 The CLI must never enter the interactive session with a broken engine or DB. Fail fast, fail loud.
 
+## Trigger protocol — how work reaches you, and how you prove you got it
+
+**The orchestrator is your ONLY source of work, and your only reporting channel.** Ben reads one
+place: his conversation with the orchestrator. Do not message other agents. Do not write to
+`inbox.md` (that is the orchestrator's). Your durable record is the GitHub issue; the orchestrator
+summarizes it for Ben.
+
+### Start your watcher at session start, under a Monitor
+
+```
+/Users/bencrocker/Developer/skrptiq-orchestrator/scripts/watch-triggers.sh \
+  /Users/bencrocker/Developer/<this-repo>/triggers
+```
+
+One orchestrator-owned copy, invoked by absolute path — never copy it into this repo, it would
+drift. It announces every delivery and stamps `triggers/.watcher-heartbeat` on each poll so the
+orchestrator can tell a dead watcher from you deliberately holding. Those two states otherwise look
+identical from outside, and guessing between them has gone wrong repeatedly.
+
+### Acknowledge on pickup — positive notification, always
+
+When a trigger arrives, **before** you start work:
+
+1. Write `triggers/issue-<N>.ack` — one line saying what you are doing.
+2. Remove `triggers/issue-<N>.trigger`.
+
+A trigger with no ack and no commits reads as *your watcher is dead*, and the orchestrator will
+chase it. The ack is how you say "received, working" without anyone inferring it from silence.
+
+`issue-<N>.trigger` means **"read the latest directive on issue N"** — `gh issue view <N> --repo
+skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'`. The same filename legitimately
+arrives again and again; re-delivery is normal and means re-read, not ignore.
+
+### Signalling back to the orchestrator
+
+Drop a file in `/Users/bencrocker/Developer/skrptiq-orchestrator/triggers/`:
+
+| File | Meaning |
+|---|---|
+| `<repo>-plan-<N>.trigger` | a plan is posted on issue N, awaiting review |
+| `<repo>-pr-<P>.trigger` | PR P opened/updated, awaiting review |
+| `project-issue-<N>.trigger` | you opened or materially updated an issue, for triage |
+
+PR verdicts come back as `triggers/pr-<P>-approved.trigger` or `pr-<P>-changes.trigger` in **your**
+repo. You cannot see a GitHub approval — all sessions share one `gh` identity, so `reviewDecision`
+is permanently blank. Do not infer "not approved" from it; wait for the verdict trigger.
+
 ## Shell discipline — never `cd`
 
 **Never use `cd <path> &&` in a Bash call.** Every `cd` trips a permission prompt Ben has to approve by hand, and a long session produces dozens of them. There is always a path that doesn't need it:
