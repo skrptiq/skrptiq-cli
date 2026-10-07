@@ -500,3 +500,30 @@ func (a *App) ListDeps(workspacePath string) ([]workspace.DepInfo, error) {
 func (a *App) StopExecution(executionID string) bool {
 	return exec.StopExecution(executionID)
 }
+
+// RejectGate declines the awaiting-input gate of a paused execution: the gate
+// step is marked 'skipped' and the execution ends 'cancelled'. GH#968 — the CLI
+// used to call StopExecution for a rejected gate, which only cancels a
+// REGISTERED RUNNING context; on a paused execution it did nothing, so the row
+// stayed 'paused' forever and the run still exited 0.
+func (a *App) RejectGate(executionID string, onProgress exec.ProgressCallback) error {
+	return exec.RejectGate(a.DB, executionID, onProgress)
+}
+
+// ExecutionStatus returns an execution's persisted status and error message.
+// GH#968 — the runner returns a nil error on a gate pause, so a caller cannot
+// infer the outcome from the absence of an error; it has to read the row.
+func (a *App) ExecutionStatus(executionID string) (string, string, error) {
+	e, err := a.DB.GetExecution(executionID)
+	if err != nil {
+		return "", "", err
+	}
+	if e == nil {
+		return "", "", fmt.Errorf("execution not found: %s", executionID)
+	}
+	errMsg := ""
+	if e.Error != nil {
+		errMsg = *e.Error
+	}
+	return e.Status, errMsg, nil
+}
