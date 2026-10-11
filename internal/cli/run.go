@@ -31,7 +31,7 @@ func (f *inputFlag) Set(val string) error {
 
 // Run handles `skrptiq run <workflow> [--input k=v] [--output path] [--json] [--yes|--strict] [--gate-timeout N]`.
 func Run(args []string, dbPath string) int {
-	// GH#992 — parseRunArgs honours flags in any position and rejects an
+	// GH#992 — parseRunArgs honors flags in any position and rejects an
 	// unknown flag outright, rather than letting Go's flag package stop at the
 	// workflow name and discard everything after it.
 	opts, fs, err := parseRunArgs(args)

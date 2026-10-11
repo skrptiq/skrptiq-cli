@@ -8,12 +8,20 @@ import (
 )
 
 // GH#992 — Go's `flag` package stops parsing at the first non-flag argument, so
-// `skrptiq run "Gated WF" --yes` discarded `--yes` as a positional: no error, no
-// warning, and on a gated skrpt an unexpected interactive prompt or a blocked
-// non-interactive run. The same accept-then-ignore shape as GH#968's exit 0.
+// everything after the workflow name was taken as a positional and joined into
+// the name. `skrptiq run "Gated WF" --yes` therefore looked up a workflow
+// titled `Gated WF --yes`, which no exact-match lookup could find:
+//
+//	Workflow not found: Gated WF --yes      (exit 2, nothing started)
+//
+// The flag was swallowed into the workflow name, so the command failed with a
+// confusing "not found" instead of doing what was asked. It did not run
+// unattended and it did not exit 0 — the cost was a misleading diagnostic, and
+// a misspelled flag (`--dry-run`, `--gate-timout=30`) was reported as a missing
+// workflow rather than as a bad flag.
 //
 // The fix is a pre-pass that separates flags from positionals before the flag
-// set sees them, so a flag is honoured wherever it appears — and anything that
+// set sees them, so a flag is honored wherever it appears — and anything that
 // looks like a flag but is not one is a hard error naming it, never a silently
 // swallowed positional.
 
@@ -31,8 +39,10 @@ var runFlagSpec = map[string]bool{
 }
 
 // runOptions is the parsed form of `skrptiq run`'s arguments. Tests assert on
-// this rather than on an exit code: exit 0 is precisely what made GH#992
-// invisible, so an exit-code assertion would have passed against the bug.
+// this rather than on an exit code, because the exit code cannot tell the two
+// cases apart: a swallowed flag and a genuinely missing workflow both exited 2
+// with a "not found" message, so an exit-code assertion passes whether or not
+// the flag was ever seen. The parsed options are the only evidence that it was.
 type runOptions struct {
 	workflowName string
 	inputs       []string
@@ -91,8 +101,8 @@ func splitRunArgs(args []string) (flagArgs, positionals []string, err error) {
 	return flagArgs, positionals, nil
 }
 
-// parseRunArgs parses `run`'s arguments into runOptions. Flags are honoured in
-// any position; an unrecognised flag is an error. Multiple positionals are
+// parseRunArgs parses `run`'s arguments into runOptions. Flags are honored in
+// any position; an unrecognized flag is an error. Multiple positionals are
 // joined with a single space, which is how an unquoted multi-word workflow
 // title (`skrptiq run Weekly Report`) resolves — every positional is used, so
 // nothing is accepted and then discarded.

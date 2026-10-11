@@ -8,10 +8,13 @@ import (
 	"testing"
 )
 
-// GH#992 — `skrptiq run "Gated WF" --yes` silently dropped --yes, because Go's
-// flag package stops parsing at the first non-flag argument. Exit 0 is what
-// made that invisible, so every assertion here is on the PARSED OPTIONS: a test
-// that only checked the exit code would have passed against the bug.
+// GH#992 — Go's flag package stops parsing at the first non-flag argument, so
+// `skrptiq run "Gated WF" --yes` joined --yes into the workflow name and failed
+// with `Workflow not found: Gated WF --yes` (exit 2, nothing started).
+//
+// Every assertion here is on the PARSED OPTIONS, because the exit code cannot
+// distinguish a swallowed flag from a genuinely missing workflow — both exited 2
+// — so a test that only checked the exit code would have passed against the bug.
 
 func parseOK(t *testing.T, args ...string) runOptions {
 	t.Helper()
@@ -23,7 +26,7 @@ func parseOK(t *testing.T, args ...string) runOptions {
 }
 
 // The headline regression: the three argument forms the issue names must parse
-// identically, flags honoured wherever they sit.
+// identically, flags honored wherever they sit.
 func TestGH992_FlagOrderIsIrrelevant(t *testing.T) {
 	want := runOptions{workflowName: "Gated WF", autoYes: true}
 
@@ -52,7 +55,7 @@ func TestGH992_FlagOrderIsIrrelevant(t *testing.T) {
 // Every flag, placed AFTER the positional — the exact position that used to
 // discard it. One case per flag so a future parser change cannot quietly drop
 // one of them.
-func TestGH992_EveryFlagHonouredAfterThePositional(t *testing.T) {
+func TestGH992_EveryFlagHonoredAfterThePositional(t *testing.T) {
 	tests := []struct {
 		name  string
 		args  []string
@@ -127,9 +130,10 @@ func TestGH992_EveryFlagHonouredAfterThePositional(t *testing.T) {
 	}
 }
 
-// Accept-then-ignore is the bug class. Anything shaped like a flag that is not
-// a known flag must fail loudly and NAME the flag — including after the
-// positional, which is where the old parser swallowed it as a workflow word.
+// The one part of GH#992 that really was accept-then-ignore: a misspelled flag
+// was folded into the workflow name, so a typo reported as a missing workflow.
+// Anything shaped like a flag that is not a known flag must fail loudly and NAME
+// the flag — including after the positional, where the old parser swallowed it.
 func TestGH992_UnknownFlagIsAHardError(t *testing.T) {
 	cases := []struct {
 		args     []string
@@ -212,7 +216,7 @@ func TestGH992_DoubleDashTerminatesFlags(t *testing.T) {
 		t.Errorf("workflowName = %q, want --odd-title", opts.workflowName)
 	}
 	if !opts.autoYes {
-		t.Error("autoYes = false, want the flag before -- to be honoured")
+		t.Error("autoYes = false, want the flag before -- to be honored")
 	}
 }
 
