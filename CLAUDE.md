@@ -47,7 +47,7 @@ Or export it once at the top of your session: `export GH_TOKEN=$(gh auth token -
    - **Says implement (plan approved)** → implement to the approved scope, run the full test/build gates, commit, write `.orchestrator-msg`, then **hand Ben the `git push` command — never run `git push` yourself**. After Ben pushes, open the PR and drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-pr-<P>.trigger`. **Never merge.**
 3. **When no trigger remains:** idle until the orchestrator assigns the next item.
 
-**While working an assigned item:** run `go test ./...` for every code change; commit atomically as you go (one feature/fix/refactor per commit); if context gets heavy between items, `/compact` and re-read this `CLAUDE.md`; after fixing an issue, comment with the commit hash and close it (single-repo) or remove your label (cross-repo, don't close).
+**While working an assigned item:** run `go test ./...` for every code change; commit atomically as you go (one feature/fix/refactor per commit); if context gets heavy between items, `/compact` and re-read this `CLAUDE.md`; after fixing an issue, comment with the commit hash and the evidence, then drop `project-issue-<N>.trigger` for the orchestrator — **you never close, reopen or re-scope an issue, single-repo or not.** Closure is orchestrator-exclusive because it is the point where "merged" is checked against "verified live", and an agent cannot verify its own delivery (K-065: merged is not the terminal state). For a cross-repo issue, also remove your label.
 
 Never implement scope the orchestrator hasn't approved. You never run `git push` or `gh pr merge`. `<repo>` = this repo's name without the `skrptiq-` prefix (`app`/`cli`/`hub`/`internal`/`web`) — here, `cli`.
 
