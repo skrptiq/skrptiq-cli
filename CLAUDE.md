@@ -13,19 +13,22 @@ An interactive terminal application for personalised AI agents. Pure Go binary �
 
 There is **no briefing file**; GitHub issues are the single source of truth. You do **NOT** run a `/loop` and you do **NOT** print "idle" lines. Instead you run a **background watcher** on `triggers/` that wakes you the instant the orchestrator assigns work and stays completely silent otherwise.
 
-0. **On session start (or when Ben bootstraps you), launch the watcher — ONCE.** **Launch it with the `Monitor` TOOL** — call the `Monitor` tool with `persistent: true`, `description: "trigger watcher"`, and the poll command below as its `command`. **Do NOT run this loop in a foreground Bash shell** — a shell loop blocks you and delivers no notifications (that's the "shell" failure mode). The `Monitor` tool runs the loop in the background and turns each `work:` stdout line into a notification that wakes you while you stay free. It polls `triggers/` every ~20s and re-emits any present (unconsumed) trigger every ~20s (level-triggered — a missed appearance-event can never strand you idle with work waiting; you `rm` a trigger on pickup so consumed work stops re-emitting):
+0. **On session start, arm your watcher — ONCE, with the `Monitor` TOOL.** Call the `Monitor` tool with `persistent: true`, `description: "trigger watcher"`, and exactly this as its `command`:
    ```
-   prev=""
-   while true; do
-     sleep 20
-     cur=$(ls triggers/ 2>/dev/null | grep '[.]trigger$' | sort | tr '\n' ' ')
-     for t in $cur; do echo "work: $t"; done   # LEVEL-TRIGGERED BACKSTOP: re-emit every present (unconsumed) trigger each cycle, so a missed appearance-event can never leave you idle with work waiting
-     prev="$cur"
-   done
+   /Users/bencrocker/Developer/skrptiq-orchestrator/scripts/watch-triggers.sh \
+     /Users/bencrocker/Developer/skrptiq-cli/triggers
    ```
-   Then go idle — **say nothing, do nothing** until the watcher wakes you. No `/loop`, no separate `ls`-on-a-timer (the watcher above IS your poll backstop), no "idle" output. Silence is correct when there is no trigger. (zsh-safe; do not substitute a `*.trigger` glob, which errors in zsh.)
+   **Run that committed script — never hand-roll the loop, and never run it in a foreground Bash shell.** A foreground shell loop blocks you and delivers no notifications; the `Monitor` tool runs the script in the background and turns each `TRIGGER:` line into a notification that wakes you while you stay free. Nothing for Ben to paste — arming it is yours, at step 0.
 
-   **When the watcher emits `work: issue-<N>.trigger`, that line IS your assignment** — proceed to step 1. After you finish (step 3), say nothing and let the watcher wake you for the next one.
+   Three properties are why it is a committed script and not four lines of prose, and each exists because the hand-rolled version failed invisibly from inside a session:
+   - **Every delivery is announced, and a standing queue survives your downtime.** A fresh watcher starts with an empty seen-set, so arming it announces every trigger already sitting in `triggers/` — work that piled up while you were stopped arrives the moment you come back. Thereafter each delivery is announced exactly once; you `rm` the trigger on pickup.
+   - **An unconsumed trigger is NAMED in the periodic tick.** Announcement is per-delivery, not per-poll, so a trigger you have already been told about is not repeated every 20s. The ~15-minute tick instead counts what is really in the directory: `TICK: alive, 2 UNCONSUMED: issue-984.trigger pr-125-approved.trigger`. That is the backstop against idling with work waiting — and it is why only `TICK: alive, queue empty` is evidence of an empty queue.
+   - **Deliveries are keyed on `mtime inode name`, never the filename.** `issue-<N>.trigger` legitimately arrives again and again; a filename-keyed snapshot (`ls triggers/`) swallows every re-delivery after the first. A re-`touch` moves only the mtime, a delete-and-recreate moves only the inode, and both are real deliveries.
+   - **It outlives the session that armed it.** A session-local loop is unreviewable, untestable, and dies with the agent — a fix cannot outlive the agent that made it.
+
+   Then go idle — **say nothing, do nothing** until the watcher wakes you. No `/loop`, no separate `ls`-on-a-timer, no "idle" output. Silence with an empty `triggers/` is the designed idle signature of a healthy agent, not a fault to report.
+
+   **When the watcher emits `TRIGGER: issue-<N>.trigger (mtime …)`, that line IS your assignment** — proceed to step 1. After you finish (step 3), say nothing and let the watcher wake you for the next one.
 1. **For each `triggers/issue-<N>.trigger`:** read the directive — `gh issue view <N> --repo skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'` (read earlier comments only if you need the full plan/detail). Then `rm triggers/issue-<N>.trigger` to consume it.
 2. **Act on the directive:**
    - **Asks for a plan** → post a tight plan as an issue comment, drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-plan-<N>.trigger`, and STOP. Wait for approval (it returns as a new directive trigger).
@@ -57,7 +60,7 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 **Don't message the orchestrator out-of-band.** To surface a finding or a newly-filed issue, file/comment the GH issue and drop `project-issue-<N>.trigger` — that's the only channel. Your message reaches the orchestrator, and it signals back with a trigger when there's follow-up for you.
 
 **Cost model — why the watcher is cheap, and your part in keeping it cheap:**
-- The watcher is a tiny background shell loop — it does **not** wake you or burn context on its own. You spend tokens only when it emits a real `work:` line and starts a turn; periodic silence is free.
+- The watcher is a tiny background shell loop — it does **not** wake you or burn context on its own. You spend tokens only when it emits a real `TRIGGER:` line and starts a turn; periodic silence is free.
 - There are no "idle cycles" to keep cheap — when the watcher is quiet, do nothing at all (no issue reads, no file reads, no `gh` calls, no output).
 - **Never read an issue or file "just to check" for work.** The trigger IS the check. Reading to discover "nothing changed" is the exact waste this design removes.
 
