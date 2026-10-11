@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +16,10 @@ import (
 	"github.com/skrptiq/skrptiq-cli/internal/toolobject"
 )
 
+// runUsage is the one usage line every `run` argument failure prints, so a bad
+// invocation always says the same thing.
+const runUsage = "Usage: skrptiq run [--input key=value] [--output path] [--json] [--yes|--strict] [--gate-timeout N] <workflow>"
+
 // inputFlag collects multiple --input k=v flags.
 type inputFlag []string
 
@@ -26,27 +31,30 @@ func (f *inputFlag) Set(val string) error {
 
 // Run handles `skrptiq run <workflow> [--input k=v] [--output path] [--json] [--yes|--strict] [--gate-timeout N]`.
 func Run(args []string, dbPath string) int {
-	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	var inputs inputFlag
-	fs.Var(&inputs, "input", "Input variable (key=value, use value=- for stdin)")
-	outputPath := fs.String("output", "", "Write final output to file")
-	jsonOut := fs.Bool("json", false, "Output result as JSON")
-	autoYes := fs.Bool("yes", false, "Auto-approve all gates")
-	strict := fs.Bool("strict", false, "Fail on any gate step")
-	gateTimeout := fs.Int("gate-timeout", 0, "Gate timeout in seconds (0 = no timeout)")
-
-	if err := fs.Parse(args); err != nil {
+	// GH#992 — parseRunArgs honours flags in any position and rejects an
+	// unknown flag outright, rather than letting Go's flag package stop at the
+	// workflow name and discard everything after it.
+	opts, fs, err := parseRunArgs(args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(os.Stderr, runUsage)
+			fs.SetOutput(os.Stderr)
+			fs.PrintDefaults()
+			return ExitBadArgs
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintln(os.Stderr, runUsage)
 		return ExitBadArgs
 	}
 
-	workflowName := strings.Join(fs.Args(), " ")
-	if workflowName == "" {
-		fmt.Fprintln(os.Stderr, "Usage: skrptiq run <workflow> [--input key=value] [--output path] [--json] [--yes|--strict]")
+	if opts.workflowName == "" {
+		fmt.Fprintln(os.Stderr, runUsage)
 		return ExitBadArgs
 	}
+	workflowName := opts.workflowName
 
 	// Parse inputs.
-	inputMap, err := parseInputs(inputs)
+	inputMap, err := parseInputs(opts.inputs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitBadArgs
@@ -91,10 +99,10 @@ func Run(args []string, dbPath string) int {
 	var lastOutput string
 	var executionID string
 	gateMode := gateDefault
-	if *autoYes {
+	if opts.autoYes {
 		gateMode = gateAutoApprove
 	}
-	if *strict {
+	if opts.strict {
 		gateMode = gateStrict
 	}
 
@@ -102,10 +110,10 @@ func Run(args []string, dbPath string) int {
 	// distinct, read-only objects rather than plain node rows.
 	builtins := toolobject.NewRegistry().ByPosition(plan)
 
-	result := runWorkflow(ctx, engine, node.ID, inputMap, gateMode, *gateTimeout, &lastOutput, &executionID, builtins)
+	result := runWorkflow(ctx, engine, node.ID, inputMap, gateMode, opts.gateTimeout, &lastOutput, &executionID, builtins)
 
 	// Output.
-	if *jsonOut {
+	if opts.jsonOut {
 		outputJSON(os.Stdout, map[string]any{
 			"workflow":    plan.WorkflowTitle,
 			"executionId": executionID,
@@ -113,12 +121,12 @@ func Run(args []string, dbPath string) int {
 			"output":      lastOutput,
 			"error":       result.err,
 		})
-	} else if *outputPath != "" {
-		if err := os.WriteFile(*outputPath, []byte(lastOutput), 0644); err != nil {
+	} else if opts.outputPath != "" {
+		if err := os.WriteFile(opts.outputPath, []byte(lastOutput), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing output: %v\n", err)
 			return ExitFailed
 		}
-		fmt.Fprintf(os.Stderr, "Output written to %s\n", *outputPath)
+		fmt.Fprintf(os.Stderr, "Output written to %s\n", opts.outputPath)
 	} else if lastOutput != "" {
 		fmt.Print(lastOutput)
 		if !strings.HasSuffix(lastOutput, "\n") {
@@ -132,7 +140,7 @@ func Run(args []string, dbPath string) int {
 type gateHandling int
 
 const (
-	gateDefault     gateHandling = iota
+	gateDefault gateHandling = iota
 	gateAutoApprove
 	gateStrict
 )
