@@ -29,6 +29,14 @@ There is **no briefing file**; GitHub issues are the single source of truth. You
    Then go idle — **say nothing, do nothing** until the watcher wakes you. No `/loop`, no separate `ls`-on-a-timer, no "idle" output. Silence with an empty `triggers/` is the designed idle signature of a healthy agent, not a fault to report.
 
    **When the watcher emits `TRIGGER: issue-<N>.trigger (mtime …)`, that line IS your assignment** — proceed to step 1. After you finish (step 3), say nothing and let the watcher wake you for the next one.
+**BEFORE YOUR FIRST `gh` CALL — the machine's active `gh` account is often `verret-prime`, Ben's other project, and every `--repo skrptiq/*` call then fails with "Could not resolve to a Repository".** Do **NOT** run `gh auth switch`: it is global machine state and it hijacks whatever Ben and the other sessions are doing. Scope the right token per command instead:
+
+```
+GH_TOKEN=$(gh auth token --user skrptiq-prime) gh issue view <N> --repo skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'
+```
+
+Or export it once at the top of your session: `export GH_TOKEN=$(gh auth token --user skrptiq-prime)`. This is never a reason to stall on an assignment — the token is already on this machine, you do not need Ben, and "I cannot read the directive" is not a blocked state, it is this one command. (Anchor: 2026-10-11, internal acked `issue-929` as BLOCKED on exactly this and waited; it had solved it itself the night before in a session that died, which is why the fix now lives in this file instead of in an agent's memory.)
+
 1. **For each `triggers/issue-<N>.trigger`:** read the directive — `gh issue view <N> --repo skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'` (read earlier comments only if you need the full plan/detail). Then `rm triggers/issue-<N>.trigger` to consume it.
 2. **Act on the directive:**
    - **Asks for a plan** → post a tight plan as an issue comment, drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-plan-<N>.trigger`, and STOP. Wait for approval (it returns as a new directive trigger).
