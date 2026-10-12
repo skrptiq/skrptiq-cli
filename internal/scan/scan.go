@@ -211,6 +211,17 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		}
 	}
 
+	// 6b. GH#975 — the input contract. Anti-Pattern 5 is an authoring rule, so
+	// it is enforced here rather than in the engine's validator: the scan is
+	// the canonical gate for skrpt content (K-060), and only the scan sees the
+	// package as the author wrote it.
+	for _, nf := range pkg.Nodes {
+		if nf.Type != "workflow" {
+			continue
+		}
+		allIssues = append(allIssues, checkWorkflowInputs(nf, &pkg, absPath)...)
+	}
+
 	// 7. Build result and output.
 	for i := range pkg.Nodes {
 		pkg.Nodes[i].FilePath = ""
