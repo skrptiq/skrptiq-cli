@@ -84,13 +84,21 @@ func Run(args []string, dbPath string) int {
 		return ExitFailed
 	}
 
-	// Check all required inputs are provided.
+	// Check all required inputs are provided. GH#975 — the gate reads the
+	// author's declaration from plan.InputMeta, not just the flat
+	// plan.InputVariables list. Both have always been on the plan; consulting
+	// only the flat list is what made `skrptiq run weekly-report` refuse an
+	// input its own prompt frontmatter declares `required: false`.
 	for _, varName := range plan.InputVariables {
-		if _, ok := inputMap[varName]; !ok {
-			fmt.Fprintf(os.Stderr, "Missing required input: %s\n", varName)
-			fmt.Fprintf(os.Stderr, "  Use: --input %s=<value>\n", varName)
-			return ExitBadArgs
+		if _, ok := inputMap[varName]; ok {
+			continue
 		}
+		if inputIsDeclaredOptional(plan, varName) {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "Missing required input: %s\n", varName)
+		fmt.Fprintf(os.Stderr, "  Use: --input %s=<value>\n", varName)
+		return ExitBadArgs
 	}
 
 	// Execute.
@@ -446,4 +454,41 @@ func parseInputs(flags []string) (map[string]string, error) {
 	}
 
 	return result, nil
+}
+
+// inputIsDeclaredOptional reports whether the author positively declared this
+// `{{input.X}}` optional, via `inputs: X: required: false` in the frontmatter of
+// the workflow or of a node it executes. The planner carries that declaration
+// through as a three-state `*bool` (`collectInputMeta`), deliberately leaving it
+// nil when the author declared nothing so each consumer applies its own rule.
+//
+// This is the CLI's rule, and it is the conservative half of the three-state:
+//
+//	required: false  → optional. Do not gate; supply nothing.
+//	required: true   → gate at preflight, before a token is spent.
+//	absent           → gate. NOT treated as optional.
+//
+// The last line is the one worth defending, because GH#975's earlier analysis
+// proposed the opposite (absent ⇒ optional, so existing content cannot become
+// un-runnable). Two reasons it is wrong here:
+//
+//  1. Inferring optionality from the ABSENCE of a marker is the same inference
+//     SKRPT-STRUCTURE-PRINCIPLES Anti-Pattern 5 forbids — "genuinely-optional
+//     values may default, but must be declared as optional". Optionality is a
+//     positive declaration; silence is not a declaration.
+//  2. The content it would affect is the content that most needs the gate. The
+//     published packages with no `inputs:` block at all are single-input
+//     utilities — `ioc-defanger` ({{input.text}}), `csv-to-narrative-report`
+//     ({{input.csv}}), `big-log-extractor-summariser` ({{input.log}}) — where
+//     the undeclared input IS the payload. Treating those as optional would run
+//     a defanger over an empty string and report success.
+//
+// Nothing is lost by gating: the author's fix is one line of frontmatter, and
+// the scan rules in this same change refuse that shape before it ships.
+func inputIsDeclaredOptional(plan *exec.ExecutionPlan, name string) bool {
+	meta, ok := plan.InputMeta[name]
+	if !ok || meta.Required == nil {
+		return false
+	}
+	return !*meta.Required
 }
