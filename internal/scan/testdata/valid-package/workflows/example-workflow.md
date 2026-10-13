@@ -12,6 +12,9 @@ metadata:
     - skill: example-skill
       prompt: example-prompt
       step_type: generation
+    - skill: example-skill
+      prompt: spaced-ref-prompt
+      step_type: generation
   stepPrompts:
     example-skill: example-prompt
 ---
