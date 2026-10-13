@@ -1,0 +1,79 @@
+# --- Identity ---
+id: "9bfe3c7e-3316-443b-820f-f61856d01fe4"
+name: "status-report-flow"
+display_name: "Status Report Flow"
+description: "Gathers data, analyzes progress, and produces stakeholder updates"
+version: "1.1.27"
+engine: ">=0.1.0"
+
+# --- Attribution ---
+author:
+  name: "skrptiq"
+  url: "https://hub.skrptiq.ai"
+
+licence: "MIT"
+repository: "https://github.com/skrpts/status-report-flow"
+
+# --- Discovery (Hub) ---
+category: "project-manager"
+tags:
+  - "reporting"
+  - "stakeholders"
+  - "status"
+
+# --- Security & Access ---
+dependencies:
+  - id: "41cb77d1-e7a5-46dd-a127-6cce685f20b4"
+    name: "check-consistency"
+    version: 1.0.5
+    checksum: "sha256:e4da29d0d31343b8b619bb98a993a997501e8c8f6e7a70c8105143a2cc85eed1"
+  - id: "bf15c78d-4452-406e-9d54-a72b1a4797c7"
+    name: "consistency-check"
+    version: 1.0.3
+    checksum: "sha256:8329b049dfd3839fe5e8329adc2a0f89dec2aebf23d11a4a8602cae61dac3b48"
+  - id: "a79f8fcc-6b8f-4510-9314-394b7b4492f0"
+    name: "generate-visual-spec"
+    version: 1.0.3
+    checksum: "sha256:d203a6a3b8fd758fff814ba9402e7a4829d9b90c3b8b1c355af35ff8e087b639"
+  - id: "3db66b8b-8758-4503-a555-5330f3f9b3d9"
+    name: "language-polish"
+    version: 1.0.3
+    checksum: "sha256:efe38bb2b4ba213139299818cc4c7d694270fcfd7ec4d3c738e2170f6394bbd6"
+  - id: "fcab9536-a13e-49c9-b0c3-bb3097682e69"
+    name: "llm-service"
+    version: 1.0.3
+    checksum: "sha256:18783015383c041de9c3fdaa191b79172ab534348448c20c74f9a967ab4dd917"
+  - id: "9b1771e0-39b0-4fbc-8d45-738f51b6083a"
+    name: "polish-language"
+    version: 1.0.1
+    checksum: "sha256:2a666b1a1566e45a3d69cf3fac51399a471169184409ef54d588f69b7da7097e"
+  - id: "f0c19ec3-e486-47f8-86bb-0da363a6afa9"
+    name: "progress-tracking"
+    version: 1.0.3
+    checksum: "sha256:d3c1917f0cfac4796bff35f395778c4ce44f48d38a6b33e4c174e75ca34d7fa6"
+  - id: "e39714a7-bcf4-4191-8bfc-d0608c3d5fbc"
+    name: "track-progress"
+    version: 1.0.3
+    checksum: "sha256:6f132897d50d64faead8a888806a4321f70a0af080501dd56c93f5487118197d"
+  - id: "a8ee94d5-a20c-414a-a882-a8d3e9b9f6ab"
+    name: "visual-spec-generation"
+    version: 1.0.1
+    checksum: "sha256:22d79483954e4fd298636955aa9a376bd042ee3d8238fbc5d30e961cbdb9be4a"
+
+requires:
+  services:
+    - "llm-service"
+    - "jira-cloud"
+  permissions: []
+  data_handling: []
+
+# --- Contents ---
+contents:
+  skills: 1
+  prompts: 3
+  workflows: 1
+  services: 0
+  sources: 1
+  documents: 1
+  assets: 0
+  total: 7

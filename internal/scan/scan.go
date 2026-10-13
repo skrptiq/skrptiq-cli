@@ -222,6 +222,11 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		allIssues = append(allIssues, checkWorkflowInputs(nf, &pkg, absPath)...)
 	}
 
+	// 6c. GH#858 A1 — a prompt or skill the package ships and no workflow runs.
+	// Same reason as 6b: an authoring defect the structural scanner used to pass
+	// clean, which only the scan can refuse before publication.
+	allIssues = append(allIssues, checkNodeInvocation(&pkg, absPath)...)
+
 	// 7. Build result and output.
 	for i := range pkg.Nodes {
 		pkg.Nodes[i].FilePath = ""
