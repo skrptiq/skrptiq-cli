@@ -26,7 +26,22 @@ import (
 // What these rules are NOT. They would not have caught the package in GH#975's
 // title: weekly-report declares both of its inputs `required: false` in prompt
 // frontmatter, which is correct, and its failure was entirely consumer-side.
-// These rules are prevention for content that does not exist yet.
+//
+// "Prevention for content that does not exist yet" was the framing when these
+// shipped. It is TRUE of Rules 2 and 3 and FALSE of Rule 1 (GH#1055). Executing
+// the shipped scan over all 97 published packages on 2026-10-14 — dep
+// resolution on — found four live Rule 1 ERRORS, each a single-input utility
+// whose whole contract lives in a table and in no `inputs:` block:
+//
+//	big-log-extractor-summariser  log    (workflow execution step 1 wires it)
+//	csv-to-narrative-report       csv
+//	ioc-defanger                  text
+//	word-count-gated-writer       draft  (prompts/revise-draft.md)
+//
+// That list was in GH#975's approved plan, and the claim that no live instance
+// existed was never checked by running the rule. It is Hub content, routed by
+// the orchestrator into the GH#1040 family; the figure is recorded here so the
+// next reader does not re-derive it. Rule 1 therefore gates live content today.
 const (
 	// CodeInputUndeclared fires on a {{input.X}} the runtime will actually
 	// resolve, where no reachable node declares X.
@@ -34,9 +49,24 @@ const (
 	// CodeInputOptionalityUndeclared fires on an input declared without a
 	// `required:` marker whose only statement of optionality is prose.
 	//
-	// POPULATION: no live instance as of 2026-10-12, corpus-wide — measured
-	// over the 97 published packages in skrptiq-hub/examples, where 198 of the
-	// 198 node files carrying an `inputs:` block use an explicit `required:`.
+	// POPULATION: no live instance, corpus-wide — verified 2026-10-14 by
+	// RUNNING this rule over all 97 published packages in skrptiq-hub/examples,
+	// not by counting lines. Optionality is declared universally there: 196 of
+	// 196 node files carrying an `inputs:` block, and 505 of 505 individual
+	// input entries, use an explicit `required:` (447 true / 58 false). The
+	// 196 files are 184 in the 97 packages plus 12 in examples/_shared.
+	//
+	// DERIVED WITH `parse.ReadPackage`, attributing every frontmatter
+	// `required:` line to its top-level key. This supersedes a grep-derived
+	// "198 of 198 (463 true / 246 false)" cited here until GH#1055, which
+	// `grep -rl '^inputs:'` and `grep -c 'required:'` produced by counting two
+	// FENCED `inputs:` examples in authoring documentation as declarations
+	// (skrpt-authoring-reference, skrpt-builder/assets/node-templates-reference)
+	// and 200 `context_params:` keys — a different contract — as input
+	// declarations. The conclusion the figure carries is unchanged and now
+	// holds per-entry as well as per-file: authors already declare, so silence
+	// means undeclared, not optional.
+	//
 	// The rule's fixture is therefore SYNTHETIC by necessity. It is here
 	// because an empty population is what lets the first instance through
 	// unnoticed, not because a defect was observed.

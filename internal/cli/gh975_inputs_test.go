@@ -15,9 +15,10 @@ import (
 // The declaration was never missing. `inputs: X: required: false` in node
 // frontmatter is parsed, hoisted to node metadata, and carried into the plan by
 // collectInputMeta as a three-state `*bool` on plan.InputMeta. The published
-// weekly-report package declares BOTH its inputs that way, and 198 of the 198
-// node files in the published corpus that carry an `inputs:` block use an
-// explicit `required:`.
+// weekly-report package declares BOTH its inputs that way, and 196 of the 196
+// node files in the published corpus that carry an `inputs:` block — 505 of 505
+// input entries — use an explicit `required:` (parse-derived 2026-10-14;
+// supersedes a grep-derived 198 of 198, GH#1055).
 //
 // The CLI simply never looked: the preflight iterated the flat
 // plan.InputVariables and consulted no declaration at all, so every input was
