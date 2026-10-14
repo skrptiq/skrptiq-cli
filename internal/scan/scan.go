@@ -232,6 +232,25 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// counts it invoked because it is NAMED. Both clauses are needed.
 	allIssues = append(allIssues, checkDuplicateSkillEntries(&pkg, absPath)...)
 
+	// 6e. GH#1057 — step references that cannot resolve under any execution: a
+	// step reading its own output, and a reference to a node the package never
+	// ships. Dep-awareness is handed in rather than inferred: a reference to a
+	// dep-provided node is legitimate, and under --no-resolve-deps nothing was
+	// fetched, so no non-local reference can be judged at all.
+	stepDeps := stepRefDeps{
+		Names:      map[string]bool{},
+		TitleOf:    map[string]string{},
+		Permissive: opts.NoResolveDeps && hasDepsBlock,
+	}
+	for slug, summary := range depSummaries {
+		stepDeps.Names[refKey(slug)] = true
+		stepDeps.TitleOf[refKey(slug)] = summary.Title
+		if summary.Title != "" {
+			stepDeps.Names[refKey(summary.Title)] = true
+		}
+	}
+	allIssues = append(allIssues, checkStepReferences(&pkg, absPath, stepDeps)...)
+
 	// 7. Build result and output.
 	for i := range pkg.Nodes {
 		pkg.Nodes[i].FilePath = ""
