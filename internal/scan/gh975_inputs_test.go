@@ -239,9 +239,12 @@ func TestGH975_Scan_IllegalInputName_IsNotReported(t *testing.T) {
 
 // ── Rule 2 ────────────────────────────────────────────────────────────────
 //
-// SYNTHETIC FIXTURES BY NECESSITY: no live instance exists corpus-wide as of
-// 2026-10-12 (198 of 198 node files with an `inputs:` block use an explicit
-// `required:`). See CodeInputOptionalityUndeclared for why the rule ships anyway.
+// SYNTHETIC FIXTURES BY NECESSITY: no live instance exists corpus-wide —
+// verified 2026-10-14 by running the rule over all 97 published packages, where
+// 196 of 196 node files with an `inputs:` block, and 505 of 505 input entries,
+// use an explicit `required:` (parse-derived; supersedes a grep-derived 198 of
+// 198, GH#1055). See CodeInputOptionalityUndeclared for the derivation and for
+// why the rule ships anyway.
 
 func TestGH975_Scan_OptionalityOnlyInProse_IsRefused(t *testing.T) {
 	dir := writePkg(t, onePromptPkg(
