@@ -227,6 +227,11 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// clean, which only the scan can refuse before publication.
 	allIssues = append(allIssues, checkNodeInvocation(&pkg, absPath)...)
 
+	// 6d. GH#1057 — two execution entries naming one skill. The engine resolves
+	// a skill to a single step, so the earlier entry's prompt is discarded; 6c
+	// counts it invoked because it is NAMED. Both clauses are needed.
+	allIssues = append(allIssues, checkDuplicateSkillEntries(&pkg, absPath)...)
+
 	// 7. Build result and output.
 	for i := range pkg.Nodes {
 		pkg.Nodes[i].FilePath = ""

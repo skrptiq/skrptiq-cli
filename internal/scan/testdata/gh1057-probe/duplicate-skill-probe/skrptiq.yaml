@@ -1,0 +1,10 @@
+id: "f1057d0e-0000-4000-8000-00000000d0be"
+name: "duplicate-skill-probe"
+display_name: "Duplicate Skill Probe"
+description: "Fixture: four execution entries, three steps — a collapsed duplicate skill and a prompt-only step"
+version: "1.0.0"
+engine: ">=0.1.0"
+author:
+  name: "skrptiq"
+licence: "MIT"
+category: "shared"
