@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/skrptiq/engine/parse"
@@ -47,6 +48,11 @@ import (
 // that is a schema change, so it is not invented here.
 const (
 	CodeNodeNeverInvoked = "workflow.node_never_invoked"
+
+	// CodeDuplicateSkillEntry fires on two execution entries naming one skill.
+	// GH#1057 — the shape the rule above counts as INVOKED and the engine
+	// cannot run. See checkDuplicateSkillEntries.
+	CodeDuplicateSkillEntry = "workflow.duplicate_skill_entry"
 
 	invocationContractRef = "SKRPT-STRUCTURE-PRINCIPLES § Data-Flow & I/O Mapping"
 )
@@ -195,4 +201,149 @@ func fileSlugOf(n parse.NodeFile) string {
 		return ""
 	}
 	return strings.TrimSuffix(filepath.Base(n.FilePath), ".md")
+}
+
+// GH#1057 — the blind spot in the rule above, and the reason it needs a second
+// clause rather than a repair.
+//
+// `storage.ResolveStepPrompts` builds `skill -> prompt` as a MAP KEYED BY SKILL
+// SLUG (`out[skill] = prompt`), and the planner resolves every `skill:` entry
+// through `slugToStep[skill]` to the SAME PlannedStep. So two execution entries
+// naming one skill produce ONE step, and the earlier entry's prompt never runs.
+//
+// `report-writing-flow` ships exactly that:
+//
+//   - skill: "report-authoring"
+//     prompt: "outline-report"
+//   - skill: "report-authoring"
+//     prompt: "draft-report"
+//
+// `outline-report` cannot run — the report is drafted with no outline step —
+// and `workflow.node_never_invoked` counts it INVOKED, because that rule asks
+// whether the slug is NAMED in the execution block, not whether it is
+// REACHABLE. Naming is the right question for the defect it was built for (a
+// node the execution block never mentions at all) and the wrong one here, so
+// this is a second clause and not a change to the first: both facts are worth
+// refusing, and a reachability-only rule would stop catching GH#858's shape.
+//
+// WHY THE SKILL IS THE ADDRESSABLE UNIT, and why the fix is not "let the engine
+// make two steps" (the ruling on GH#1057, verified at source):
+// `storage/validate.go:683` — "the from_step is the dep skill's TITLE".
+// `from_step` binds by skill title, so two steps sharing a skill share a title,
+// and every `from_step` naming it resolves to one of them SILENTLY rather than
+// failing. Growing a second step per skill therefore costs the binding model,
+// not an engine change: titles would have to become per-step, a contract change
+// across Hub, the engine and the app, to support a shape no author has ever
+// deliberately written. A distinct stage needs a distinct skill node — which is
+// what GH#858's own A1 repair did.
+//
+// Measured over the 97 published packages before shipping: ONE live instance,
+// `report-writing-flow`, the one GH#1057 names. A duplicate is never correct —
+// it is an entry the engine discards — so unlike anything on the input axis
+// this needs no severity ladder, no exemption and no opt-out.
+func checkDuplicateSkillEntries(pkg *parse.Package, absPath string) []ScanIssue {
+	var issues []ScanIssue
+	for _, wf := range pkg.Nodes {
+		if wf.Type != "workflow" {
+			continue
+		}
+		entries := skillEntriesIn(wf.Metadata["execution"])
+
+		// Group by skill, keeping authored order of both the skills and the
+		// prompts attached to each.
+		order := []string{}
+		bySkill := map[string][]skillEntry{}
+		for _, e := range entries {
+			if _, seen := bySkill[e.skill]; !seen {
+				order = append(order, e.skill)
+			}
+			bySkill[e.skill] = append(bySkill[e.skill], e)
+		}
+
+		for _, skill := range order {
+			group := bySkill[skill]
+			if len(group) < 2 {
+				continue
+			}
+			// Every entry but the last is discarded by the map write, so every
+			// prompt but the last never runs.
+			var shadowed []string
+			for _, e := range group[:len(group)-1] {
+				if e.prompt != "" {
+					shadowed = append(shadowed, strconv.Quote(e.prompt))
+				}
+			}
+			detail := "so only the last entry runs"
+			if len(shadowed) > 0 {
+				detail = fmt.Sprintf("so %s never runs", strings.Join(shadowed, ", "))
+			}
+			issues = append(issues, ScanIssue{
+				File:     relPath(absPath, wf.FilePath),
+				NodeSlug: wf.ID,
+				ValidationIssue: storage.ValidationIssue{
+					Code:     CodeDuplicateSkillEntry,
+					Severity: storage.SeverityError,
+					Message: fmt.Sprintf(
+						"skill %q is named by %d execution entries; the engine resolves a skill to one step, %s — give the other stage its own skill node",
+						skill, len(group), detail),
+					ContractRef:    invocationContractRef,
+					Field:          "execution",
+					ReferencedSlug: skill,
+					ReferenceKind:  "skill",
+				},
+			})
+		}
+	}
+	sort.Slice(issues, func(i, j int) bool {
+		if issues[i].NodeSlug != issues[j].NodeSlug {
+			return issues[i].NodeSlug < issues[j].NodeSlug
+		}
+		return issues[i].ReferencedSlug < issues[j].ReferencedSlug
+	})
+	return issues
+}
+
+// skillEntry is one execution entry that names a skill, with the prompt that
+// entry pairs with it (empty if it names none).
+type skillEntry struct {
+	skill  string
+	prompt string
+}
+
+// skillEntriesIn returns every skill-naming execution entry in authored order,
+// at any depth. Depth matters for the same reason it does in invocationsIn: a
+// `parallel:` group's members are entries, and a duplicate spanning a group
+// boundary collapses exactly like a flat one. Map values are walked in sorted
+// key order so the report is deterministic regardless of YAML key order.
+func skillEntriesIn(v any) []skillEntry {
+	switch t := v.(type) {
+	case map[string]any:
+		var out []skillEntry
+		if s, ok := t["skill"].(string); ok && s != "" {
+			e := skillEntry{skill: s}
+			if p, ok := t["prompt"].(string); ok {
+				e.prompt = p
+			}
+			out = append(out, e)
+		}
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			if k == "skill" || k == "prompt" {
+				continue
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out = append(out, skillEntriesIn(t[k])...)
+		}
+		return out
+	case []any:
+		var out []skillEntry
+		for _, vv := range t {
+			out = append(out, skillEntriesIn(vv)...)
+		}
+		return out
+	}
+	return nil
 }
