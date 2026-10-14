@@ -251,6 +251,12 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	}
 	allIssues = append(allIssues, checkStepReferences(&pkg, absPath, stepDeps)...)
 
+	// 6f. GH#1058 — a workflow whose derived plan status is cycle or error
+	// cannot run at all. Calls the engine's ComputeOrderDiff, the same single
+	// authority `order-diff` uses; `reordered` is deliberately not refused (it
+	// is the GH#1059 cutover question, not a present defect).
+	allIssues = append(allIssues, checkPlanStatus(&pkg, absPath)...)
+
 	// 7. Build result and output.
 	for i := range pkg.Nodes {
 		pkg.Nodes[i].FilePath = ""
