@@ -1,0 +1,72 @@
+# Engine release-chain watchdog (GH#1079).
+#
+# The App -> CLI auto-release chain (GH#539) never fired once. The App's
+# dispatch workflow stopped starting on 2026-05-17 and nothing said so: a
+# dispatch that is never sent leaves no failed run, no annotation, no trace.
+# Eight App releases and three months later the only evidence was a CLI tag
+# that had not appeared, and it took an unrelated investigation to notice.
+#
+# This job exists so that absence alerts instead of being inferred. It does
+# not repair the chain -- the cause is in the App repo and the fix belongs
+# there. It converts "nothing happened" into a failing, notified run.
+#
+# NOT wired into ci.yml on purpose: while the chain is down, a CI-level check
+# would fail every unrelated pull request, and the first response to that is
+# to route around it. A watchdog that gets disabled protects nothing. The pin
+# floor at release time is the separate, deliberate gate (GH#1079 round 2).
+#
+# CAVEAT worth knowing: GitHub disables `schedule` triggers after 60 days with
+# no repository activity. A silently disabled watchdog is the same disease it
+# was written for, so `workflow_dispatch` is kept as the manual path and the
+# script is runnable from a terminal:
+#   GH_TOKEN=$(gh auth token --user skrptiq-prime) \
+#     APP_CHECKOUT=../skrptiq-app scripts/engine-chain-check.sh
+
+name: Engine chain watchdog
+
+on:
+  schedule:
+    # 07:15 UTC daily — a broken chain is found the next morning, not next quarter.
+    - cron: '15 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      # Same org pipeline App as ci.yml and release.yml. No new credential:
+      # the checks are reads of a sibling repo this App already grants.
+      - name: Generate pipeline app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          owner: skrptiq
+          repositories: skrptiq-cli,skrptiq-app
+
+      - name: Checkout CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: skrptiq-cli
+
+      # fetch-depth: 0 — the engine/ diff is between an arbitrary pinned commit
+      # and a release tag, so both history and tags have to be present. A
+      # shallow checkout would make the pin unresolvable, and the script fails
+      # closed rather than reporting a chain it could not see.
+      - name: Checkout app (full history + tags)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: skrptiq/skrptiq-app
+          path: skrptiq-app
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Check the App -> CLI release chain is delivering
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_CHECKOUT: ${{ github.workspace }}/skrptiq-app
+        run: skrptiq-cli/scripts/engine-chain-check.sh
