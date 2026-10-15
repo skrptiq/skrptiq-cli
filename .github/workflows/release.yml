@@ -1,7 +1,20 @@
 name: Release
 
+concurrency:
+  # GH#1099 — one run per ref, but NEVER cancelled. This workflow DEPLOYS or
+  # RELEASES: killing it mid-flight can leave a half-applied state, which is a
+  # far worse outcome than a redundant run. Serialise, do not cancel.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
     tags: ['v*']
   repository_dispatch:
     types: [engine-updated]

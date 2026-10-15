@@ -1,9 +1,27 @@
 name: CI
 
+concurrency:
+  # GH#1099 — one run per ref. A superseded push cancelled the moment the next
+  # arrives: re-pushing a branch three times paid for three full suites and only
+  # the last one could still be merged.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
     branches: [main]
 
 jobs:
