@@ -243,6 +243,31 @@ PR verdicts come back as `triggers/pr-<P>-approved.trigger` or `pr-<P>-changes.t
 repo. You cannot see a GitHub approval — all sessions share one `gh` identity, so `reviewDecision`
 is permanently blank. Do not infer "not approved" from it; wait for the verdict trigger.
 
+## Splitting your own work across sub-agents — AUTHORISED, and underused
+
+**Ben, 2026-10-12:** *"we are specifically talking about one agent splitting its own work into multiple for the benefit of speed, that's not an issue for this"*
+
+**You may fan your own work item out across sub-agents whenever it genuinely parallelises.** You do not need to ask. The orchestrator authorised this on 2026-10-12 and then never told any agent, which is why it has gone unused — the delay is the orchestrator's, not a caution.
+
+**Do not cite the 2026-06 orchestrator-swarm revert against this.** That topology distributed work across *repos* from the orchestrator's single context, so the context stayed the bottleneck and nothing was actually distributed. **An agent fanning out its own task is the opposite: each sub-agent holds only its slice, which is where the speed comes from.** A shared mechanism name is not a shared failure mode.
+
+### When it is worth it
+
+**Only when the slices touch disjoint files.** Different *concerns* are not different *files* — GH#1012 and the step-type class table both landed in `engine/execution`. **Check the paths, not the topic.** Two sub-agents editing one file is slower than one agent, not faster.
+
+Typical wins: an engine slice and a renderer slice; several independent migrations; a build plus an adversarial review of it.
+
+### The mechanics that are not optional
+
+- **`isolation: 'worktree'` for any sub-agent that MUTATES files.** Two processes writing one checkout corrupt each other regardless of topology. Read-only analysis agents do not need it.
+- **A distinct adversarial reviewer that RE-RUNS the tests** rather than accepting the implementer's claims. **No implementer self-certifies.** This caught a real gap on GH#591 Phase 3 and is worth doing on its own merits.
+- **You remain the single interface to the orchestrator.** One `.orchestrator-msg`, one branch per deliverable, one PR, one trigger. **The orchestrator never talks to your sub-agents** and must not need to know they exist.
+- **Passing context is your job and it is easy** — you already hold this `CLAUDE.md` and the issue directive; point each sub-agent at them. That was the structural weakness of the 2026-06 model and it is not one here.
+
+### What does not change
+
+The push protocol, the plan gate, the trigger protocol and every acceptance requirement apply to **the deliverable**, not to each sub-agent. **A PR assembled from four sub-agents is reviewed as one PR** and you answer for all of it.
+
 ## Shell discipline — never `cd`
 
 **Never use `cd <path> &&` in a Bash call.** Every `cd` trips a permission prompt Ben has to approve by hand, and a long session produces dozens of them. There is always a path that doesn't need it:
