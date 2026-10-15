@@ -479,8 +479,33 @@ func (a *App) BuildPlan(workflowNodeID string) (*exec.ExecutionPlan, error) {
 }
 
 // RunWorkflow starts a workflow execution with a progress callback.
+//
+// Every optional argument is nil, and each nil is a statement rather than a
+// placeholder — the engine's parameter list is positional precisely so a caller
+// cannot omit one silently (GH#1072, ENGINE-CONTRACT.md §6), so they are named
+// here instead of left as an anonymous run of nils.
+//
+// projectAuthority in particular: nil means NO project, which is the engine's
+// documented common case and the only case the CLI has. The CLI has no project
+// concept anywhere — it never resolves an authority, so it has none to present,
+// and inventing one would be a claim of attribution it cannot support. If the
+// CLI ever gains projects, this is the line that must change, and it has to
+// come from storage.ResolveAuthority: a zero-value Authority is invalid by
+// construction and the engine rejects it.
 func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[string]string, onProgress exec.ProgressCallback) (string, error) {
-	return exec.RunWorkflow(ctx, a.DB, workflowID, inputs, onProgress, nil, nil, nil, nil, nil)
+	return exec.RunWorkflow(
+		ctx,
+		a.DB,
+		workflowID,
+		inputs,
+		onProgress,
+		nil, // workflowProviderOverride — the CLI resolves providers from settings
+		nil, // stepProviderOverrides
+		nil, // stepContextOverrides
+		nil, // triggerSource — a direct CLI run is not a delegated trigger
+		nil, // projectAuthority — no project; see above
+		nil, // runOptions — no run-secrets, matching ResumeExecution below
+	)
 }
 
 // ResumeExecution resumes a paused execution with gate input.

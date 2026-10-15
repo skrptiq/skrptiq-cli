@@ -21,6 +21,10 @@
 # script is runnable from a terminal:
 #   GH_TOKEN=$(gh auth token --user skrptiq-prime) \
 #     APP_CHECKOUT=../skrptiq-app scripts/engine-chain-check.sh
+#
+# It also answers GH#1084's "what CI step would have caught this": check 3
+# compiles HEAD against .engine-pin, which ci.yml never does -- ci.yml builds
+# against app main, and the pin is the revision releases actually ship.
 
 name: Engine chain watchdog
 
@@ -64,6 +68,14 @@ jobs:
           path: skrptiq-app
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
+
+      # Needed by check 3, which compiles this repo against the pinned engine
+      # exactly as release.yml would. Same version source as ci.yml.
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: skrptiq-cli/go.mod
+          cache-dependency-path: skrptiq-cli/go.sum
 
       - name: Check the App -> CLI release chain is delivering
         env:

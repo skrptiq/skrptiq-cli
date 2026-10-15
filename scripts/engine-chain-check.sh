@@ -32,6 +32,14 @@
 #      downstream of the dispatch (receiver, tag job, build) and is the check
 #      that speaks to what we actually ship.
 #
+#   3. THE PIN DOES NOT BUILD — does this repo still compile against the engine
+#      revision `.engine-pin` names? Added for GH#1084. `release.yml` checks out
+#      the engine AT THE PIN, so if HEAD has outgrown it every release build
+#      fails -- and nothing says so until someone cuts a tag. ci.yml builds
+#      against app `main`, never against the pin, so this is invisible to it.
+#      It has been true since 2026-07-23 and was found only because the dead
+#      chain meant no tag was ever pushed to discover it.
+#
 # Check 2 reuses the chain's OWN rule for "the engine changed" -- a diff of
 # `engine/` between two app commits, exactly as the sender's gate computes it.
 # Re-deriving that condition differently here would make this a second
@@ -151,6 +159,41 @@ else
     err "Every CLI binary we ship is built against ${PIN:0:7}. A scanner on a stale engine grades against rules the shipped engine no longer holds — it passes content the current engine refuses (GH#1079), and it fails permissive."
     err "Do not fix this by hand-bumping .engine-pin: that ships a current engine through a broken pipe and hides the outage. Repair the chain."
   fi
+fi
+
+# --- check 3: does HEAD still compile against the pinned engine? -----------
+#
+# Reproduces the release build's layout rather than approximating it:
+# release.yml checks the engine out AT THE PIN next to the CLI, and go.mod's
+# `replace github.com/skrptiq/engine => ../skrptiq-app/engine` resolves to it.
+# `git archive` keeps this read-only on the app checkout -- no worktree, no
+# branch switch, nothing a concurrently-working sibling repo would notice.
+#
+# HEAD, not the working tree: the question is whether what we would release
+# builds, not whether an in-progress edit does.
+if ! command -v go >/dev/null 2>&1; then
+  fatal_lookup "go is not on PATH — the pin build cannot be verified, and an unverified pin is not a working pin"
+fi
+
+PINTMP="$(mktemp -d)"
+trap 'rm -rf "$PINTMP"' EXIT
+mkdir -p "$PINTMP/skrptiq-app" "$PINTMP/skrptiq-cli"
+
+git -C "$APP_CHECKOUT" archive "$PIN" engine 2>/dev/null | tar -x -C "$PINTMP/skrptiq-app" \
+  || fatal_lookup "could not extract engine/ at ${PIN:0:7} from the app checkout"
+[ -f "$PINTMP/skrptiq-app/engine/go.mod" ] \
+  || fatal_lookup "engine/go.mod absent at ${PIN:0:7} — the pin does not name a revision with an engine"
+git -C "$REPO_ROOT" archive HEAD 2>/dev/null | tar -x -C "$PINTMP/skrptiq-cli" \
+  || fatal_lookup "could not archive this repo at HEAD"
+
+if BUILD_OUT="$(go build -C "$PINTMP/skrptiq-cli" ./... 2>&1)"; then
+  note "CHECK 3 ok      — HEAD compiles against the pinned engine ${PIN:0:7}."
+else
+  FAILED=1
+  err "THE PINNED ENGINE DOES NOT BUILD: this repo at HEAD does not compile against ${PIN:0:7}, the revision .engine-pin names."
+  err "release.yml checks the engine out at that pin, so EVERY release build fails at the Build step — there is no releasable commit on this branch."
+  err "ci.yml builds against app main and would not see this: main has the symbols, the pin does not."
+  while IFS= read -r line; do [ -n "$line" ] && err "  $line"; done <<< "$BUILD_OUT"
 fi
 
 note ""
