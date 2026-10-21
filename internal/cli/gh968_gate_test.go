@@ -86,7 +86,7 @@ func stepStatuses(t *testing.T, dbPath, execID string) (string, map[string]strin
 	if err != nil || e == nil {
 		t.Fatalf("load execution %q: %v", execID, err)
 	}
-	steps, err := db.GetStepsByExecution(execID)
+	steps, err := db.GetStepsByExecutionGlobal(execID)
 	if err != nil {
 		t.Fatalf("load steps: %v", err)
 	}
