@@ -297,7 +297,12 @@ func (a *App) GetRunDetail(id string) (*RunDetail, error) {
 		wfTitle = node.Title
 	}
 
-	steps, err := a.DB.GetStepsByExecution(id)
+	// Global, not scoped: GH#1041 split the two so a project surface cannot
+	// read another project's run contents. The CLI has no project surface —
+	// this is a run the user just started or asked to see — so there is no
+	// grant for a ScopedReader to derive and the global reader is the honest
+	// call, not a fallback.
+	steps, err := a.DB.GetStepsByExecutionGlobal(id)
 	if err != nil {
 		return nil, err
 	}
@@ -398,9 +403,10 @@ func formatDuration(start, end string) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-// GetSteps returns all steps for an exec.
+// GetSteps returns all steps for an exec. Global reader — see GetRunDetail
+// above for why the CLI has no scoped alternative to choose.
 func (a *App) GetSteps(executionID string) ([]storage.ExecutionStep, error) {
-	return a.DB.GetStepsByExecution(executionID)
+	return a.DB.GetStepsByExecutionGlobal(executionID)
 }
 
 // SetActiveProfile sets a profile as active for its type.
