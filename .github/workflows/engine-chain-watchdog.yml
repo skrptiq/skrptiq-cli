@@ -38,8 +38,23 @@ concurrency:
 
 on:
   schedule:
-    # 07:15 UTC daily — a broken chain is found the next morning, not next quarter.
-    - cron: '15 7 * * *'
+    # WEEKLY (Mondays 07:15 UTC) while the chain is KNOWN BROKEN and the repair is parked.
+    #
+    # It was daily, and daily was right for its original job: catch the chain BREAKING. That job
+    # is done — it reported CHAIN BROKEN AT THE SENDER on 2026-10-21 and the diagnosis is on
+    # GH#1086 (a release created under the default GITHUB_TOKEN raises no workflow-triggering
+    # event). Ben then ruled the repair happens AFTER the Projects work.
+    #
+    # So a daily run re-measures a condition nobody is acting on, and pays a failing run per day
+    # to do it. That is the GH#1114 disease exactly: an alert whose cadence exceeds the rate at
+    # which anything can change about it stops being read, and the run AFTER it stops being read
+    # is the one that mattered. The watchdog's own header already says it: "a watchdog that gets
+    # disabled protects nothing" — and a red X every morning is how it gets disabled.
+    #
+    # This is a cadence change, NOT a mute. The alarm still fires, still fails closed, and
+    # `workflow_dispatch` still answers on demand. RESTORE THE DAILY CRON when GH#1086 lands —
+    # at that point the question flips back to "has it broken again?", which is a daily question.
+    - cron: '15 7 * * 1'
   workflow_dispatch:
 
 permissions:
