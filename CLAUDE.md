@@ -44,7 +44,7 @@ Or export it once at the top of your session: `export GH_TOKEN=$(gh auth token -
 1. **For each `triggers/issue-<N>.trigger`:** read the directive — `gh issue view <N> --repo skrptiq/skrptiq-issues --json comments --jq '.comments[-1].body'` (read earlier comments only if you need the full plan/detail). Then `rm triggers/issue-<N>.trigger` to consume it.
 2. **Act on the directive:**
    - **Asks for a plan** → post a tight plan as an issue comment, drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-plan-<N>.trigger`, and STOP. Wait for approval (it returns as a new directive trigger).
-   - **Says implement (plan approved)** → implement to the approved scope, run the full test/build gates, commit, write `.orchestrator-msg`, then **hand Ben the `git push` command — never run `git push` yourself**. After Ben pushes, open the PR and drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-pr-<P>.trigger`. **Never merge.**
+   - **Says implement (plan approved)** → implement to the approved scope, run the full test/build gates, commit, write `.orchestrator-msg`, then **leave it in place for the orchestrator to push — never run `git push` yourself**. Once `origin/<branch>` is at your SHA, open the PR and drop `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<repo>-pr-<P>.trigger`. **Never merge.**
 3. **When no trigger remains:** idle until the orchestrator assigns the next item.
 
 **While working an assigned item:** run `go test ./...` for every code change; commit atomically as you go (one feature/fix/refactor per commit); if context gets heavy between items, `/compact` and re-read this `CLAUDE.md`; after fixing an issue, comment with the commit hash and the evidence, then drop `project-issue-<N>.trigger` for the orchestrator — **you never close, reopen or re-scope an issue, single-repo or not.** Closure is orchestrator-exclusive because it is the point where "merged" is checked against "verified live", and an agent cannot verify its own delivery (K-065: merged is not the terminal state). For a cross-repo issue, also remove your label.
@@ -60,8 +60,8 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 **Two-way trigger signalling** (the cross-session channel; issues carry the content):
 - **Inbound (orchestrator → you):** the background watcher (step 0 above) detects any new `triggers/*.trigger` and wakes you — you do **no** polling, and you **never** infer review state from GitHub's `reviewDecision` field. It is permanently blank: the orchestrator shares your gh identity (`skrptiq-prime`), and GitHub forbids approving your own account's PR, so an approval can never appear as a formal GitHub review — it arrives as a trigger:
   - `issue-<N>.trigger` — work assigned; read the issue's latest orchestrator-directive comment (step 1), then `rm` it.
-  - `pr-<P>-approved.trigger` — the orchestrator reviewed PR `<P>` and **signed it off**. Ben gates the merge, so there is nothing further for you to do: `rm` the trigger and idle until your next assignment. (The full review is the orchestrator's comment on the PR, kept for the record.)
-  - `pr-<P>-changes.trigger` — the orchestrator requested changes on PR `<P>`. Read its review comment on the PR, address every point, re-push (hand Ben the `git push`), then drop a fresh `<repo>-pr-<P>` trigger when the branch is updated; `rm` the changes trigger once read.
+  - `pr-<P>-approved.trigger` — the orchestrator reviewed PR `<P>` and **signed it off**. the orchestrator merges it, so there is nothing further for you to do: `rm` the trigger and idle until your next assignment. (The full review is the orchestrator's comment on the PR, kept for the record.)
+  - `pr-<P>-changes.trigger` — the orchestrator requested changes on PR `<P>`. Read its review comment on the PR, address every point, commit it and leave `.orchestrator-msg` in place for the orchestrator to push, then drop a fresh `<repo>-pr-<P>` trigger when the branch is updated; `rm` the changes trigger once read.
 - **Outbound (you → orchestrator):** `touch /Users/bencrocker/Developer/skrptiq-orchestrator/triggers/<signal>.trigger` so the orchestrator goes straight to the item instead of polling GitHub. Signal forms:
   - `<repo>-plan-<N>` — you posted a plan on issue `<N>`, awaiting review.
   - `<repo>-pr-<P>` — you opened/updated PR `<P>`.
@@ -83,8 +83,8 @@ Never implement scope the orchestrator hasn't approved. You never run `git push`
 **Steps:**
 1. Write `.orchestrator-msg` in the repo root (contents below).
 2. Do NOT `git add` or commit it — it's a working-tree file the hook reads during push.
-3. **Hand Ben the `git push` command — Ben pushes, not you.** The hook delivers your message to the orchestrator automatically, then cleans it up.
-4. **If you forget:** the hook rejects with a clear message. Write the file, hand Ben the push again (no empty commit needed — the hook re-fires).
+3. **Leave `.orchestrator-msg` in place — the ORCHESTRATOR pushes, not you and not Ben.** The hook delivers your message to the orchestrator automatically, then cleans it up.
+4. **If you forget:** the hook rejects with a clear message. Write the file; the orchestrator pushes again (no empty commit needed — the hook re-fires).
 
 **What to include:** issues closed/progressed with commit hashes; test results (pass count, any skipped); cross-repo implications; plan-review requests; **if a fix was discovered during live testing, say so explicitly** (that's the context lost without a message); the current state of the work (committed vs published vs verified end-to-end).
 
