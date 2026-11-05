@@ -134,11 +134,12 @@ func (r *Resolver) Resolve(deps []parse.DependencyRef) Result {
 		for _, n := range entry.Nodes {
 			res.ProvidedSlugs[n.Slug] = dep.Name
 			res.DepNodes = append(res.DepNodes, storage.DepNodeSummary{
-				ID:      n.ID,
-				Slug:    n.Slug,
-				Type:    n.Type,
-				Title:   n.Title,
-				Content: n.Content,
+				ID:            n.ID,
+				Slug:          n.Slug,
+				Type:          n.Type,
+				Title:         n.Title,
+				Content:       n.Content,
+				ContextParams: n.ContextParams,
 			})
 		}
 	}
@@ -296,12 +297,27 @@ type hubMetadata struct {
 //     for plumbing/binding from_step checks.
 //   - Content is the node body; required only for prompt nodes that a
 //     for_each loop body resolves through {{loop.item}}.
+//   - ContextParams is the node's `context_params` block (GH#1158).
 type NodeInfo struct {
 	ID      string `json:"id"`
 	Slug    string `json:"slug"`
 	Type    string `json:"type"`
 	Title   string `json:"title"`
 	Content string `json:"content,omitempty"`
+	// ContextParams carries the published node's `context_params` block from
+	// the catalogue through to storage.DepNodeSummary, which the engine then
+	// presents on the synthetic node's Metadata so ONE reader serves a shared
+	// dependency and a local node alike (GH#1149). Without this field the
+	// declaration the endpoint now serves is decoded and thrown away here, and
+	// the enforcement downstream has no reachable subject.
+	//
+	// `map[string]any`, not a typed shape, and not as a matter of style: this
+	// is the WIRE, and an unknown second-level key must SURVIVE the trip in
+	// order to be refused by name. A typed decode drops what it does not know,
+	// which would make the offending key invisible before the gate ever sees
+	// it — the transport would be deciding what counts as unknown. Matches the
+	// reasoning on storage.DepNodeSummary.ContextParams.
+	ContextParams map[string]any `json:"context_params,omitempty"`
 }
 
 func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) {
@@ -368,7 +384,22 @@ func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) 
 // not trustworthy under the stricter id+version+checksum gate — so it must
 // be dropped and re-resolved under the full triple. Bumping invalidates
 // every pre-fix cache file via the readCache schema-version gate.
-const currentCacheSchemaVersion = 2
+//
+// GH#1158 bump (2 → 3): NodeInfo gained ContextParams, and the cache key
+//
+//	dep.ID + "@" + dep.Version + "@" + dep.Checksum
+//
+// contains nothing that moves when the SERVER changes what it sends — all
+// three are properties of the bundle, and the bundle did not change. A v2
+// entry was written by a resolver that decoded the response without
+// `context_params` and so recorded its absence; served again, it reports no
+// declaration for a node that now has one, and the enforcement sees nothing
+// to enforce. This was observed rather than predicted: hub's cache held
+// `has_context_params=False` for four objects AFTER the endpoint began
+// serving them. Without the bump this whole change is invisible on every
+// machine that has already scanned — CI starts cold, a developer machine
+// does not.
+const currentCacheSchemaVersion = 3
 
 type cacheEntry struct {
 	ID        string     `json:"id"`
