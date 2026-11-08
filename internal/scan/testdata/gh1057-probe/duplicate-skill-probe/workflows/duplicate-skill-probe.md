@@ -2,7 +2,7 @@
 type: workflow
 id: duplicate-skill-probe
 title: Duplicate Skill Probe
-description: "Four execution entries that produce three steps: a duplicate skill collapses and a prompt-only entry sorts last"
+description: "Four execution entries that produce four steps: a duplicate skill makes two steps sharing one title, and a prompt-only entry sorts last"
 tags: [Fixture]
 connections:
   - target: alpha-skill
@@ -35,12 +35,15 @@ execution:
 ## Overview
 
 A probe, not a product. The authored stages read: outline, plan, draft, review.
-The engine runs three steps — the outline entry is overwritten by the draft
-entry because both name `alpha-skill`, and the prompt-only plan step sorts last.
+The engine runs four steps — the outline and draft entries each get their own
+step since app GH#1092, and the prompt-only plan step sorts last. Both
+alpha-skill steps carry the title `Alpha Skill`, which is the only handle a
+`from_step` has, so nothing downstream can address either of them separately.
+That is what `workflow.duplicate_skill_entry` refuses.
 
 ## Pipeline Stages
 
-### Stage 1: Outline (never runs)
+### Stage 1: Outline (runs, but nothing can bind to it)
 Invoke the **alpha-skill** skill via the **outline-alpha** prompt.
 
 ### Stage 2: Plan

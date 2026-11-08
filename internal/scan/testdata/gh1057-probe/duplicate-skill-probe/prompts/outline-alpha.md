@@ -2,7 +2,7 @@
 type: prompt
 id: outline-alpha
 title: Outline Alpha
-description: "Named in the execution block and unreachable — the shadowed prompt"
+description: "Named in the execution block, runs since GH#1092, and still unaddressable"
 tags: [Fixture]
 connections:
   - target: alpha-skill
@@ -14,4 +14,5 @@ metadata:
 
 ## Prompt
 
-Outline the report. This prompt is named by execution entry 1 and never runs.
+Outline the report. This prompt is named by execution entry 1 and runs as its own
+step, sharing the `Alpha Skill` title with entry 3.

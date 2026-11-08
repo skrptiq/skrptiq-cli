@@ -2,7 +2,7 @@
 type: prompt
 id: draft-alpha
 title: Draft Alpha
-description: "The prompt the collapse keeps"
+description: "The second entry on alpha-skill — its own step, the same step title"
 tags: [Fixture]
 connections:
   - target: alpha-skill
