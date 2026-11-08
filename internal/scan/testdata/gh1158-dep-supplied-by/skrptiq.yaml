@@ -1,0 +1,9 @@
+name: gh1158-dep-supplied-by
+version: "1.0.0"
+description: "GH#1158 fixture — a context_params.supplied_by declaration carried on a SHARED dependency"
+author: test
+dependencies:
+  - id: "33333333-3333-3333-3333-cccccccccccc"
+    name: test-dep
+    version: "1.0.0"
+    checksum: "sha256:aaa"

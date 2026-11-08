@@ -1,0 +1,9 @@
+name: gh1158-dep-skill-and-prompt
+version: "1.0.0"
+description: "GH#1158 fixture — BOTH the skill and the prompt are dep-provided and both declare the slot"
+author: test
+dependencies:
+  - id: "33333333-3333-3333-3333-cccccccccccc"
+    name: test-dep
+    version: "1.0.0"
+    checksum: "sha256:aaa"
