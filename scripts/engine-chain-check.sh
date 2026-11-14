@@ -6,7 +6,9 @@
 # WHY THIS EXISTS (GH#1079).
 #
 # The chain never fired once. `dispatch-cli-after-release.yml` in the App was
-# switched to `on: release: published` by GH#564 on 2026-05-17; the App's
+# switched to `on: release: published` by GH#564 on 2026-05-17 (that workflow
+# is gone -- GH#1086 inlined the dispatch into `build-macos.yml` -- so do not
+# go looking for it; this paragraph is dated history, not current layout); the App's
 # releases are created by `softprops/action-gh-release` under the default
 # GITHUB_TOKEN, and GitHub does not raise workflow-triggering events for
 # actions taken with GITHUB_TOKEN. So the sender stopped starting, in silence,
@@ -19,13 +21,29 @@
 # ABSENCE an alert instead of an inference, so the next outage is noticed in a
 # day rather than discovered three months later by an unrelated investigation.
 #
-# TWO INDEPENDENT CHECKS. They fail for different reasons on purpose; either
+# THREE INDEPENDENT CHECKS. They fail for different reasons on purpose; any
 # one alone would have missed a real case.
 #
-#   1. DISPATCH NOT SENT — for the App's newest release, did the App's dispatch
-#      workflow produce any run at all? This is the check that catches the
-#      actual GH#1079 fault, and it fires even when the release carried no
-#      engine change (where check 2 is legitimately silent).
+#   1. NO DISPATCH ARRIVED — for the App's newest release, did a
+#      `repository_dispatch` run of OUR `release.yml` happen at or after that
+#      release was published? This is the check that catches the actual GH#1079
+#      fault, and it fires even when the release carried no engine change
+#      (where check 2 is legitimately silent).
+#
+#      IT TESTS RECEIPT AT OUR END, NOT A FILENAME AT THEIRS (GH#1192). It used
+#      to count runs of the App's `dispatch-cli-after-release.yml`, which made
+#      the gate depend on a sibling repo's file layout: when GH#1086 inlined the
+#      dispatch into `build-macos.yml` and deleted that workflow, BOTH ways of
+#      implementing the repair left this check red forever -- delete the file and
+#      the lookup goes fatal, keep it and the count is zero. Receipt is the
+#      property we actually care about, it is satisfied by either sender, and it
+#      is measured from our own run history rather than inherited from theirs.
+#
+#      The window is filtered to `repository_dispatch` SERVER-SIDE rather than
+#      in jq. `--limit 100` of all events would narrow as this repo got busier
+#      -- 23 `push` runs against 7 dispatches in the same window when this was
+#      written -- and pushes are the kind that accumulate. A window that
+#      degrades with activity is a gate with a shelf life.
 #
 #   2. SHIPPED ENGINE IS BEHIND — does `engine/` differ between our .engine-pin
 #      and the App's newest release tag? This catches delivery failing anywhere
@@ -56,6 +74,8 @@
 #
 # Env:
 #   APP_REPO      default skrptiq/skrptiq-app
+#   SELF_REPO     default skrptiq/skrptiq-cli -- whose release.yml receipts
+#                 check 1 counts
 #   PIN_FILE      default <repo root>/.engine-pin
 #   APP_CHECKOUT  a full checkout of APP_REPO (tags + history) for check 2
 #   GRACE_HOURS   default 6 -- a release younger than this is still in flight,
@@ -67,7 +87,8 @@ APP_REPO="${APP_REPO:-skrptiq/skrptiq-app}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIN_FILE="${PIN_FILE:-$REPO_ROOT/.engine-pin}"
 GRACE_HOURS="${GRACE_HOURS:-6}"
-DISPATCH_WF="dispatch-cli-after-release.yml"
+SELF_REPO="${SELF_REPO:-skrptiq/skrptiq-cli}"
+RELEASE_WF="release.yml"
 
 # In GitHub Actions `::error::` turns a line into an annotation; locally it is
 # just a prefix. Either way the text is the same, so the terminal run and the
@@ -113,22 +134,23 @@ IN_FLIGHT=0
 [ "$AGE_HOURS" -lt "$GRACE_HOURS" ] && IN_FLIGHT=1
 FAILED=0
 
-# --- check 1: was a dispatch sent at all? -----------------------------------
-RUNS="$(gh run list --repo "$APP_REPO" --workflow "$DISPATCH_WF" --limit 100 \
+# --- check 1: did a dispatch ARRIVE at all? ---------------------------------
+RUNS="$(gh run list --repo "$SELF_REPO" --workflow "$RELEASE_WF" \
+  --event repository_dispatch --limit 100 \
   --json createdAt --jq "[.[] | select(.createdAt >= \"${REL_PUB}\")] | length" 2>/dev/null)"
 case "$RUNS" in
-  ''|*[!0-9]*) fatal_lookup "could not list runs of ${DISPATCH_WF} in ${APP_REPO}" ;;
+  ''|*[!0-9]*) fatal_lookup "could not list repository_dispatch runs of ${RELEASE_WF} in ${SELF_REPO}" ;;
 esac
 
 if [ "$RUNS" -gt 0 ]; then
-  note "CHECK 1 ok      — ${DISPATCH_WF} produced ${RUNS} run(s) for ${REL_TAG}."
+  note "CHECK 1 ok      — ${RUNS} dispatch(es) reached ${SELF_REPO} since ${REL_TAG} was published."
 elif [ "$IN_FLIGHT" -eq 1 ]; then
-  note "CHECK 1 pending — no dispatch run yet, but ${REL_TAG} is only ${AGE_HOURS}h old (grace ${GRACE_HOURS}h)."
+  note "CHECK 1 pending — no dispatch received yet, but ${REL_TAG} is only ${AGE_HOURS}h old (grace ${GRACE_HOURS}h)."
 else
   FAILED=1
-  err "CHAIN BROKEN AT THE SENDER: ${APP_REPO} published ${REL_TAG} ${AGE_HOURS}h ago and ${DISPATCH_WF} has not run even once."
-  err "The App's release did not start its own dispatch workflow — so no dispatch reached skrptiq-cli, and no CLI release can exist for this engine."
-  err "Known cause (GH#1079): a release created under the default GITHUB_TOKEN raises no workflow-triggering event, so 'on: release: published' never fires. Fix belongs in ${APP_REPO}."
+  err "NO DISPATCH ARRIVED: ${APP_REPO} published ${REL_TAG} ${AGE_HOURS}h ago and not one repository_dispatch has reached ${SELF_REPO}'s ${RELEASE_WF} since."
+  err "Nothing told this repo to build, so no CLI release can exist for that engine. This tests RECEIPT at our end, so it holds whichever workflow the App sends from — it asserts nothing about a file in a sibling repo (GH#1192)."
+  err "Known cause (GH#1079): a release created under the default GITHUB_TOKEN raises no workflow-triggering event, so a sender gated on 'on: release: published' never starts. Fix belongs in ${APP_REPO}."
 fi
 
 # --- check 2: is the engine we ship behind the engine they released? --------
@@ -155,8 +177,22 @@ else
     note "CHECK 2 pending — ${CHANGED} engine/ file(s) ahead of our pin, but ${REL_TAG} is only ${AGE_HOURS}h old (grace ${GRACE_HOURS}h)."
   else
     FAILED=1
+    # GH#1192 — PIN is read from $PIN_FILE in THIS checkout, so it is the pin
+    # at HEAD, not the pin of whatever release is installed. Those are
+    # different values (v0.0.21 shipped c4d7896; HEAD carried b12733c, written
+    # four days later and never released), and this sentence used to claim the
+    # HEAD pin was what every shipped binary was built against. Say HEAD,
+    # because HEAD is this script's subject throughout: check 3 compiles
+    # `git archive HEAD` against this same PIN. Pointing one sentence at the
+    # release tag instead would put two subjects in one script and need a
+    # second lookup to resolve — one authority per rule (GH#1058).
+    #
+    # The permissive claim itself is FOUNDED and must not be softened while the
+    # subject is corrected: 29 of 95 catalogue packages pass the shipped
+    # scanner and are refused by current main, with email-assistant refused by
+    # both as the control.
     err "SHIPPED ENGINE IS STALE: ${CHANGED} file(s) under engine/ differ between our pin ${PIN:0:7} and the App's released ${REL_TAG}."
-    err "Every CLI binary we ship is built against ${PIN:0:7}. A scanner on a stale engine grades against rules the shipped engine no longer holds — it passes content the current engine refuses (GH#1079), and it fails permissive."
+    err "A release built from this branch today would ship engine ${PIN:0:7}. A scanner on a stale engine grades against rules the shipped engine no longer holds — it passes content the current engine refuses (GH#1079), and it would fail permissive."
     err "Do not fix this by hand-bumping .engine-pin: that ships a current engine through a broken pipe and hides the outage. Repair the chain."
   fi
 fi
