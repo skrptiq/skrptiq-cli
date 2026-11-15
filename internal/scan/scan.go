@@ -232,6 +232,12 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// counts it invoked because it is NAMED. Both clauses are needed.
 	allIssues = append(allIssues, checkDuplicateSkillEntries(&pkg, absPath)...)
 
+	// 6d-bis. GH#1194 — a raw shell step in a package that declares publish
+	// intent. K-046 ruled it non-publishable and nothing enforced it. Silent for
+	// a local-only package (R7 permits author scripts there), keyed on the
+	// manifest identity that already distinguishes the two.
+	allIssues = append(allIssues, checkShellNotPublishable(&pkg, absPath)...)
+
 	// 6e. GH#1057 — step references that cannot resolve under any execution: a
 	// step reading its own output, and a reference to a node the package never
 	// ships. Dep-awareness is handed in rather than inferred: a reference to a
