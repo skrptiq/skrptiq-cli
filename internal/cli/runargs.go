@@ -36,6 +36,8 @@ var runFlagSpec = map[string]bool{
 	"yes":          false,
 	"strict":       false,
 	"gate-timeout": true,
+	// GH#1221 — a bool, so it consumes no value.
+	"non-interactive": false,
 }
 
 // runOptions is the parsed form of `skrptiq run`'s arguments. Tests assert on
@@ -51,6 +53,9 @@ type runOptions struct {
 	autoYes      bool
 	strict       bool
 	gateTimeout  int
+	// GH#1221 — declared non-interactive, which BEATS TTY detection: a CI job
+	// with a pty allocated is still nobody to ask.
+	nonInteractive bool
 }
 
 // splitRunArgs separates flag arguments from positional ones, permitting flags
@@ -120,6 +125,10 @@ func parseRunArgs(args []string) (runOptions, *flag.FlagSet, error) {
 	autoYes := fs.Bool("yes", false, "Auto-approve all gates")
 	strict := fs.Bool("strict", false, "Fail on any gate step")
 	gateTimeout := fs.Int("gate-timeout", 0, "Gate timeout in seconds (0 = no timeout)")
+	// Deliberately NOT implied by --yes: that flag is about approving a gate, not
+	// about naming a file. One flag, one meaning; --yes --non-interactive is the
+	// automated form.
+	nonInteractive := fs.Bool("non-interactive", false, "Never prompt; refuse anything that needs an answer")
 
 	flagArgs, positionals, err := splitRunArgs(args)
 	if err != nil {
@@ -131,12 +140,13 @@ func parseRunArgs(args []string) (runOptions, *flag.FlagSet, error) {
 	}
 
 	return runOptions{
-		workflowName: strings.Join(positionals, " "),
-		inputs:       inputs,
-		outputPath:   *outputPath,
-		jsonOut:      *jsonOut,
-		autoYes:      *autoYes,
-		strict:       *strict,
-		gateTimeout:  *gateTimeout,
+		workflowName:   strings.Join(positionals, " "),
+		inputs:         inputs,
+		outputPath:     *outputPath,
+		jsonOut:        *jsonOut,
+		autoYes:        *autoYes,
+		strict:         *strict,
+		gateTimeout:    *gateTimeout,
+		nonInteractive: *nonInteractive,
 	}, fs, nil
 }

@@ -10,6 +10,8 @@ import (
 
 	exec "github.com/skrptiq/engine/execution"
 	"github.com/skrptiq/engine/storage"
+
+	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 )
 
 // GH#968 — `skrptiq run` resumed a gate from INSIDE the runner's progress
@@ -108,7 +110,7 @@ func TestGH968_AutoApprovedGate_RunsPostGateStep(t *testing.T) {
 	defer engine.Close()
 
 	var lastOutput, execID string
-	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateAutoApprove, 0, &lastOutput, &execID, nil)
+	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateAutoApprove, 0, true, &lastOutput, &execID, nil)
 
 	if res.status != "completed" || res.exitCode != ExitOK {
 		t.Errorf("auto-approved gated run: got status=%q exit=%d, want completed/%d", res.status, res.exitCode, ExitOK)
@@ -139,7 +141,7 @@ func TestGH968_TwoSequentialGates_BothResume(t *testing.T) {
 	defer engine.Close()
 
 	var lastOutput, execID string
-	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateAutoApprove, 0, &lastOutput, &execID, nil)
+	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateAutoApprove, 0, true, &lastOutput, &execID, nil)
 
 	if res.status != "completed" || res.exitCode != ExitOK {
 		t.Errorf("two-gate run: got status=%q exit=%d, want completed/%d", res.status, res.exitCode, ExitOK)
@@ -169,7 +171,7 @@ func TestGH968_StrictGate_DeclinesAndExitsNonZero(t *testing.T) {
 	defer engine.Close()
 
 	var lastOutput, execID string
-	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateStrict, 0, &lastOutput, &execID, nil)
+	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateStrict, 0, true, &lastOutput, &execID, nil)
 
 	if res.exitCode == ExitOK {
 		t.Errorf("a rejected gate must not exit 0 (got status=%q exit=%d)", res.status, res.exitCode)
@@ -202,7 +204,7 @@ func TestGH968_InteractiveReject_ExitsNonZero(t *testing.T) {
 	defer restore()
 
 	var lastOutput, execID string
-	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateDefault, 0, &lastOutput, &execID, nil)
+	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateDefault, 0, true, &lastOutput, &execID, nil)
 
 	if res.exitCode != ExitFailed {
 		t.Errorf("interactive reject exit = %d, want %d", res.exitCode, ExitFailed)
@@ -227,7 +229,7 @@ func TestGH968_GateTimeout_DeclinesWithTimeoutCode(t *testing.T) {
 	defer restore()
 
 	var lastOutput, execID string
-	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateDefault, 1, &lastOutput, &execID, nil)
+	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateDefault, 1, true, &lastOutput, &execID, nil)
 
 	if res.exitCode != ExitTimeout {
 		t.Errorf("timed-out gate exit = %d, want %d", res.exitCode, ExitTimeout)
@@ -283,7 +285,7 @@ func TestGH968_ResumeError_SurfacesAsFailure(t *testing.T) {
 	}()
 
 	var lastOutput, execID string
-	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateDefault, 0, &lastOutput, &execID, nil)
+	res := runWorkflow(context.Background(), engine, "wf", map[string]string{}, gateDefault, 0, true, &lastOutput, &execID, nil)
 
 	if res.status != "failed" || res.exitCode != ExitFailed {
 		t.Errorf("a failed resume must report failure: got status=%q exit=%d err=%q", res.status, res.exitCode, res.err)
@@ -310,7 +312,7 @@ func TestGH968_PausedRun_DoesNotReportCompleted(t *testing.T) {
 		if evt.Type == "execution-started" {
 			execID = evt.ExecutionID
 		}
-	}); err != nil {
+	}, eng.RunConfig{}); err != nil {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
 

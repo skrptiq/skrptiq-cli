@@ -498,7 +498,26 @@ func (a *App) BuildPlan(workflowNodeID string) (*exec.ExecutionPlan, error) {
 // CLI ever gains projects, this is the line that must change, and it has to
 // come from storage.ResolveAuthority: a zero-value Authority is invalid by
 // construction and the engine rejects it.
-func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[string]string, onProgress exec.ProgressCallback) (string, error) {
+// RunConfig is what the CALLER declares about itself for one run. GH#1221.
+//
+// The zero value is the safe one — non-interactive, nobody listening — which
+// mirrors `exec.RunOptions.Interactive`'s own rule: a caller that forgets gets a
+// loud refusal, never a prompt blocking in something unattended.
+//
+// Interactive and OnDestinations are ONE decision, not two, and that is the whole
+// lesson of this change. Declaring Interactive alone flips `clipboard`
+// destinations from a refusal with a reason into `HostPending` — and a pending
+// result nobody completes is the silence GH#1203 exists to remove. So a caller
+// that sets Interactive MUST hand over a handler that resolves every pending
+// type; `cliDestinationHandler` is the one that does.
+type RunConfig struct {
+	Interactive    bool
+	OnDestinations func([]exec.DestinationResult)
+}
+
+// RunWorkflow runs a workflow. cfg declares what the caller can do; pass the zero
+// value for an unattended caller.
+func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[string]string, onProgress exec.ProgressCallback, cfg RunConfig) (string, error) {
 	return exec.RunWorkflow(
 		ctx,
 		a.DB,
@@ -510,7 +529,14 @@ func (a *App) RunWorkflow(ctx context.Context, workflowID string, inputs map[str
 		nil, // stepContextOverrides
 		nil, // triggerSource — a direct CLI run is not a delegated trigger
 		nil, // projectAuthority — no project; see above
-		nil, // runOptions — no run-secrets, matching ResumeExecution below
+		// runOptions — no run-secrets (matching ResumeExecution below), but
+		// GH#1221 threads the caller's declaration through: a TTY run can be
+		// asked for a destination, and the handler completes what the engine
+		// could not do itself.
+		&exec.RunOptions{
+			Interactive:    cfg.Interactive,
+			OnDestinations: cfg.OnDestinations,
+		},
 	)
 }
 

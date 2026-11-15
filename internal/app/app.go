@@ -524,6 +524,21 @@ func (m *Model) startExecutionWithInputs(node *storage.Node, inputs map[string]s
 
 	go func() {
 		p.Println(theme.Faint.Render("Starting execution..."))
+		// GH#1221 — the zero RunConfig: NON-interactive, deliberately, even
+		// though this is the interactive session and so the most obviously
+		// askable context there is.
+		//
+		// The reason is structural, not an oversight. This is a bubbletea
+		// program and IT owns stdin: gates are handled asynchronously, by
+		// printing "type your response" and feeding the next REPL line into
+		// ResumeExecution. A blocking bufio prompt from inside OnDestinations
+		// would fight the program for the terminal — a deadlock, not a prompt.
+		//
+		// Asking here means routing the destination ask through the REPL's own
+		// message loop as a new state, the way the gate already is. That is a
+		// real feature and its own issue; declaring Interactive without it
+		// would reintroduce the pending-clipboard silence this change exists to
+		// prevent (see internal/cli/destinations.go).
 		_, err := engine.RunWorkflow(ctx, nodeID, inputs, func(evt exec.ProgressEvent) {
 			switch evt.Type {
 			case "execution-started":
@@ -544,7 +559,7 @@ func (m *Model) startExecutionWithInputs(node *storage.Node, inputs map[string]s
 				if evt.GateInstructions != "" { p.Println(evt.GateInstructions) }
 				p.Println(theme.Faint.Render("Type your response and press enter."))
 			}
-		})
+		}, eng.RunConfig{})
 		cancel()
 		if err != nil {
 			p.Println(theme.ErrorText.Render("Execution failed: " + err.Error()))

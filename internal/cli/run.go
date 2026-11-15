@@ -18,7 +18,7 @@ import (
 
 // runUsage is the one usage line every `run` argument failure prints, so a bad
 // invocation always says the same thing.
-const runUsage = "Usage: skrptiq run [--input key=value] [--output path] [--json] [--yes|--strict] [--gate-timeout N] <workflow>"
+const runUsage = "Usage: skrptiq run [--input key=value] [--output path] [--json] [--yes|--strict] [--gate-timeout N] [--non-interactive] <workflow>"
 
 // inputFlag collects multiple --input k=v flags.
 type inputFlag []string
@@ -118,7 +118,7 @@ func Run(args []string, dbPath string) int {
 	// distinct, read-only objects rather than plain node rows.
 	builtins := toolobject.NewRegistry().ByPosition(plan)
 
-	result := runWorkflow(ctx, engine, node.ID, inputMap, gateMode, opts.gateTimeout, &lastOutput, &executionID, builtins)
+	result := runWorkflow(ctx, engine, node.ID, inputMap, gateMode, opts.gateTimeout, opts.nonInteractive, &lastOutput, &executionID, builtins)
 
 	// Output.
 	if opts.jsonOut {
@@ -174,7 +174,7 @@ type gateDecision struct {
 	timedOut bool
 }
 
-func runWorkflow(ctx context.Context, engine *eng.App, nodeID string, inputs map[string]string, gate gateHandling, gateTimeoutSec int, lastOutput *string, execID *string, builtins map[int]toolobject.ToolObject) runResult {
+func runWorkflow(ctx context.Context, engine *eng.App, nodeID string, inputs map[string]string, gate gateHandling, gateTimeoutSec int, nonInteractive bool, lastOutput *string, execID *string, builtins map[int]toolobject.ToolObject) runResult {
 	var finalErr string
 
 	// pendingGate holds the gate event the engine paused on, for the resume loop
@@ -272,7 +272,16 @@ func runWorkflow(ctx context.Context, engine *eng.App, nodeID string, inputs map
 		}
 	}
 
-	_, err := engine.RunWorkflow(ctx, nodeID, inputs, onProgress)
+	// GH#1221 — declare what this caller can do. Interactive and the handler are
+	// one decision: see internal/cli/destinations.go for why setting the first
+	// without the second would turn a working clipboard refusal into silence.
+	interactive := interactiveRun(nonInteractive)
+	cfg := eng.RunConfig{Interactive: interactive}
+	if interactive {
+		cfg.OnDestinations = cliDestinationHandler(engine.DB)
+	}
+
+	_, err := engine.RunWorkflow(ctx, nodeID, inputs, onProgress, cfg)
 	if err != nil {
 		if finalErr == "" {
 			finalErr = err.Error()
