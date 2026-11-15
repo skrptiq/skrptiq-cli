@@ -1,0 +1,62 @@
+# --- Identity ---
+id: "b5036465-4964-4c12-a3e4-3af3ac718231"
+name: "skrptiq-on-skrptiq"
+display_name: "Skrptiq-on-Skrptiq"
+description: "Use Skrptiq to design, build, and publish new skrpts — a four-stage compound workflow chain that demonstrates multi-stage pipelines with human-in-the-loop gates"
+version: "1.0.14"
+engine: ">=0.1.0"
+
+# --- Attribution ---
+author:
+  name: "skrptiq"
+  url: "https://hub.skrptiq.ai"
+
+licence: "MIT"
+
+# --- Discovery (Hub) ---
+category: "developer"
+tags:
+  - "authoring"
+  - "builder"
+  - "compound-workflow"
+  - "meta"
+
+# --- Security & Access ---
+dependencies:
+  - id: "0bb01009-bc30-4114-a11a-95e04a6e86eb"
+    name: "generate-nodes"
+    version: 1.0.1
+    checksum: "sha256:5ca01c25404d7d84512276a0e45ad80e8b1e79ce9f47c9ceb33537ab910a180a"
+  - id: "fcab9536-a13e-49c9-b0c3-bb3097682e69"
+    name: "llm-service"
+    version: 1.0.1
+    checksum: "sha256:455c8bf590a9426d830bffd1a741afa058149bc29c58186c34d0d8699bea4bda"
+  - id: "4529038b-51ad-4d7e-81ae-62bde16c0001"
+    name: "node-generation"
+    version: 1.0.1
+    checksum: "sha256:50892efa56951239acc1f01647671d34ced6e6af509e38a0e4bf70bc941ecd72"
+  - id: "d5ca95ce-ec9a-4821-8d8a-e3a824124e32"
+    name: "skrpt-authoring-reference"
+    version: 1.0.1
+    checksum: "sha256:8313ebcebb27a40fb877b830ea7dfc5aedfe2af190fb56349d96813493af9fd2"
+  - id: "a6d1cddf-c330-408d-838a-7651bad0b28f"
+    name: "skrpt-patterns-reference"
+    version: 1.0.1
+    checksum: "sha256:97b814923ad4cb90b7317c34d2ba2b6cf2e47ea764b54bc1e71de1fa979a69b6"
+
+requires:
+  services:
+    - "llm-service"
+  permissions: []
+  data_handling: []
+
+# --- Contents ---
+contents:
+  skills: 8
+  prompts: 8
+  workflows: 4
+  services: 0
+  sources: 0
+  documents: 0
+  assets: 0
+  total: 20
