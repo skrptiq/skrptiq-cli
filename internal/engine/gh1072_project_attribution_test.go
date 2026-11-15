@@ -52,7 +52,7 @@ func TestGH1072_CLIRun_IsNotAttributedToAnyProject(t *testing.T) {
 		t.Fatalf("create edge: %v", err)
 	}
 
-	execID, err := app.RunWorkflow(context.Background(), "wf", map[string]string{}, func(exec.ProgressEvent) {})
+	execID, err := app.RunWorkflow(context.Background(), "wf", map[string]string{}, func(exec.ProgressEvent) {}, RunConfig{})
 	if err != nil {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
