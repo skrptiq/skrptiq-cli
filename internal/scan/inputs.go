@@ -181,6 +181,51 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 		}
 	}
 
+	// GH#1131 — `loops` is a SIBLING hoisted key, and until this it was never
+	// read at all. Both halves of the walk above keyed on `execution` alone, so
+	// everything a loop declares was invisible:
+	//
+	//   - `inputExpression` consumes a workflow input and is the engine's
+	//     MANDATED form for a for_each (`storage/validate.go` requires `{{` in
+	//     it), so `{{input.X}}` there is real consumption. Rule 3 reported such
+	//     an input as unconsumed, which under hub's publish policy BLOCKS the
+	//     package — `batch-competitor-analysis` and `profile-social-pipeline`
+	//     could not be published for content that is correct.
+	//   - a loop's `steps` and `verifier` name NODES whose bodies consume inputs
+	//     like any other step's. Unless the same node also appeared in
+	//     `execution`, its `{{input.X}}` was unreachable too.
+	//
+	// FLATTENED RATHER THAN FIELD-PICKED, and that is not laziness: the engine
+	// accepts BOTH `inputExpression` and `input_expression`
+	// (`storage/resolve.go:395-397`), plus `max_iterations`/`maxIterations` and
+	// `fresh_context_per_iteration`/`freshContextPerIteration`. Keying on the one
+	// spelling this issue happens to name would miss the other and re-earn the
+	// bug. Flattening every string in the loop declaration covers both spellings
+	// and anything a later loop field adds.
+	if loopList, ok := wf.Metadata["loops"].([]any); ok {
+		for _, entry := range loopList {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			execStrings = append(execStrings, flattenStrings(m)...)
+
+			// Loop members are node slugs, exactly like a `skill:`/`prompt:`
+			// entry, so they belong in `reach` for the same reason: their bodies
+			// are sent to the model and the inputs they name are consumed.
+			for _, slug := range loopMemberSlugs(m) {
+				n, found := bySlug[slug]
+				if !found {
+					continue // dep-provided or absent; the step-ref clause owns that
+				}
+				if !seen[n.ID] {
+					seen[n.ID] = true
+					reach = append(reach, n)
+				}
+			}
+		}
+	}
+
 	// Declarations: every reachable node's `inputs:` block, plus the workflow's.
 	declared := map[string]inputDecl{}
 	for _, n := range append(append([]parse.NodeFile{}, reach...), wf) {
@@ -305,7 +350,16 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 		})
 	}
 
-	// Rule 3 — a declaration nothing consumes. Warning, not a gate.
+	// Rule 3 — a declaration nothing consumes.
+	//
+	// THIS IS A GATE. The comment here used to read "Warning, not a gate", which
+	// was false at BOTH boundaries: `scan.go` returns exit 1 whenever WarnCount
+	// is non-zero, and hub's `caller-release.yml` greps for `(ERROR|WARNING)` and
+	// fails the release under the stated policy "any engine finding blocks —
+	// errors and warnings alike". A Rule 3 finding therefore BLOCKS first-party
+	// publication. Severity `warning` describes the label, not the consequence;
+	// whether the label should change is tracked separately and deliberately not
+	// touched here, so a severity change cannot hide inside a false-refusal fix.
 	for _, name := range sortedKeys(declared) {
 		if referenced[name] {
 			continue
@@ -329,6 +383,26 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 	}
 
 	return issues
+}
+
+// loopMemberSlugs returns the node slugs one loop declaration names, from the
+// keys the engine itself reads (`storage/resolve.go`): `steps` for the body and
+// `verifier` for an until_pass check. A member may be a node-less execution step
+// keyed by id (GH#831) — those resolve to no node here and are skipped, because
+// the step-ref clause owns whether they exist.
+func loopMemberSlugs(loop map[string]any) []string {
+	var out []string
+	if steps, ok := loop["steps"].([]any); ok {
+		for _, s := range steps {
+			if slug, ok := s.(string); ok && slug != "" {
+				out = append(out, slug)
+			}
+		}
+	}
+	if v, ok := loop["verifier"].(string); ok && v != "" {
+		out = append(out, v)
+	}
+	return out
 }
 
 // declsOf reads one node's `inputs:` block as the author wrote it.
