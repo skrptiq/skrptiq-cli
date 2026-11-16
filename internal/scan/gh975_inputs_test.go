@@ -369,9 +369,34 @@ func TestGH975_Scan_InputBoundInExecutionBlock_IsNotUnused(t *testing.T) {
 // storage.DepNodeSummary carries Content but no Metadata, so a dep node's
 // `inputs:` declaration is invisible even when resolution succeeds. Rule 1 must
 // stay silent there rather than fail offline authoring.
+// GH#1266 narrowed this suppression from package-wide to per-node, and this
+// fixture had to change with it — the OLD one put the reference in
+// `only-prompt`, whose execution entry is wholly local, and relied on a
+// straddling entry ELSEWHERE in the package to excuse it. That is the behaviour
+// GH#1266 removed: `log` is referenced in `only-prompt`'s body, so its
+// declaration could only ever sit on `only-prompt` or the workflow, both of
+// which this scan can read. Excusing it was over-broad.
+//
+// The case the guard genuinely exists for is this one: the reference is made by
+// the local node that is PAIRED with the unreadable half. A dependency's node
+// content is served with frontmatter stripped (203 dep nodes cached, 87 with
+// content, 0 carrying an `inputs:` block), so the declaration really may be
+// unreadable here — and reporting it would be a false refusal.
 func TestGH975_Scan_SplitAcrossDependency_SuppressesRule1(t *testing.T) {
-	files := onePromptPkg("", "| `{{input.log}}` | Yes | the log | `x` |\n", "Summarise {{input.log}}")
-	// Add a second step whose prompt is not defined in this package.
+	files := onePromptPkg("", "| `{{input.log}}` | Yes | the log | `x` |\n", "No reference here.")
+	// The reference now lives in the SKILL, which is the local half of the
+	// straddling entry added below.
+	files["skills/only-skill.md"] = `---
+type: skill
+id: only-skill
+title: Only Skill
+description: "s"
+---
+
+Summarise {{input.log}}
+`
+	// A second step pairs that same skill with a prompt this package does not
+	// define: the declaration may sit on the half the scan cannot read.
 	files["workflows/fixture-wf.md"] = strings.Replace(
 		files["workflows/fixture-wf.md"],
 		`    prompt: "only-prompt"`,

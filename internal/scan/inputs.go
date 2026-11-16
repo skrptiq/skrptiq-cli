@@ -133,7 +133,7 @@ func stripCode(s string) string {
 // itself; a package whose execution pairs a local node with a dependency-
 // provided one cannot be judged, because a dep node's declaration is not
 // visible — DepNodeSummary carries Content but no Metadata.
-func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) []ScanIssue {
+func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) ([]ScanIssue, []string) {
 	bySlug := map[string]parse.NodeFile{}
 	for _, n := range pkg.Nodes {
 		if n.ID != "" {
@@ -148,7 +148,23 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 	// strings it binds, and whether any step pairs across a dependency edge.
 	var reach []parse.NodeFile
 	var execStrings []string
-	splitAcrossDep := false
+	// GH#1266 — PER-NODE, not package-wide. This was a single `splitAcrossDep`
+	// bool, and one straddling entry switched Rule 1 off for the WHOLE package,
+	// both rungs. It was measured at 42 of 88 workflow-bearing catalogue
+	// packages — 48% — and it was found by running a positive control that was
+	// checking something else: deleting a real declaration from `weekly-report`
+	// produced exit 0 and total silence, not a missed promotion.
+	//
+	// The flag itself is CORRECT and must not be deleted. A dependency's node
+	// content is served with its frontmatter stripped — measured on the wire,
+	// from the resolver's own cache of what hub serves: 203 dep nodes, 87 with
+	// content, and ZERO carrying an `inputs:` block. So a declaration on the
+	// dep half is genuinely unreadable, resolved or not, and reporting its
+	// reference would be a false refusal of the GH#1131 / GH#1253 kind.
+	//
+	// What was wrong was the blast radius. A reference is excused only when the
+	// node making it sits in an entry that actually straddles the edge.
+	splitNodes := map[string]bool{}
 	seen := map[string]bool{}
 	if execList, ok := wf.Metadata["execution"].([]any); ok {
 		for _, entry := range execList {
@@ -157,14 +173,15 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 				continue
 			}
 			execStrings = append(execStrings, flattenStrings(m)...)
-			var local, foreign int
+			var localIDs []string
+			var foreign int
 			for _, key := range []string{"skill", "prompt"} {
 				s, ok := m[key].(string)
 				if !ok || s == "" {
 					continue
 				}
 				if n, found := bySlug[s]; found {
-					local++
+					localIDs = append(localIDs, n.ID)
 					if !seen[n.ID] {
 						seen[n.ID] = true
 						reach = append(reach, n)
@@ -174,9 +191,13 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 				}
 			}
 			// A skill here and its prompt over there: the declaration may sit
-			// on the half this scan cannot read.
-			if local > 0 && foreign > 0 {
-				splitAcrossDep = true
+			// on the half this scan cannot read — so excuse THIS entry's local
+			// nodes, and only those. A node reached by an entry that is wholly
+			// local is not excused by someone else's dep edge.
+			if len(localIDs) > 0 && foreign > 0 {
+				for _, id := range localIDs {
+					splitNodes[id] = true
+				}
 			}
 		}
 	}
@@ -321,8 +342,9 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 		if _, ok := declared[r.name]; ok {
 			continue
 		}
-		if splitAcrossDep {
-			continue // the declaration may live in an unreadable dep node
+		if splitNodes[r.node] {
+			continue // this node's entry straddles a dep edge: the declaration
+			// may live in the half whose frontmatter is not served
 		}
 		if reported[r.name] {
 			continue
@@ -437,7 +459,7 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 		})
 	}
 
-	return issues
+	return issues, sortedKeys(splitNodes)
 }
 
 // loopMemberSlugs returns the node slugs one loop declaration names, from the
