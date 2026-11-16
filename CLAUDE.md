@@ -282,6 +282,44 @@ The push protocol, the plan gate, the trigger protocol and every acceptance requ
 
 If a tool genuinely cannot accept a path (rare), say so and ask rather than reaching for `cd`.
 
+## When `main` is red and no CI run says so — extract and build it alone
+
+**The engine is consumed through `replace github.com/skrptiq/engine => ../skrptiq-app/engine`, and
+CI builds against app `main` with no version boundary.** So `main` can break without a single
+commit landing here, and `ci.yml` only runs on this repo's own pushes and PRs — which means **a
+green badge can be 18 days old and about an engine that no longer exists.**
+
+**Before blaming your own branch, establish whether `main` is already broken.** One command, no
+network, no CI:
+
+```
+git -C <repo> archive origin/main > /tmp/m.tar
+mkdir -p /tmp/chk/skrptiq-cli && tar -xf /tmp/m.tar -C /tmp/chk/skrptiq-cli
+ln -s /Users/bencrocker/Developer/skrptiq-app/engine /tmp/chk/skrptiq-app/engine
+go build -C /tmp/chk/skrptiq-cli ./... && go test -C /tmp/chk/skrptiq-cli ./...
+```
+
+**`origin/main` extracted alone, with YOUR CHANGE ABSENT, against the current sibling engine.** If
+it fails there, the redness is not yours and the diagnosis is a producer commit — check
+`git -C ../skrptiq-app log --oneline` and `engine/go.mod`'s recent history first.
+
+**This is how GH#1232 and GH#1243 were both diagnosed, and the second one 18 minutes after app
+merged — before any CI run could have existed to say so.** Do not wait for a run to confirm what
+this answers in seconds, and **do not report "my branch is red" until you have done it.**
+
+**Three things that are NOT substitutes:**
+- **A local `go test ./...` in your worktree.** It grades your tree, not `main`, and shares your
+  branch's state.
+- **The green badge on `main`.** `paths-ignore` skips `**.md`, so docs-only commits produce no run
+  at all; the last signal may predate the breakage.
+- **`engine-chain-watchdog.yml`.** It compiles HEAD against **`.engine-pin`**, not `main`, and it
+  does not run tests. Different subject — see `engine-main-drift.yml`, which is the one that grades
+  app `main`.
+
+**And say which you did.** "`go test` passes" and "CI passed" are different claims; so are "the
+script says green" and "the watchdog reported green". Conflating them is how a red `main` stayed
+invisible for 18 minutes and a dead release chain stayed invisible for 182 days.
+
 ## Testing — MANDATORY
 - `go test ./...` — required for ALL changes. Do not commit without tests passing.
 - **Write tests alongside code.** Every new handler, function, or behaviour change must include tests that validate it works and will catch regressions.

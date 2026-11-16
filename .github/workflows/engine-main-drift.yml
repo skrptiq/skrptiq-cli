@@ -1,0 +1,171 @@
+# Does this repo still build and PASS against app's engine `main`, right now?
+#
+# GH#1171 — THE PRODUCER/CONSUMER ASYMMETRY.
+#
+# Every consumer builds against app's engine `main` by deliberate design ("catch
+# engine breakage early", and `.engine-pin` is what the RELEASE build uses — see
+# GH#1192). But app's CI builds no consumer, so a producer change is detectable
+# only on the consumer side, and only when that consumer next runs CI.
+#
+# `ci.yml` is triggered by this repo's own pushes and PRs. That window is
+# unbounded, and it has been measured:
+#
+#   - cli main went 18 DAYS with no run. The three commits after `719d2804` were
+#     all `CLAUDE.md`, correctly skipped by `paths-ignore` — so main's last
+#     signal was green about an engine that no longer existed.
+#   - host's last run predated a breaking engine rename by SIX DAYS, and the
+#     break went four weeks unnoticed. NO own-events trigger of any kind would
+#     have caught that. It is the case that makes a schedule necessary rather
+#     than nice.
+#
+# THIS IS NOT THE PIN WATCHDOG, and the two must not be merged by a later
+# reader. `engine-chain-watchdog.yml` runs `scripts/engine-chain-check.sh`, which
+# compiles HEAD against `.engine-pin` and asks whether the RELEASE chain is
+# delivering. Its subject is the pin. This one's subject is app `main`, and it
+# runs the TESTS — because a behaviour change compiles fine. On 2026-11-16 app's
+# GH#1243 made the scan double-report every malformed `outputs:`; nothing short
+# of running the suite sees that, and the pin watchdog would not have, on either
+# axis.
+#
+# WHY A SEPARATE WORKFLOW rather than a `schedule:` on `ci.yml`: the three steps
+# below are split so a failure NAMES WHICH EXPOSURE broke, and giving `ci.yml`
+# that treatment would change what every PR runs. Here it costs nothing.
+#
+# Reading the result is the orchestrator's `scripts/scheduled-health.sh`, which
+# sweeps default-branch scheduled failures across every repo. A schedule with no
+# delivery path is the GH#1079 shape one layer up — three red scheduled jobs sat
+# unread before that sweep existed.
+
+name: Engine main drift
+
+concurrency:
+  # One run per ref, and never cancelled: this reports a fact about main at a
+  # point in time, and a cancelled run reports nothing while looking like a pass.
+  group: engine-main-drift-${{ github.ref }}
+  cancel-in-progress: false
+
+on:
+  schedule:
+    # Daily. Daily is the honest cadence for what this catches: the module-graph
+    # and rename breakages were hours-to-weeks old, and one day bounds them.
+    # It does NOT bound a same-morning behaviour change — GH#1243's was 18
+    # minutes old — and no cron does. That half is a dispatch on app's merge
+    # (GH#1171 option C), which is app's to send.
+    - cron: '25 06 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: macos-latest
+    steps:
+      - name: Generate pipeline app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          owner: skrptiq
+          repositories: skrptiq-cli,skrptiq-app
+
+      - name: Checkout CLI (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: skrptiq-cli
+
+      # `ref: main` is EXPLICIT here, unlike ci.yml which relies on the default
+      # branch. This job's whole subject is "app main as it is right now", and a
+      # reader must not have to know what the default branch is to see that.
+      - name: Checkout engine at app main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: skrptiq/skrptiq-app
+          ref: main
+          path: skrptiq-app
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
+
+      # Fail closed on a missing replace target. Without this, a checkout that
+      # produced nothing would make every step below "pass" by not running.
+      - name: Confirm the replace target resolved, and record what we are grading
+        run: |
+          if [ ! -f skrptiq-app/engine/go.mod ]; then
+            echo "::error::skrptiq-app/engine/go.mod is missing — the replace target did not"
+            echo "resolve, so any success below would be meaningless."
+            exit 1
+          fi
+          echo "engine main: $(git -C skrptiq-app rev-parse HEAD)"
+          echo "cli main:    $(git -C skrptiq-cli rev-parse HEAD)"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: skrptiq-cli/go.mod
+          cache-dependency-path: skrptiq-cli/go.sum
+
+      # ── The three exposures, as three steps, so a failure names itself ──────
+      #
+      # GH#1171's measurement was that these break in different places and a red
+      # build saying only "failed" sends the next reader through the whole
+      # analysis again. Each step below reports WHICH kind broke.
+      #
+      # THE ORDERING IS THE MECHANISM, NOT UNIQUE DETECTION. `go build` also
+      # fails on a broken module graph — verified on a fresh tree with the go
+      # directive reverted to GH#1232's state, where `go mod download`, `go list`
+      # and `go build` all detect it. So RESOLUTION exists to fail FIRST with the
+      # graph-specific message, not because it is the only step that can see a
+      # graph break. Claiming otherwise would be overclaiming.
+      #
+      # (Measuring this was itself a trap: an earlier run of `go list` appeared to
+      # PASS in the reverted state, which would have made this step look blind.
+      # It was module-cache state left by prior runs in the same scratch tree —
+      # one fresh tree per command is the only honest way to test it, and CI
+      # always has one.)
+
+      - name: RESOLUTION — does the module graph still resolve?
+        working-directory: skrptiq-cli
+        run: |
+          if ! OUT=$(go list ./... 2>&1); then
+            echo "$OUT"
+            echo "::error::EXPOSURE: MODULE GRAPH. The dependency graph no longer resolves against"
+            echo "app main. Nothing in this repo's code changed — a requirement in engine/go.mod"
+            echo "moved and raised a floor this module cannot satisfy. This is GH#1232's shape"
+            echo "(app raised golang.org/x/text, which activated a latent go>=1.25 requirement)."
+            echo "Look at engine/go.mod's recent history before looking at any Go file."
+            exit 1
+          fi
+          echo "module graph resolves."
+
+      - name: COMPILE — does the Go API still fit?
+        working-directory: skrptiq-cli
+        run: |
+          if ! OUT=$(go build ./... 2>&1); then
+            echo "$OUT"
+            echo "::error::EXPOSURE: GO API. This repo no longer compiles against app main. A symbol"
+            echo "it imports was renamed, removed or re-signatured. This is GH#1117's shape"
+            echo "(GetStepsByExecution renamed) — the undefined names above are the contract that"
+            echo "moved."
+            exit 1
+          fi
+          echo "compiles against app main."
+
+      - name: BEHAVIOUR — do the tests still pass?
+        working-directory: skrptiq-cli
+        run: |
+          if ! OUT=$(go test ./... 2>&1); then
+            echo "$OUT"
+            echo "::error::EXPOSURE: BEHAVIOUR. This repo compiles against app main but its tests"
+            echo "fail. The engine changed what it DOES, not what it offers — a new validation"
+            echo "finding, a changed refusal, a different plan. This is GH#1243's shape (one"
+            echo "ValidateOutputs began emitting findings the scan already emitted, so every"
+            echo "malformed outputs: was reported twice). Compiling is not evidence here, which"
+            echo "is why this step exists and why the pin watchdog would not have caught it."
+            exit 1
+          fi
+          echo "tests pass against app main."
+
+      - name: Vet
+        working-directory: skrptiq-cli
+        run: go vet ./...
