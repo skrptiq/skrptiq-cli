@@ -238,6 +238,13 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// manifest identity that already distinguishes the two.
 	allIssues = append(allIssues, checkShellNotPublishable(&pkg, absPath)...)
 
+	// 6d-ter. GH#1213 — `outputs:` decides where files land and nothing graded
+	// it. The scan validates and never plans, so GH#1210's planner refusals fire
+	// on a CONSUMER's machine; this brings them to publish time, adds the
+	// unknown-key clause the engine can never catch, and grades a filePath that
+	// is wrong on every machine.
+	allIssues = append(allIssues, checkOutputDestinations(&pkg, absPath)...)
+
 	// 6e. GH#1057 — step references that cannot resolve under any execution: a
 	// step reading its own output, and a reference to a node the package never
 	// ships. Dep-awareness is handed in rather than inferred: a reference to a
