@@ -1,0 +1,73 @@
+# --- Identity ---
+id: "4b68a002-9b9a-4c26-84d2-64a15354c607"
+name: "weekly-report"
+display_name: "Weekly Report"
+description: "Pulls a week's emails and calendar via MCP, analyses themes and accomplishments, and generates a stakeholder-ready weekly report"
+version: "1.0.16"
+engine: ">=0.1.0"
+
+# --- Attribution ---
+author:
+  name: "skrptiq"
+  url: "https://hub.skrptiq.ai"
+
+licence: "MIT"
+repository: "https://github.com/skrpts/weekly-report"
+
+# --- Discovery (Hub) ---
+category: "shared"
+tags:
+  - "calendar"
+  - "gmail"
+  - "mcp"
+  - "productivity"
+  - "reporting"
+
+# --- Security & Access ---
+dependencies:
+  - id: "3db66b8b-8758-4503-a555-5330f3f9b3d9"
+    name: "language-polish"
+    version: 1.0.3
+    checksum: "sha256:efe38bb2b4ba213139299818cc4c7d694270fcfd7ec4d3c738e2170f6394bbd6"
+  - id: "fcab9536-a13e-49c9-b0c3-bb3097682e69"
+    name: "llm-service"
+    version: 1.0.3
+    checksum: "sha256:18783015383c041de9c3fdaa191b79172ab534348448c20c74f9a967ab4dd917"
+  - id: "7b318111-b190-4ac6-b95d-448178de97b6"
+    name: "polish-report"
+    version: 1.0.4
+    checksum: "sha256:dbbae9acead0bba1a9dcaaa945ade9be136499846a01f037574aa63e58042d1d"
+  - id: "4395af8b-0299-4f00-86d0-7eef8c02113d"
+    name: "synthesise-weekly-report"
+    version: 1.0.2
+    checksum: "sha256:eeed24eb62022f0c0de7b632a1612dcf85299c685ea5d7aa4f5ec32b85d843be"
+  - id: "2b9a3d32-a352-46ab-9241-96b256ca4237"
+    name: "gmail-mcp"
+    version: 1.0.0
+    checksum: "sha256:7d4fd65094639e5649cec9326f1327a299363387e32a27ec20d2bd24acd3d39f"
+  - id: "083e325f-d27f-46a8-a947-92e9345a60bb"
+    name: "google-calendar-mcp"
+    version: 1.0.0
+    checksum: "sha256:8302ab9047e3cc3fb8d2b1b5675e0fb0a8ce195ab1aae23cfac819b5d45240ff"
+
+requires:
+  services:
+    - "llm-service"
+    - "gmail-mcp"
+    - "google-calendar-mcp"
+  permissions:
+    - "network:googleapis.com"
+    - "network:console.cloud.google.com"
+  data_handling:
+    - "pii"
+
+# --- Contents ---
+contents:
+  skills: 2
+  prompts: 3
+  workflows: 1
+  services: 0
+  sources: 0
+  documents: 0
+  assets: 0
+  total: 6
