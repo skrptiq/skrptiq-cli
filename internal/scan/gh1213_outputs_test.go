@@ -61,7 +61,13 @@ Fixture.
 	}))
 }
 
-// ── Clause A: structure ───────────────────────────────────────────────────
+// ── Structure: the ENGINE's rule, asserted at the publish gate ────────────
+//
+// These four no longer test a scan-local clause — `storage.ValidateOutputs` owns
+// them since GH#1243. They are kept pointed at the SCAN deliberately: the defect
+// GH#1213 was filed for was that the publish gate could not see a verdict the
+// planner could, so "the engine refuses this" and "the scan reports it" are
+// different claims and this file asserts the second.
 
 func TestGH1213_OutputsNotAList_IsRefused(t *testing.T) {
 	issues := outputsIssues(t, outputsPkg(t, "  outputs: \"notes/out.md\"\n"))
@@ -247,15 +253,24 @@ func TestGH1213_Corpus_InputsTypeFileIsNotADestination(t *testing.T) {
 
 // ── THE DRIFT GUARD — mandatory, and clause A's honesty ───────────────────
 
-// Clause A mirrors the planner, and the planner is the authority. This builds a
-// real plan from each shape clause A refuses and asserts the PLANNER refuses it
-// too, so a divergence fails CI rather than being discovered by someone's
-// install.
+// WHAT THIS GUARD NOW ASSERTS, which is NOT what it was written for.
 //
-// GH#1243 exports `ValidateOutputs` from the engine; when it lands clause A
-// collapses into a call to it and this guard becomes redundant by construction.
-// Until then it is what makes a second authority defensible.
-func TestGH1213_DriftGuard_PlannerRefusesEverythingClauseARefuses(t *testing.T) {
+// It began as a drift guard: clause A mirrored the planner, and this proved the
+// two implementations agreed. GH#1243 (app `8542c44`) collapsed that — there is
+// one `storage.ValidateOutputs` and clause A is gone.
+//
+// It is therefore NOT redundant by construction, and the reason is worth stating
+// rather than deleting the test over. The predicate IS shared, so the question
+// "do two implementations agree?" is meaningless now. But the two CALLERS are
+// still two: `ValidateWorkflowWithDeps` (which the scan runs) and
+// `BuildExecutionPlan` (which a run runs). This asserts each refused shape is
+// refused through BOTH — so removing the `ValidateOutputs` call from either
+// caller fails here.
+//
+// That is a different and still-live property: the original defect was precisely
+// that the publish gate did not reach a predicate the planner did. A test that
+// only checked the predicate would not have caught it.
+func TestGH1213_BothCallersReachValidateOutputs(t *testing.T) {
 	shapes := []struct {
 		name string
 		yaml string
@@ -270,12 +285,14 @@ func TestGH1213_DriftGuard_PlannerRefusesEverythingClauseARefuses(t *testing.T) 
 		t.Run(s.name, func(t *testing.T) {
 			dir := outputsPkg(t, s.yaml)
 
-			// Clause A must refuse it.
+			// The SCAN's caller must refuse it.
 			if len(outputsIssues(t, dir)) == 0 {
-				t.Fatalf("clause A did not refuse %s — the guard has nothing to compare", s.name)
+				t.Fatalf("the scan did not refuse %s — `ValidateWorkflowWithDeps` is not "+
+					"reaching `storage.ValidateOutputs`, which is the exact defect GH#1213 "+
+					"was filed for", s.name)
 			}
 
-			// And so must the planner, which is the authority.
+			// And so must the PLANNER's caller.
 			hb, err := HydrateBundle(dir)
 			if err != nil {
 				t.Fatalf("hydrate: %v", err)
@@ -285,19 +302,17 @@ func TestGH1213_DriftGuard_PlannerRefusesEverythingClauseARefuses(t *testing.T) 
 				t.Fatalf("want 1 workflow, got %d", len(hb.Workflows))
 			}
 			if _, perr := exec.BuildExecutionPlan(hb.DB, hb.Workflows[0].ID, nil); perr == nil {
-				t.Errorf("the PLANNER accepted %s while clause A refuses it — the scan has "+
-					"drifted from the authority it mirrors. Reconcile against "+
-					"execution/planner.go, or land GH#1243 and replace clause A with a call",
-					s.name)
+				t.Errorf("the PLANNER accepted %s while the scan refuses it — one of the two "+
+					"callers has stopped calling `storage.ValidateOutputs`", s.name)
 			}
 		})
 	}
 }
 
-// The other direction of the same guard: a shape clause A accepts must PLAN. A
-// mirror that over-refuses is as wrong as one that under-refuses, and only this
-// direction catches it.
-func TestGH1213_DriftGuard_PlannerAcceptsWhatClauseAAccepts(t *testing.T) {
+// The other direction: a shape the scan accepts must PLAN. Kept for the same
+// reason as above — it catches a caller that over-refuses, which is as wrong as
+// one that under-refuses and is invisible to the first direction.
+func TestGH1213_BothCallersAcceptWhatTheOtherAccepts(t *testing.T) {
 	for _, yaml := range []string{
 		"  outputs:\n    - type: file\n      filePath: notes/out.md\n",
 		"  outputs:\n    - type: file\n",
@@ -305,14 +320,14 @@ func TestGH1213_DriftGuard_PlannerAcceptsWhatClauseAAccepts(t *testing.T) {
 	} {
 		dir := outputsPkg(t, yaml)
 		if issues := outputsIssues(t, dir); len(issues) != 0 {
-			t.Fatalf("clause A refused a shape this guard expects it to accept: %+v", issues)
+			t.Fatalf("the scan refused a shape this guard expects it to accept: %+v", issues)
 		}
 		hb, err := HydrateBundle(dir)
 		if err != nil {
 			t.Fatalf("hydrate: %v", err)
 		}
 		if _, perr := exec.BuildExecutionPlan(hb.DB, hb.Workflows[0].ID, nil); perr != nil {
-			t.Errorf("the planner refused a shape clause A accepts: %v", perr)
+			t.Errorf("the planner refused a shape the scan accepts: %v", perr)
 		}
 		hb.Close()
 	}

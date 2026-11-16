@@ -14,12 +14,16 @@ import (
 
 // Codes for the `outputs:` clause. GH#1213.
 const (
-	// CodeOutputsNotAList fires when `outputs:` is not a list of destinations.
-	CodeOutputsNotAList = "workflow.outputs_not_a_list"
-	// CodeOutputsEntryNotAMapping fires on a list entry that is not a mapping.
+	// The three structural codes below are EMITTED BY `storage.ValidateOutputs`,
+	// not by this file (GH#1243). They are declared here because the scan's tests
+	// assert that the engine's verdict reaches the publish gate — which is the
+	// seam that broke when the engine gained the rule while the scan still had
+	// its own copy. Deleting the names would leave that seam untested; owning the
+	// emission is a different thing from naming the code.
+	CodeOutputsNotAList         = "workflow.outputs_not_a_list"
 	CodeOutputsEntryNotAMapping = "workflow.outputs_entry_not_a_mapping"
-	// CodeOutputsUnknownType fires on a destination `type` the engine cannot produce.
-	CodeOutputsUnknownType = "workflow.outputs_unknown_type"
+	CodeOutputsUnknownType      = "workflow.outputs_unknown_type"
+
 	// CodeOutputsUnknownKey fires on a key inside a destination that nothing reads.
 	CodeOutputsUnknownKey = "workflow.outputs_unknown_key"
 	// CodeOutputsFilePathNotRelative fires on a filePath that is wrong on every machine.
@@ -113,48 +117,37 @@ func outputsIssuesFor(wf parse.NodeFile, absPath string, raw any) []ScanIssue {
 		}
 	}
 
-	// ── Clause A: structure ────────────────────────────────────────────────
+	// ── STRUCTURE IS THE ENGINE'S NOW (GH#1243) ────────────────────────────
 	//
-	// THIS MIRRORS THE PLANNER AND THE PLANNER IS THE AUTHORITY
-	// (`execution/planner.go`, the three refusals GH#1210 added). It is here
-	// because the planner's refusals fire on a consumer's machine and this gate
-	// is what decides publishability — not because the predicate is ours.
+	// This file used to carry clause A: `outputs:` not a list, an entry that is
+	// not a mapping, a `type` outside the three. Its comment named GH#1243 as its
+	// death condition — the engine exporting one `ValidateOutputs` called by both
+	// the planner and the scan — and that landed as app `8542c44`.
 	//
-	// Its death is NAMED, not intended: GH#1243 exports `ValidateOutputs` from
-	// the engine, and when it lands this clause collapses into a call to it and
-	// `TestGH1213_DriftGuard_*` becomes redundant by construction. Until then
-	// that drift guard builds a plan from every fixture refused here and asserts
-	// the planner refuses it too, so a divergence fails CI rather than being
-	// discovered by someone's install.
+	// It did NOT replace clause A, it duplicated it: `storage.ValidateOutputs` is
+	// reached through `ValidateWorkflowWithDeps`, so every malformed shape came
+	// back TWICE with the same code string, one finding from each. Four GH#1213
+	// tests went from "want one, got one" to "want one, got two" and main was red.
+	//
+	// So the structure walk below judges NOTHING. It type-asserts only far enough
+	// to reach the per-entry keys that clauses B and C still own, and returns
+	// silently on a shape the engine has already refused. Silence here is correct
+	// rather than a gap: the finding is emitted, once, by the authority.
 	list, ok := raw.([]any)
 	if !ok {
-		return []ScanIssue{mk(CodeOutputsNotAList, fmt.Sprintf(
-			"`outputs:` is %T and must be a LIST of destinations — for example "+
-				"`outputs:` then `  - type: file` and `    filePath: notes/out.md`. "+
-				"A single value is not a destination", raw))}
+		return nil
 	}
 
 	var issues []ScanIssue
 	for i, entry := range list {
 		dm, ok := entry.(map[string]any)
 		if !ok {
-			issues = append(issues, mk(CodeOutputsEntryNotAMapping, fmt.Sprintf(
-				"`outputs[%d]` is %T and every destination must be a mapping with a `type`", i, entry)))
-			continue
+			continue // the engine refuses it; nothing here may say so twice
 		}
 
-		dtype, _ := dm["type"].(string)
-		if dtype != "new_node" && dtype != "clipboard" && dtype != "file" {
-			shown := dtype
-			if shown == "" {
-				shown = "<missing>"
-			}
-			issues = append(issues, mk(CodeOutputsUnknownType, fmt.Sprintf(
-				"`outputs[%d]` has type %q, which is not a destination this engine can "+
-					"produce — it must be one of new_node, clipboard, file", i, shown)))
-			// Keep checking this entry's keys: a wrong type and a typo'd key are
-			// independent mistakes and reporting one should not hide the other.
-		}
+		// No `type` check here — `storage.ValidateOutputs` owns it. A wrong type
+		// and a typo'd key remain independent mistakes and both are still
+		// reported, one by the engine and one below.
 
 		// ── Clause B: unknown keys ─────────────────────────────────────────
 		//
