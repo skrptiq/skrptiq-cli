@@ -128,10 +128,13 @@ Fixture.
 	if issues[0].ReferencedSlug != "orphan" {
 		t.Errorf("referencedSlug = %q, want orphan", issues[0].ReferencedSlug)
 	}
-	if issues[0].Severity != storage.SeverityWarning {
-		t.Errorf("severity = %q — this change deliberately does NOT alter the severity; "+
-			"that is tracked separately so it cannot hide inside a false-refusal fix",
-			issues[0].Severity)
+	// This guard was written the other way up: it held the severity at `warning`
+	// so that a relabel could not hide inside GH#1131's false-refusal fix. It did
+	// exactly that — the separate tracker was GH#1249, which then authorised the
+	// promotion on its own evidence. The guard still earns its place: it is now
+	// what proves a genuinely-unconsumed declaration reaches `error`.
+	if issues[0].Severity != storage.SeverityError {
+		t.Errorf("severity = %q, want error (promoted by GH#1249)", issues[0].Severity)
 	}
 }
 

@@ -391,14 +391,30 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 
 	// Rule 3 — a declaration nothing consumes.
 	//
-	// THIS IS A GATE. The comment here used to read "Warning, not a gate", which
-	// was false at BOTH boundaries: `scan.go` returns exit 1 whenever WarnCount
-	// is non-zero, and hub's `caller-release.yml` greps for `(ERROR|WARNING)` and
-	// fails the release under the stated policy "any engine finding blocks —
-	// errors and warnings alike". A Rule 3 finding therefore BLOCKS first-party
-	// publication. Severity `warning` describes the label, not the consequence;
-	// whether the label should change is tracked separately and deliberately not
-	// touched here, so a severity change cannot hide inside a false-refusal fix.
+	// THIS IS A GATE, AND THE SEVERITY NOW SAYS SO (GH#1249). This comment once
+	// read "Warning, not a gate"; when that was shown false it was corrected to
+	// say that `warning` described the label and not the consequence. Both
+	// boundaries gate: `scan.go` returns exit 1 whenever WarnCount is non-zero,
+	// and hub's `caller-release.yml` greps for `(ERROR|WARNING)` and fails the
+	// release under the stated policy "any engine finding blocks — errors and
+	// warnings alike". So the label is `error`, label and effect agree, and no
+	// reader has to reconcile the two. There is nothing left here to re-discover.
+	//
+	// THE PROMOTION IS RULE 3'S ALONE — a deliberate scope, not an oversight.
+	// The catalogue produced ZERO Rule 3 findings when it was made, so it changed
+	// no author's message; that empty population is what made a pure label change
+	// safe. The other warning emitters point the OTHER way and must stay warnings:
+	//   - Rule 1's two-level ladder (above, where a name documented in the
+	//     `## Inputs` table promotes to error) uses `warning` to mean "probably
+	//     an example, not a contract" — real semantic work, and the levels are
+	//     chosen from the author's evidence of intent.
+	//   - `scan.cross_package_edge` says "will be resolved at runtime" —
+	//     explicitly benign.
+	//   - `parseToStorageSeverity` maps what a MANIFEST declared; promoting it
+	//     would override the author.
+	// That those three gate a publish anyway is hub's POLICY, not their labels —
+	// tracked as GH#1256, and not a reason to relabel them here. Promoting them
+	// would destroy the distinction Rule 1's ladder exists to draw.
 	for _, name := range sortedKeys(declared) {
 		if consumed[name] {
 			continue
@@ -409,7 +425,7 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 			NodeSlug: d.node,
 			ValidationIssue: storage.ValidationIssue{
 				Code:     CodeInputDeclaredUnused,
-				Severity: storage.SeverityWarning,
+				Severity: storage.SeverityError,
 				Message: fmt.Sprintf(
 					"input %q is declared on node %q but no step consumes it — either wire it or remove the declaration",
 					name, d.node),

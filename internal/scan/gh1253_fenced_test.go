@@ -120,9 +120,12 @@ Do the work. Nothing references the declared input, anywhere.
 	if issues[0].ReferencedSlug != "orphan" {
 		t.Errorf("referencedSlug = %q, want orphan", issues[0].ReferencedSlug)
 	}
-	if issues[0].Severity != storage.SeverityWarning {
-		t.Errorf("severity = %q — GH#1249 tracks whether this should become `error`; "+
-			"this change deliberately does not touch it", issues[0].Severity)
+	// GH#1249 resolved the question this assertion used to hold open: it became
+	// `error`. The population at the time was zero, so no author's message
+	// changed — only the label, which had been describing something other than
+	// the consequence.
+	if issues[0].Severity != storage.SeverityError {
+		t.Errorf("severity = %q, want error (GH#1249)", issues[0].Severity)
 	}
 }
 
