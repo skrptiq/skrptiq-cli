@@ -28,6 +28,21 @@ type ScanResult struct {
 	WarnCount  int            `json:"warnCount"`
 	InfoCount  int            `json:"infoCount"`
 	Package    *parse.Package `json:"package,omitempty"`
+
+	// Rule1SuppressedNodes names the nodes whose Rule 1 (undeclared-input)
+	// findings were excused because their execution entry straddles a
+	// dependency edge, whose node content is served without frontmatter and so
+	// may carry the declaration unreadably (GH#1266).
+	//
+	// It is emitted because the alternative was a figure derived OUTSIDE the
+	// scanner: the 48%-of-the-catalogue measurement that found this bug was
+	// computed by replicating the suppression logic against workflow
+	// frontmatter, which is a maintained instrument that can drift from the
+	// rule it models. A count the scanner itself produces makes the next
+	// measurement a diff rather than a re-derivation.
+	//
+	// Empty for the overwhelming majority of packages; omitted when empty.
+	Rule1SuppressedNodes []string `json:"rule1SuppressedNodes,omitempty"`
 }
 
 // Options controls scanner behaviour beyond path + output format.
@@ -215,11 +230,14 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// it is enforced here rather than in the engine's validator: the scan is
 	// the canonical gate for skrpt content (K-060), and only the scan sees the
 	// package as the author wrote it.
+	var rule1Suppressed []string
 	for _, nf := range pkg.Nodes {
 		if nf.Type != "workflow" {
 			continue
 		}
-		allIssues = append(allIssues, checkWorkflowInputs(nf, &pkg, absPath)...)
+		inputIssues, suppressed := checkWorkflowInputs(nf, &pkg, absPath)
+		allIssues = append(allIssues, inputIssues...)
+		rule1Suppressed = append(rule1Suppressed, suppressed...)
 	}
 
 	// 6c. GH#858 A1 — a prompt or skill the package ships and no workflow runs.
@@ -275,11 +293,12 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		pkg.Nodes[i].FilePath = ""
 	}
 	result := ScanResult{
-		Path:      absPath,
-		NodeCount: hydration.NodesInserted,
-		EdgeCount: hydration.EdgesInserted,
-		Issues:    allIssues,
-		Package:   &pkg,
+		Path:                 absPath,
+		NodeCount:            hydration.NodesInserted,
+		EdgeCount:            hydration.EdgesInserted,
+		Issues:               allIssues,
+		Package:              &pkg,
+		Rule1SuppressedNodes: rule1Suppressed,
 	}
 	for _, issue := range allIssues {
 		switch issue.Severity {
