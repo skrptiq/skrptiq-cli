@@ -1,0 +1,72 @@
+# --- Identity ---
+id: "3b6294b9-1c0a-47f8-97d2-3839689dd338"
+name: "translation-pipeline"
+display_name: "Translation Pipeline"
+description: "Translate content into multiple languages with quality review and comparative reporting"
+version: "2.1.1"
+engine: ">=0.1.0"
+
+# --- Attribution ---
+author:
+  name: "skrptiq"
+  url: "https://hub.skrptiq.ai"
+
+licence: "MIT"
+repository: "https://github.com/skrpts/translation-pipeline"
+
+# --- Discovery (Hub) ---
+category: "developer"
+tags:
+  - "i18n"
+  - "localization"
+  - "loops"
+  - "translation"
+
+# --- Security & Access ---
+dependencies:
+  - id: "3c7be2d8-a567-4045-8cb7-71cfae94eec5"
+    name: "brand-guidelines"
+    version: 1.0.3
+    checksum: "sha256:358135a82f743ff22f26b464f12f17710ba2d326daf30d2720ca095247693a8f"
+  - id: "43693e36-3c0b-4e74-89f4-ca5230761faf"
+    name: "company-style-guide"
+    version: 1.0.3
+    checksum: "sha256:a8230eeee5587758765f17fb2cc7c35c82746be501b0fdd6a7f9c0d5e3bd1f68"
+  - id: "15009dae-f37e-4b92-97bc-98f4cef964af"
+    name: "customer-tone-guide"
+    version: 1.0.3
+    checksum: "sha256:c6a3947af51943347cf97eb06bffecb807a6bb3e4f7cbc0f5e2d7a4dc26d2ec9"
+  - id: "3db66b8b-8758-4503-a555-5330f3f9b3d9"
+    name: "language-polish"
+    version: 1.0.3
+    checksum: "sha256:efe38bb2b4ba213139299818cc4c7d694270fcfd7ec4d3c738e2170f6394bbd6"
+  - id: "fcab9536-a13e-49c9-b0c3-bb3097682e69"
+    name: "llm-service"
+    version: 1.0.3
+    checksum: "sha256:18783015383c041de9c3fdaa191b79172ab534348448c20c74f9a967ab4dd917"
+  - id: "9b1771e0-39b0-4fbc-8d45-738f51b6083a"
+    name: "polish-language"
+    version: 1.0.6
+    checksum: "sha256:c9ad71f960c5bd2bdafc8c41a283acce4fb34ee9b9dc5f761d7443b5f18ecc40"
+  - id: "8416c95b-24d6-4a35-9fd5-1b2ad6fd6772"
+    name: "tone-adaptation"
+    version: 1.0.3
+    checksum: "sha256:b440aa98523b622750c8a62decc0bac9af30d220ae77684b1ffad09bc6e49c63"
+
+requires:
+  services:
+    - "llm-service"
+  permissions: []
+  data_handling:
+    - "pii"
+
+# --- Contents ---
+contents:
+  skills: 4
+  prompts: 5
+  workflows: 1
+  services: 0
+  sources: 0
+  documents: 0
+  assets: 0
+  total: 10
