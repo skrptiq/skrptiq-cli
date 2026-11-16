@@ -298,7 +298,12 @@ func TestGH975_Scan_OptionalityDeclared_IsAccepted(t *testing.T) {
 
 // ── Rule 3 ────────────────────────────────────────────────────────────────
 
-func TestGH975_Scan_DeclaredUnusedInput_WarnsAndDoesNotGate(t *testing.T) {
+// GH#1249 promoted this finding's severity from `warning` to `error`. The test
+// name and both assertions below used to encode the opposite premise — "warns
+// and does not gate" — which was false at both boundaries from the start: the
+// finding always gated, via `scan.go`'s exit 1 on a non-zero WarnCount and
+// hub's `(ERROR|WARNING)` release grep. Only the label moved.
+func TestGH975_Scan_DeclaredUnusedInput_IsAnErrorAndGates(t *testing.T) {
 	dir := writePkg(t, onePromptPkg(
 		`inputs:
   never_used:
@@ -315,11 +320,12 @@ func TestGH975_Scan_DeclaredUnusedInput_WarnsAndDoesNotGate(t *testing.T) {
 	if issue == nil {
 		t.Fatalf("no %s for never_used; got %+v", CodeInputDeclaredUnused, issues)
 	}
-	if issue.Severity != storage.SeverityWarning {
-		t.Errorf("severity = %q, want warning", issue.Severity)
+	if issue.Severity != storage.SeverityError {
+		t.Errorf("severity = %q, want error (GH#1249)", issue.Severity)
 	}
-	if code == 2 {
-		t.Errorf("scan exit = 2 — an unused declaration must not gate")
+	if code != 2 {
+		t.Errorf("scan exit = %d, want 2 — an unused declaration gates, and since "+
+			"GH#1249 the error severity is what carries it", code)
 	}
 }
 
