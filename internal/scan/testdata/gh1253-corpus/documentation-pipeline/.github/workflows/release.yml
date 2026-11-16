@@ -1,0 +1,328 @@
+# Scan, sign, and release a skrpt package on version tag push.
+#
+# Pipeline: tag push → checkout → scan → write security block → sign → zip → release → POST report
+#
+# Requires org-level secrets:
+#   SIGNING_PRIVATE_KEY  — Ed25519 PEM for signing
+#   SCANNER_API_KEY      — API key for posting security reports to Hub
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Extract version and slug
+        id: meta
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "slug=$(basename "$GITHUB_REPOSITORY")" >> "$GITHUB_OUTPUT"
+
+      - name: Scan the skrpt
+        id: scan
+        run: |
+          node -e '
+          // ── Inline security scanner v1.0.0 ──
+          // Compact version for GitHub Actions. Full version: scripts/scanning/scan-skrpt.mjs
+          const { readFileSync, readdirSync } = require("node:fs");
+          const { join, relative, extname } = require("node:path");
+
+          const SCANNER_VERSION = "1.0.0";
+
+          // Minimal YAML parser (handles our manifest and frontmatter subset)
+          function parseYaml(text) {
+            const lines = text.split("\n");
+            return parseBlock(lines, 0, 0).value;
+          }
+          function parseBlock(lines, start, baseIndent) {
+            const result = {}; let i = start;
+            while (i < lines.length) {
+              const line = lines[i];
+              if (line.trim() === "" || line.trim().startsWith("#")) { i++; continue; }
+              const indent = line.search(/\S/);
+              if (indent < baseIndent) break;
+              if (line.trim().startsWith("- ")) {
+                const arr = [];
+                while (i < lines.length) {
+                  const l = lines[i];
+                  if (l.trim() === "" || l.trim().startsWith("#")) { i++; continue; }
+                  if (l.search(/\S/) < baseIndent || !l.trim().startsWith("- ")) break;
+                  arr.push(parseScalar(l.trim().slice(2).trim())); i++;
+                }
+                return { value: arr, end: i };
+              }
+              const ci = line.indexOf(":");
+              if (ci === -1) { i++; continue; }
+              const key = line.slice(indent, ci).trim();
+              const after = line.slice(ci + 1).trim();
+              if (after === "" || after.startsWith("#")) {
+                const ne = findNE(lines, i + 1);
+                if (ne < lines.length && lines[ne].trim().startsWith("- ")) {
+                  const ni = lines[ne].search(/\S/); const arr = []; let j = ne;
+                  while (j < lines.length) {
+                    const l = lines[j];
+                    if (l.trim() === "" || l.trim().startsWith("#")) { j++; continue; }
+                    if (l.search(/\S/) < ni || !l.trim().startsWith("- ")) break;
+                    const iv = l.trim().slice(2).trim();
+                    if (iv.includes(":") && !iv.startsWith("\"") && !iv.startsWith("'"'"'")) {
+                      const obj = {}; obj[iv.split(":")[0].trim()] = parseScalar(iv.split(":").slice(1).join(":").trim()); j++;
+                      while (j < lines.length) { const nl = lines[j]; if (nl.trim() === "") { j++; continue; } if (nl.search(/\S/) <= ni) break; const nc = nl.indexOf(":"); if (nc !== -1) obj[nl.slice(nl.search(/\S/), nc).trim()] = parseScalar(nl.slice(nc+1).trim()); j++; }
+                      arr.push(obj);
+                    } else { arr.push(parseScalar(iv)); j++; }
+                  }
+                  result[key] = arr; i = j;
+                } else if (ne < lines.length) {
+                  const ni = lines[ne].search(/\S/);
+                  if (ni > indent) { const sub = parseBlock(lines, ne, ni); result[key] = sub.value; i = sub.end; }
+                  else { result[key] = null; i++; }
+                } else { result[key] = null; i++; }
+              } else if (after.startsWith("[")) {
+                const m = after.match(/^\[(.*)\]/);
+                result[key] = m ? m[1].split(",").map(s => parseScalar(s.trim())).filter(s => s !== "") : parseScalar(after);
+                i++;
+              } else { result[key] = parseScalar(after); i++; }
+            }
+            return { value: result, end: i };
+          }
+          function findNE(lines, s) { while (s < lines.length && (lines[s].trim() === "" || lines[s].trim().startsWith("#"))) s++; return s; }
+          function parseScalar(s) {
+            if (s === "" || s === "null" || s === "~") return null;
+            if (s === "true") return true; if (s === "false") return false;
+            if (s.startsWith("\"") && s.endsWith("\"")) return s.slice(1,-1);
+            if (s.startsWith("'"'"'") && s.endsWith("'"'"'")) return s.slice(1,-1);
+            if (/^-?\d+$/.test(s)) return parseInt(s,10);
+            const ci = s.indexOf(" #"); if (ci !== -1) return parseScalar(s.slice(0,ci).trim());
+            return s;
+          }
+
+          // Detection patterns
+          const URL_RE = /https?:\/\/[^\s"'"'"'\x60)\]>]+/g;
+          const IGNORE_DOMAINS = new Set(["hub.skrptiq.ai","github.com","example.com","example.org"]);
+          const SVC_DOMAINS = {"anthropic-claude":["api.anthropic.com"],"openai-gpt4":["api.openai.com"],"github-mcp":["api.github.com"]};
+          const SVC_PERMS = {"github-mcp":["filesystem:read"]};
+          const ENV_RE = /\{\{?\s*([A-Z][A-Z0-9_]+)\s*\}?\}/g;
+          const SKIP_ENVS = new Set(["NODE_ENV","PATH","HOME","CI","GITHUB_REF_NAME"]);
+          const HARDCODED = [/sk-[A-Za-z0-9]{20,}/g, /sk-ant-[A-Za-z0-9]{20,}/g, /ghp_[A-Za-z0-9]{36,}/g, /gho_[A-Za-z0-9]{36,}/g];
+          const SHELL_RE = [/\b(?:exec|spawn|system|popen)\s*\(/gi, /\b(?:child_process|shelljs)\b/gi];
+          const FS_RE = [/\bfs\.(read|write|unlink|mkdir|rmdir|access|stat|chmod)/gi, /\bget_file_contents\b/gi];
+          const PII_RE = [/\b(?:subscriber|customer|user|contact)\s+(?:data|information|details|records|profiles?)\b/gi, /\b(?:personal(?:ly)?\s+identif(?:iable|ying)|PII)\b/gi, /\b(?:first[_\s]?name|last[_\s]?name|email\s+address|phone\s+number)\b/gi, /\{\{(?:first_name|last_name|email|phone|company|address)\}\}/gi, /\b(?:demographic|engagement\s+history|purchase\s+behavio?ur)\b/gi];
+          const COMP_RE = [/\bGDPR\b/g, /\bCAN-?SPAM\b/gi, /\bHIPAA\b/g, /\bCCPA\b/g];
+
+          // Collect files
+          function collectFiles(d, b) {
+            b = b || d; const entries = readdirSync(d, {withFileTypes:true}); const files = [];
+            for (const e of entries) { const fp = join(d, e.name); if (e.name.startsWith(".") || e.name === "node_modules") continue; if (e.isDirectory()) files.push(...collectFiles(fp, b)); else if (e.isFile()) files.push(relative(b, fp)); }
+            return files;
+          }
+
+          // Parse manifest
+          const dir = ".";
+          const manifest = parseYaml(readFileSync(join(dir, "skrptiq.yaml"), "utf-8"));
+          const requires = { services: manifest.requires?.services || [], permissions: manifest.requires?.permissions || [], data_handling: manifest.requires?.data_handling || [] };
+          const findings = [];
+
+          // Scan files
+          const textExts = new Set([".md",".yaml",".yml",".json",".txt",".html",".css",".js",".ts"]);
+          for (const f of collectFiles(dir)) {
+            if (f === "skrptiq.yaml" || f === "tags.yaml") continue;
+            if (!textExts.has(extname(f).toLowerCase())) continue;
+            const content = readFileSync(join(dir, f), "utf-8");
+            const rp = f.split(/[\\/]/).join("/");
+            const lines = content.split("\n");
+
+            // Frontmatter connections
+            const fm = content.match(/^---\n([\s\S]*?)\n---/);
+            if (fm) { try { const y = parseYaml(fm[1]); if (y?.connections) for (const c of y.connections) { if (c.type === "runs_on" || c.type === "requires") findings.push({category:"services",detected:c.target,declared:false,severity:"warn",file:rp,line:1,evidence:"connection: "+c.target,rule:"frontmatter-service"}); } if (y?.type === "service" && y?.metadata?.env_var) findings.push({category:"credentials",detected:"env:"+y.metadata.env_var,declared:false,severity:"info",file:rp,line:1,evidence:"service requires "+y.metadata.env_var,rule:"service-env-var"}); } catch {} }
+
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i]; const ln = i + 1;
+              // URLs
+              for (const m of line.matchAll(URL_RE)) { try { const u = new URL(m[0].replace(/[.,;:!?)]+$/,"")); if (!IGNORE_DOMAINS.has(u.hostname)) findings.push({category:"permissions",detected:"network:"+u.hostname,declared:false,severity:"warn",file:rp,line:ln,evidence:m[0].slice(0,80),rule:"external-url"}); } catch {} }
+              // Env vars
+              for (const m of line.matchAll(ENV_RE)) { if (!SKIP_ENVS.has(m[1])) findings.push({category:"credentials",detected:"env:"+m[1],declared:false,severity:"info",file:rp,line:ln,evidence:m[0],rule:"credential-env-var"}); }
+              // Hardcoded secrets
+              for (const re of HARDCODED) { re.lastIndex=0; for (const m of line.matchAll(re)) findings.push({category:"credentials",detected:"hardcoded-secret",declared:false,severity:"fail",file:rp,line:ln,evidence:m[0].slice(0,40)+"...",rule:"hardcoded-secret"}); }
+              // Shell
+              for (const re of SHELL_RE) { re.lastIndex=0; for (const m of line.matchAll(re)) findings.push({category:"permissions",detected:"shell:execute",declared:false,severity:"fail",file:rp,line:ln,evidence:m[0].slice(0,80),rule:"shell-pattern"}); }
+              // Filesystem
+              for (const re of FS_RE) { re.lastIndex=0; for (const m of line.matchAll(re)) findings.push({category:"permissions",detected:"filesystem:read",declared:false,severity:"warn",file:rp,line:ln,evidence:m[0],rule:"fs-access"}); }
+              // PII
+              for (const re of PII_RE) { re.lastIndex=0; for (const m of line.matchAll(re)) findings.push({category:"data_handling",detected:"pii",declared:false,severity:"warn",file:rp,line:ln,evidence:m[0],rule:"pii-pattern"}); }
+              // Compliance
+              for (const re of COMP_RE) { re.lastIndex=0; for (const m of line.matchAll(re)) findings.push({category:"compliance",detected:m[0].toUpperCase(),declared:false,severity:"info",file:rp,line:ln,evidence:line.trim().slice(0,100),rule:"compliance-ref"}); }
+            }
+          }
+
+          // Resolve
+          const dSvc = new Set(requires.services), dPerm = new Set(requires.permissions), dDH = new Set(requires.data_handling);
+          const implDom = new Set(), implPerm = new Set();
+          for (const s of requires.services) { (SVC_DOMAINS[s]||[]).forEach(d=>implDom.add(d)); (SVC_PERMS[s]||[]).forEach(p=>implPerm.add(p)); }
+          for (const f of findings) {
+            if (f.category==="services") { f.declared=dSvc.has(f.detected); if(f.declared)f.severity="info"; }
+            else if (f.category==="permissions") { f.declared=dPerm.has(f.detected); if(!f.declared&&f.detected.startsWith("network:")) { if(implDom.has(f.detected.slice(8)))f.declared=true; } if(!f.declared&&implPerm.has(f.detected))f.declared=true; if(f.declared&&f.severity==="warn")f.severity="info"; }
+            else if (f.category==="data_handling") { f.declared=dDH.has(f.detected); if(f.declared)f.severity="info"; }
+          }
+
+          // Build summary
+          const seen = new Map();
+          for (const f of findings) { const k=f.category+":"+f.detected; if(!seen.has(k)||f.severity==="fail")seen.set(k,f); }
+          const unique = [...seen.values()];
+          const detected = {
+            services:[...new Set(unique.filter(f=>f.category==="services").map(f=>f.detected))],
+            permissions:[...new Set(unique.filter(f=>f.category==="permissions").map(f=>f.detected))],
+            data_handling:[...new Set(unique.filter(f=>f.category==="data_handling").map(f=>f.detected))],
+          };
+          const declSet = new Set(findings.filter(f=>f.declared).map(f=>f.category+":"+f.detected));
+          const undeclared = [];
+          for (const s of detected.services) if(!declSet.has("services:"+s)) undeclared.push("services:"+s);
+          for (const p of detected.permissions) if(!declSet.has("permissions:"+p)) undeclared.push("permissions:"+p);
+          for (const d of detected.data_handling) if(!declSet.has("data_handling:"+d)) undeclared.push("data_handling:"+d);
+          const warnings = [];
+          if (findings.some(f=>f.rule==="hardcoded-secret")) warnings.push("Contains hardcoded credentials");
+          for (const u of undeclared.slice(0,4)) { const [c,v]=u.split(":"); warnings.push("Detected "+v+" but not declared in requires."+c.replace("_"," ")); }
+          let status = "pass"; if(undeclared.length>0) status="warn"; if(findings.some(f=>f.severity==="fail")) status="fail";
+
+          const result = { slug: manifest.name, scanner_version: SCANNER_VERSION, status, summary: { status, detected, undeclared, warnings: warnings.slice(0,5) }, findings };
+          require("fs").writeFileSync("/tmp/scan-result.json", JSON.stringify(result, null, 2));
+          console.log("Scan: " + result.slug + " — " + status.toUpperCase());
+          if (status === "fail") { warnings.forEach(w => console.log("::error::" + w)); process.exit(1); }
+          if (status === "warn") warnings.forEach(w => console.log("::warning::" + w));
+          '
+
+          STATUS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/scan-result.json','utf-8')).status)")
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+      - name: Write security block into manifest
+        run: |
+          node -e '
+          const { readFileSync, writeFileSync } = require("node:fs");
+          const scan = JSON.parse(readFileSync("/tmp/scan-result.json", "utf-8"));
+          const now = new Date().toISOString();
+          let manifest = readFileSync("skrptiq.yaml", "utf-8");
+          manifest = manifest.replace(/\n*security:[\s\S]*?(?=\n[a-z]|\n*$)/, "").trimEnd() + "\n";
+          let sec = "\nsecurity:\n";
+          sec += "  status: \"" + scan.status + "\"\n";
+          sec += "  scanned_at: \"" + now + "\"\n";
+          sec += "  scanner_version: \"" + scan.scanner_version + "\"\n";
+          sec += "  detected:\n";
+          sec += "    services: [" + scan.summary.detected.services.map(s=>"\""+s+"\"").join(", ") + "]\n";
+          sec += "    permissions: [" + scan.summary.detected.permissions.map(s=>"\""+s+"\"").join(", ") + "]\n";
+          sec += "    data_handling: [" + scan.summary.detected.data_handling.map(s=>"\""+s+"\"").join(", ") + "]\n";
+          sec += "  undeclared: [" + scan.summary.undeclared.map(s=>"\""+s+"\"").join(", ") + "]\n";
+          sec += "  warnings: [" + scan.summary.warnings.map(s=>"\""+s.replace(/"/g,"\\\"")+"\"").join(", ") + "]\n";
+          sec += "  report_url: \"https://hub.skrptiq.ai/skrpts/" + scan.slug + "/security\"\n";
+          writeFileSync("skrptiq.yaml", manifest + sec);
+          console.log("Security block written: " + scan.status);
+          '
+
+      - name: Sign the skrpt
+        env:
+          SIGNING_PRIVATE_KEY: ${{ secrets.SIGNING_PRIVATE_KEY }}
+        run: |
+          echo "$SIGNING_PRIVATE_KEY" > /tmp/signing.key
+          node -e '
+          const { createHash, sign, createPrivateKey } = require("node:crypto");
+          const { readFileSync, writeFileSync, readdirSync } = require("node:fs");
+          const { join, relative } = require("node:path");
+          const dir = ".";
+          const keyPem = readFileSync("/tmp/signing.key", "utf-8");
+          const privateKey = createPrivateKey(keyPem);
+          const tier = "official";
+          function collectFiles(d, base) {
+            base = base || d; const entries = readdirSync(d, { withFileTypes: true }); const files = [];
+            for (const e of entries) { const fp = join(d, e.name); if (e.name.startsWith(".") || e.name === "node_modules") continue; if (e.isDirectory()) files.push(...collectFiles(fp, base)); else if (e.isFile()) files.push(relative(base, fp)); }
+            return files;
+          }
+          const allFiles = collectFiles(dir);
+          const nonManifest = allFiles.filter(f => f !== "skrptiq.yaml");
+          const manifest = readFileSync(join(dir, "skrptiq.yaml"), "utf-8");
+          const clean = manifest
+            .replace(/\n*integrity:[\s\S]*?(?=\n[a-z]|\n*$)/, "")
+            .replace(/\n*trust:[\s\S]*?(?=\n[a-z]|\n*$)/, "")
+            .trimEnd() + "\n";
+          const hash = createHash("sha256");
+          hash.update("skrptiq.yaml"); hash.update(clean);
+          for (const f of [...nonManifest].sort()) { hash.update(f.split(/[\\/]/).join("/")); hash.update(readFileSync(join(dir, f))); }
+          const checksum = hash.digest("hex");
+          const sig = sign(null, Buffer.from(checksum), privateKey).toString("base64");
+          const now = new Date().toISOString();
+          let out = clean.trimEnd() + "\n";
+          out += "\nintegrity:\n";
+          out += "  checksum: \"sha256:" + checksum + "\"\n";
+          out += "  signature: \"ed25519:" + sig + "\"\n";
+          out += "  signed_at: \"" + now + "\"\n";
+          out += "  signed_by: \"hub.skrptiq.ai\"\n";
+          out += "\ntrust:\n";
+          out += "  tier: \"" + tier + "\"\n";
+          out += "  reviewed: true\n";
+          out += "  reviewed_at: \"" + now + "\"\n";
+          writeFileSync(join(dir, "skrptiq.yaml"), out);
+          console.log("Signed: sha256:" + checksum.slice(0, 16) + "...");
+          '
+          rm /tmp/signing.key
+
+      - name: Create release zip
+        run: |
+          SLUG="${{ steps.meta.outputs.slug }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+          ZIP_NAME="${SLUG}-v${VERSION}.zip"
+          zip -r "$ZIP_NAME" . -x ".git/*" ".github/*"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.meta.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: ${{ env.zip_name }}
+
+      - name: Post security report to Hub API
+        if: always() && steps.scan.outcome == 'success'
+        env:
+          SCANNER_API_KEY: ${{ secrets.SCANNER_API_KEY }}
+          HUB_API_URL: https://hub.skrptiq.ai
+        run: |
+          SLUG="${{ steps.meta.outputs.slug }}"
+          VERSION="${{ steps.meta.outputs.version }}"
+
+          # Look up skrpt UUID from Hub
+          SKRPT_DATA=$(curl -sf "${HUB_API_URL}/api/skrpts/${SLUG}" 2>/dev/null || echo '{}')
+          SKRPT_ID=$(echo "$SKRPT_DATA" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.skrpt?.id||'')}catch{console.log('')}")
+
+          if [ -z "$SKRPT_ID" ]; then
+            echo "::warning::Could not look up skrpt ID from Hub — skipping report submission"
+            exit 0
+          fi
+
+          # Build and POST report
+          PAYLOAD=$(node -e "
+            const s=JSON.parse(require('fs').readFileSync('/tmp/scan-result.json','utf-8'));
+            console.log(JSON.stringify({version:'${VERSION}',status:s.status,scanner_version:s.scanner_version,summary:s.summary,findings:s.findings}));
+          ")
+
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+            -X POST "${HUB_API_URL}/api/skrpts/by-id/${SKRPT_ID}/security" \
+            -H "Content-Type: application/json" \
+            -H "x-scanner-api-key: ${SCANNER_API_KEY}" \
+            -d "$PAYLOAD" 2>/dev/null || echo "000")
+
+          if [ "$HTTP_CODE" = "201" ]; then echo "Security report submitted (HTTP 201)"
+          elif [ "$HTTP_CODE" = "409" ]; then echo "Report already exists (HTTP 409)"
+          else echo "::warning::Failed to submit report (HTTP ${HTTP_CODE})"; fi

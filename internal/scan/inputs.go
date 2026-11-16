@@ -269,6 +269,41 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 	wfFile := relPath(absPath, wf.FilePath)
 	tableRequired := parseInputTable(wf.Content)
 
+	// GH#1253 — RULE 1 AND RULE 3 ASK OPPOSITE QUESTIONS OF THE SAME TEXT, and
+	// until this they shared one answer.
+	//
+	// `refs` above is built from `stripCode(n.Content)`, which removes FENCED
+	// blocks. That is right for Rule 1, which asks "is this REFERENCE declared?":
+	// a `{{input.X}}` inside a fence may be a teaching example, and counting it
+	// would refuse a package for an example. The `fencedBlock` comment records
+	// that an earlier draft stripped inline spans too and falsely refused
+	// `weekly-report`'s two correctly-declared inputs.
+	//
+	// It is wrong for Rule 3, which asks "is this DECLARATION consumed?": a
+	// `{{input.X}}` inside a fence IS consumption — the runtime substitutes it
+	// wherever it appears. So stripping made Rule 3 report a consumed input as
+	// unused, and under hub's publish policy that BLOCKS the package.
+	//
+	// It is the natural case, which is what made it bad: a prompt that feeds CODE
+	// to a model puts the placeholder in a fence. `documentation-pipeline` and
+	// `creator-profile-builder` were the only two packages in the catalogue with
+	// ANY unused-input warning, and all three of their warnings were this.
+	//
+	// So the sets are separate. `consumed` is Rule 3's and includes fenced
+	// references; `refs` stays exactly as it was and Rule 1 is untouched. A single
+	// widened set would have leaked the leniency into Rule 1, where it would have
+	// stopped refusing a reference that exists only as an example.
+	consumed := map[string]bool{}
+	for _, n := range reach {
+		if n.Type == "workflow" {
+			continue
+		}
+		// UNSTRIPPED, deliberately — this is the one place fenced content counts.
+		for _, name := range exec.DetectInputVariables([]string{n.Content}) {
+			consumed[name] = true
+		}
+	}
+
 	var issues []ScanIssue
 	referenced := map[string]bool{}
 	reported := map[string]bool{}
@@ -276,6 +311,10 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 	// Rule 1 — a load-bearing reference with no declaration.
 	for _, r := range refs {
 		referenced[r.name] = true
+		// Everything Rule 1 can see is consumption too: execution-block strings,
+		// `from_input:` bindings and the stripped bodies. `consumed` is the
+		// superset, and the fenced half was added above.
+		consumed[r.name] = true
 		if !legalInputName.MatchString(r.name) {
 			continue // `{{input.*}}` and friends are documentation, not a contract
 		}
@@ -361,7 +400,7 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 	// whether the label should change is tracked separately and deliberately not
 	// touched here, so a severity change cannot hide inside a false-refusal fix.
 	for _, name := range sortedKeys(declared) {
-		if referenced[name] {
+		if consumed[name] {
 			continue
 		}
 		d := declared[name]
