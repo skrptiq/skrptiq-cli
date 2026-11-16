@@ -1,0 +1,27 @@
+# --- Identity ---
+id: "9bc84136-4031-422a-8fb7-5ee1b671450d"
+name: "take-notes"
+display_name: "Take Notes"
+description: "Core prompt for structuring study notes"
+version: "1.0.4"
+engine: ">=0.1.0"
+author:
+  name: "skrptiq"
+  url: "https://hub.skrptiq.ai"
+licence: "MIT"
+repository: "https://github.com/skrpts/hub-shared-take-notes"
+category: "shared"
+tags:
+  - "shared"
+  - "prompt"
+dependencies: []
+
+contents:
+  skills: 0
+  prompts: 1
+  workflows: 0
+  services: 0
+  sources: 0
+  documents: 0
+  assets: 0
+  total: 1
