@@ -23,6 +23,14 @@ on:
       - 'LICENSE'
       - '.gitignore'
     branches: [main]
+  # GH#1171 — there was no way to ask "is main green NOW?" without pushing.
+  #
+  # That is not hypothetical: on 2026-11-16 app merged GH#1243 at 08:24 and
+  # main's last run was 08:07, so main was broken and NO RUN EXISTED TO SAY SO.
+  # Establishing it meant extracting main alone and building it against the
+  # current app engine by hand. A manual trigger is the cheapest half of the
+  # answer and it was simply missing.
+  workflow_dispatch:
 
 jobs:
   test:
