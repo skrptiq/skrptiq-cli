@@ -24,7 +24,8 @@ Usage:
 Commands:
   run <workflow> [flags]      Execute a workflow
   list [type] [flags]         List nodes (workflows, skills, prompts, ...)
-  show <name> [flags]         Display node content and metadata
+  show node <name> [flags]    Display node content and metadata
+  show run <id> [<element>]   Show a run's output; one element in full by id
   hub <subcommand>            Browse and import community skrpts
   scan [--no-resolve-deps] <path>
                               Parse and validate a directory
@@ -49,11 +50,13 @@ Run flags:
   --strict                    Fail on any gate rejection
   --gate-timeout <seconds>    Auto-approve gates after timeout
 
-List/show flags:
+List/show flags (before the target):
   --type <nodeType>           Filter by node type
   --tag <name>                Filter by tag
   --json                      Emit structured JSON output
   -q                          Quiet mode — IDs only
+  --steps                     Run metadata and step index (show run)
+  --step <n>                  One step's output by position (show run)
 
 Hub subcommands:
   hub list                    List imported skrpts

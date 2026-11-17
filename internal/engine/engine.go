@@ -403,6 +403,20 @@ func formatDuration(start, end string) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
+// GetRunDelivery returns GH#1195's headline and element list for a run.
+//
+// It calls storage.GetExecutionFull directly — cli holds *storage.DB and needs no FFI, which is
+// why E1 populates the delivery fields inside that method rather than in the cgo layer. A
+// computation in `cmd/engine-lib/` would hand this call a struct with empty delivery fields and
+// `skrptiq show run` would have nothing to render (GH#1197 requirement 5.1).
+func (a *App) GetRunDelivery(executionID string) (*storage.RunDelivery, error) {
+	full, err := a.DB.GetExecutionFull(executionID)
+	if err != nil {
+		return nil, err
+	}
+	return &full.Delivery, nil
+}
+
 // GetSteps returns all steps for an exec. Global reader — see GetRunDetail
 // above for why the CLI has no scoped alternative to choose.
 func (a *App) GetSteps(executionID string) ([]storage.ExecutionStep, error) {
