@@ -9,18 +9,24 @@ import (
 	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
 )
 
-// Show handles `skrptiq show <type> <name|id> [--json] [--step N]`.
+// Show handles `skrptiq show <type> <name|id> [--json] [--step N] [--steps]`.
 // Types: node, run.
+//
+// GH#1197 — `show run <id>` now renders the engine's headline and element list (E1/GH#1195)
+// instead of a metadata block and a step index. The previous view is NOT removed: `--steps` prints
+// it verbatim, and `--step N` is untouched. The default changed because the default was the defect
+// — a caller running a skrpt got a wall of text and no way to ask for one part of it.
 func Show(args []string, dbPath string) int {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "Output as JSON")
 	stepNum := fs.Int("step", 0, "Show specific step output (for runs)")
+	stepList := fs.Bool("steps", false, "Show the run's metadata and step index (for runs)")
 	if err := fs.Parse(args); err != nil {
 		return ExitBadArgs
 	}
 
 	if fs.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: skrptiq show <node|run> <name|id> [--json] [--step N]")
+		fmt.Fprintln(os.Stderr, "Usage: skrptiq show <node|run> <name|id> [<element-id>] [--json] [--step N] [--steps]")
 		return ExitBadArgs
 	}
 
@@ -37,7 +43,24 @@ func Show(args []string, dbPath string) int {
 	case "node":
 		return showNode(engine, name, *jsonOut)
 	case "run":
-		return showRun(engine, name, *stepNum, *jsonOut)
+		// A run id has no spaces, so the arguments are positional here rather than joined:
+		// `show run <id> [<element-id>]`.
+		runArgs := fs.Args()[1:]
+		elementID := ""
+		if len(runArgs) > 1 {
+			elementID = runArgs[1]
+			// Go's flag package stops at the first non-flag argument, so a flag written AFTER
+			// the run id is not parsed — it arrives here as a positional. That predates GH#1197
+			// (`show run <id> --step 2` reported "Run not found: <id> --step 2"), but the new
+			// element positional would turn it into the more baffling "Element not found:
+			// --steps". Name the real problem instead.
+			if strings.HasPrefix(elementID, "-") {
+				fmt.Fprintf(os.Stderr,
+					"Flags must come before the target: skrptiq show %s run %s\n", elementID, runArgs[0])
+				return ExitBadArgs
+			}
+		}
+		return showRun(engine, runArgs[0], elementID, *stepNum, *stepList, *jsonOut)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown show target: %s\nValid: node, run\n", target)
 		return ExitBadArgs
@@ -85,7 +108,7 @@ func showNode(engine *eng.App, name string, jsonOut bool) int {
 	return ExitOK
 }
 
-func showRun(engine *eng.App, idPrefix string, stepNum int, jsonOut bool) int {
+func showRun(engine *eng.App, idPrefix, elementID string, stepNum int, stepList, jsonOut bool) int {
 	fullID, err := engine.FindRunByPrefix(idPrefix)
 	if err != nil || fullID == nil {
 		fmt.Fprintf(os.Stderr, "Run not found: %s\n", idPrefix)
@@ -96,6 +119,28 @@ func showRun(engine *eng.App, idPrefix string, stepNum int, jsonOut bool) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return ExitFailed
+	}
+
+	// GH#1197 — the delivery view, unless the caller asked for one of the older ones. `--step N`
+	// and `--steps` both bypass it deliberately: they address the run as a sequence of steps,
+	// which is a different question from "what did this produce".
+	if stepNum == 0 && !stepList {
+		delivery, derr := engine.GetRunDelivery(*fullID)
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "Error reading run delivery: %v\n", derr)
+			return ExitFailed
+		}
+		if jsonOut {
+			// ADDITIVE: the full run detail is unchanged and the delivery sits beside it, so a
+			// `--json` caller that parsed this before keeps working and a pipe still carries
+			// everything. Truncating here would break the contract the new view exists to keep.
+			outputJSON(os.Stdout, runWithDelivery{RunDetail: run, Delivery: delivery})
+			return ExitOK
+		}
+		if elementID != "" {
+			return renderElement(os.Stdout, delivery, elementID)
+		}
+		return renderDelivery(os.Stdout, *fullID, delivery, stdoutViewport())
 	}
 
 	// Show specific step output.
