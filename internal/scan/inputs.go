@@ -288,7 +288,63 @@ func checkWorkflowInputs(wf parse.NodeFile, pkg *parse.Package, absPath string) 
 	}
 
 	wfFile := relPath(absPath, wf.FilePath)
-	tableRequired := parseInputTable(wf.Content)
+	// GH#1287 — the Inputs table is read from the WORKFLOW AND EVERY REACHABLE EXECUTING NODE,
+	// not from the workflow body alone.
+	//
+	// It used to be `parseInputTable(wf.Content)`, which left a latent hole: a reference documented
+	// in a skill or prompt stayed a `warning`, and since GH#1256 a warning passes the publish gate.
+	// The whole catalogue population was measured before widening — 8 table-bearing files outside
+	// `workflows/`, of which 7 are `skill` nodes with real input names and exactly ONE is the
+	// template row in `skrpt-builder/assets/node-templates-reference.md`.
+	//
+	// WHY THE EXCLUSION IS BY TYPE AND NOT BY CONTENT. That one template row reads
+	// `| {{input.VAR}} | Yes | DESCRIPTION | EXAMPLE |`, so a content heuristic on the literal cells
+	// was the obvious move and it is the wrong one: it asks the scanner to judge prose, it breaks
+	// the day a real description reads "DESCRIPTION", and it misses any template that picks
+	// different placeholders. The structural fact is better and it does not rot —
+	//
+	//	AN ASSET IS NOT AN EXECUTING NODE. It is never named as `skill:` or `prompt:` in an
+	//	execution entry, declares no contract and runs no step, so a table in it CANNOT be a
+	//	statement about this skrpt's input contract.
+	//
+	// The same holds for `document`, `source` and `service`. That is a property of the authoring
+	// model rather than of today's catalogue. The corroboration is that the template file's own
+	// `inputs:` frontmatter is ALSO a blank form (`INPUT_NAME` / `label: "LABEL"`): the whole file
+	// teaches the authoring constructs, so type is the honest signal and the cell contents are a
+	// symptom.
+	//
+	// Promoting on that row would refuse the package that documents the table format — the fourth
+	// time that shape has come up (GH#1194, GH#1213, GH#1249, GH#1287).
+	//
+	// Measured delta before committing: 99 packages, 3 Rule 1 warnings, 0 flip under this scope and
+	// 1 flips under a naive widening over every node type (that row). A pure REACH change.
+	//
+	// Scoped to `reach` rather than every node in the package, matching how `declared` is built: a
+	// table in a node this workflow never runs is not evidence about this workflow's contract.
+	tableRequired := map[string]bool{}
+	for _, n := range reach {
+		if !nodeCanStateInputContract(n.Type) {
+			continue
+		}
+		for name, required := range parseInputTable(n.Content) {
+			if _, exists := tableRequired[name]; !exists {
+				tableRequired[name] = required
+			}
+		}
+	}
+	// The workflow goes LAST and overwrites, so its row wins on conflict — mirroring the engine's
+	// `mergeMetadata` rule that the explicit block beats a hoisted one. Reusing an existing
+	// precedence rule is why two places will not later disagree about which row is authoritative.
+	//
+	// BUT BE PRECISE ABOUT WHAT THAT BUYS TODAY: both readers of this map test EXISTENCE only —
+	// `if _, documented := tableRequired[name]` in Rule 1 and `_, inTable :=` in Rule 2 — so the
+	// `required` VALUE is currently never consumed and the precedence is unobservable. It is
+	// written this way so that the ordering is already right if the value becomes load-bearing,
+	// not because anything reads it now. Claiming an observable precedence here would be a comment
+	// that explains a behaviour the code does not have.
+	for name, required := range parseInputTable(wf.Content) {
+		tableRequired[name] = required
+	}
 
 	// GH#1253 — RULE 1 AND RULE 3 ASK OPPOSITE QUESTIONS OF THE SAME TEXT, and
 	// until this they shared one answer.
@@ -505,6 +561,25 @@ func declsOf(n parse.NodeFile) map[string]inputDecl {
 // parseInputTable reads the `## Inputs` table's Required column. The table is
 // documentation, never a declaration — but a `Yes`/`No` cell is unambiguous
 // enough to auto-fix from, which is the one place prose may inform a fix.
+// nodeCanStateInputContract reports whether a node of this type can make a statement about the
+// skrpt's input contract (GH#1287).
+//
+// `workflow`, `skill` and `prompt` execute: they are named in execution entries, their bodies are
+// sent to the model or resolved by the runner, and `{{input.X}}` in them is substituted at runtime.
+// `asset`, `document`, `source` and `service` are reference material — nothing runs them, so an
+// Inputs table in one is documentation ABOUT skrpts rather than a declaration BY one.
+//
+// Unknown types are excluded. A new node type should have to opt in by name rather than silently
+// gain authority over a publish gate.
+func nodeCanStateInputContract(nodeType string) bool {
+	switch nodeType {
+	case "workflow", "skill", "prompt":
+		return true
+	default:
+		return false
+	}
+}
+
 func parseInputTable(body string) map[string]bool {
 	out := map[string]bool{}
 	for _, m := range inputTableRow.FindAllStringSubmatch(body, -1) {
