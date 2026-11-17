@@ -318,6 +318,29 @@ type NodeInfo struct {
 	// it — the transport would be deciding what counts as unknown. Matches the
 	// reasoning on storage.DepNodeSummary.ContextParams.
 	ContextParams map[string]any `json:"context_params,omitempty"`
+	// Inputs carries the published node's `inputs:` declaration (GH#1267 step 4
+	// / GH#1278). Hub serves it from `declaredInputs()` as of PR #213; before
+	// that it was stored in D1 and dropped at the serving boundary — the same
+	// shape as `context_params` before GH#1156, one field over.
+	//
+	// WITHOUT THIS FIELD THE SCHEMA BUMP DELIVERS NOTHING. The bump forces a
+	// refetch, but a typed decode discards what it does not model, so the
+	// resolver would re-fetch the declaration and throw it away exactly as
+	// before — a refetch is not a receipt. Verified on the live endpoint:
+	// `practice-question-generator@1.0.3` serves `inputs.question_count` and
+	// `inputs.exam_type`, while `check-input-gaps@1.0.5` and
+	// `match-brand-voice@1.0.4` omit the key entirely.
+	//
+	// `map[string]any` for ContextParams' reason: this is the WIRE, and an
+	// unknown second-level key must SURVIVE the trip in order to be refused by
+	// name later. A typed decode makes the offending key invisible before any
+	// gate sees it.
+	//
+	// NOTE THE HOP THAT IS NOT HERE: storage.DepNodeSummary has no Inputs field,
+	// so this stops at the resolver and its cache. Carrying it to the validator
+	// is app's half (engine/storage); until that lands the declaration is on
+	// this side of the boundary but the engine cannot enforce on it.
+	Inputs map[string]any `json:"inputs,omitempty"`
 }
 
 func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) {
@@ -399,7 +422,29 @@ func (r *Resolver) fetchMetadata(dep parse.DependencyRef) (*hubMetadata, error) 
 // serving them. Without the bump this whole change is invisible on every
 // machine that has already scanned — CI starts cold, a developer machine
 // does not.
-const currentCacheSchemaVersion = 3
+//
+// GH#1278 bump (3 → 4): the same mechanism, one field over. Hub now serves
+// `inputs` (GH#1267, hub PR #213 `afbccd0f`) via `declaredInputs()`, and
+// NodeInfo gained Inputs above to receive it. The cache key
+//
+//	dep.ID + "@" + dep.Version + "@" + dep.Checksum
+//
+// is three properties of the BUNDLE, and the bundle did not change — only what
+// the server sends did. A v3 entry was written by a resolver that could not
+// decode `inputs` and so records its absence; served again, it reports no
+// declaration for a node that now has one.
+//
+// THIS BUMP IS WHAT DELIVERS HUB'S FIX to anyone who has already resolved a
+// dependency. Without it the serving change is invisible on exactly the machines
+// most likely to be used to check whether it worked — and, the reason GH#1278
+// exists as its own issue, a "still doesn't fire" report would then be a CACHE
+// HIT rather than a failure, and would be re-diagnosed from scratch.
+//
+// It is also the precondition for re-measuring GH#1266's "0 of 203 dep nodes
+// carry an `inputs:` block". That figure was taken against a warm v3 cache, so a
+// re-measurement before this bump would reproduce the zero and read as a
+// confirmation of it rather than an artefact of it.
+const currentCacheSchemaVersion = 4
 
 type cacheEntry struct {
 	ID        string     `json:"id"`
