@@ -199,37 +199,27 @@ fi
 
 # --- check 3: does HEAD still compile against the pinned engine? -----------
 #
-# Reproduces the release build's layout rather than approximating it:
-# release.yml checks the engine out AT THE PIN next to the CLI, and go.mod's
-# `replace github.com/skrptiq/engine => ../skrptiq-app/engine` resolves to it.
-# `git archive` keeps this read-only on the app checkout -- no worktree, no
-# branch switch, nothing a concurrently-working sibling repo would notice.
+# GH#1118 — DELEGATED, not implemented here. `scripts/engine-pin-build.sh` owns
+# this rule and `ci.yml` calls the same file per-PR, so there is ONE
+# implementation and two callers rather than two copies that drift (GH#1058).
 #
-# HEAD, not the working tree: the question is whether what we would release
-# builds, not whether an in-progress edit does.
-if ! command -v go >/dev/null 2>&1; then
-  fatal_lookup "go is not on PATH — the pin build cannot be verified, and an unverified pin is not a working pin"
-fi
-
-PINTMP="$(mktemp -d)"
-trap 'rm -rf "$PINTMP"' EXIT
-mkdir -p "$PINTMP/skrptiq-app" "$PINTMP/skrptiq-cli"
-
-git -C "$APP_CHECKOUT" archive "$PIN" engine 2>/dev/null | tar -x -C "$PINTMP/skrptiq-app" \
-  || fatal_lookup "could not extract engine/ at ${PIN:0:7} from the app checkout"
-[ -f "$PINTMP/skrptiq-app/engine/go.mod" ] \
-  || fatal_lookup "engine/go.mod absent at ${PIN:0:7} — the pin does not name a revision with an engine"
-git -C "$REPO_ROOT" archive HEAD 2>/dev/null | tar -x -C "$PINTMP/skrptiq-cli" \
-  || fatal_lookup "could not archive this repo at HEAD"
-
-if BUILD_OUT="$(go build -C "$PINTMP/skrptiq-cli" ./... 2>&1)"; then
+# The split exists because CI must be able to ask THIS question without asking
+# checks 1 and 2: those query the releases API and are about whether app's chain
+# is delivering, so running them per-PR would fail cli's PRs whenever app had
+# simply not released recently.
+if PIN_OUT="$(APP_CHECKOUT="$APP_CHECKOUT" PIN_FILE="$PIN_FILE" "$REPO_ROOT/scripts/engine-pin-build.sh" 2>&1)"; then
   note "CHECK 3 ok      — HEAD compiles against the pinned engine ${PIN:0:7}."
 else
+  PIN_RC=$?
+  # Exit 2 is the script's fail-closed case (it could not establish an answer);
+  # keep the watchdog's existing behaviour of treating that as unverifiable
+  # rather than as a clean failure.
+  if [ "$PIN_RC" -ge 2 ]; then
+    while IFS= read -r line; do [ -n "$line" ] && err "  $line"; done <<< "$PIN_OUT"
+    fatal_lookup "scripts/engine-pin-build.sh could not establish whether the pin builds"
+  fi
   FAILED=1
-  err "THE PINNED ENGINE DOES NOT BUILD: this repo at HEAD does not compile against ${PIN:0:7}, the revision .engine-pin names."
-  err "release.yml checks the engine out at that pin, so EVERY release build fails at the Build step — there is no releasable commit on this branch."
-  err "ci.yml builds against app main and would not see this: main has the symbols, the pin does not."
-  while IFS= read -r line; do [ -n "$line" ] && err "  $line"; done <<< "$BUILD_OUT"
+  while IFS= read -r line; do [ -n "$line" ] && echo "$line" >&2; done <<< "$PIN_OUT"
 fi
 
 note ""
