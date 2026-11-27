@@ -33,7 +33,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  # GH#1118 — THE SUBJECT IS IN THE NAME, not in a comment.
+  #
+  # This job and `engine-release-pin` below compile the SAME code against TWO
+  # DIFFERENT ENGINES, and for twelve days nothing said so: the distinction lived
+  # only in a comment above the engine checkout, so "CI is green" meant two things
+  # at once and the one that ships was the one nobody measured.
+  #
+  # This job's subject is app `main` — the early-warning question, "do we still
+  # work with the engine as it is becoming". It is the subject that catches a
+  # producer-side break early, and the reason it cannot be the only one is that
+  # app `main` is not what a release resolves.
+  engine-app-main:
+    name: "engine: app main"
     runs-on: macos-latest
     steps:
       - name: Generate pipeline app token
@@ -87,14 +99,81 @@ jobs:
           go-version-file: skrptiq-cli/go.mod
           cache-dependency-path: skrptiq-cli/go.sum
 
-      - name: Build
+      - name: "Build (engine: app main)"
         working-directory: skrptiq-cli
         run: go build ./...
 
-      - name: Test
+      - name: "Test (engine: app main)"
         working-directory: skrptiq-cli
         run: go test ./...
 
-      - name: Vet
+      - name: "Vet (engine: app main)"
         working-directory: skrptiq-cli
         run: go vet ./...
+
+  # GH#1118 — the check whose absence caused a twelve-day outage.
+  #
+  # Subject: `.engine-pin`, the engine `release.yml` actually checks out. The
+  # question is "what we would ship, ships".
+  #
+  # The job above already validates the pin's FORM and ANCESTRY in its "Pin
+  # sanity" step — 40-hex, and an ancestor of app main. That asserts the pin
+  # EXISTS. It never asserted the pin WORKS, and `18c63f01` was a valid ancestor
+  # of main for twelve days while cli HEAD could not compile against it at all.
+  # Pin sanity passed on every PR in that window.
+  #
+  # A SEPARATE JOB, deliberately: GitHub's required status checks are per-job, so
+  # two subjects need two jobs to be two named checks. One job with two steps
+  # would be one check whose meaning depends on which step failed — the ambiguity
+  # this issue exists to remove.
+  #
+  # SAFE TO MAKE BLOCKING BECAUSE A SIBLING CANNOT REDDEN IT. The pin is a frozen
+  # SHA, so this fails only when THIS repo changes. A required check another repo
+  # can turn red is a required check that gets switched off, which is why
+  # `engine-main-drift.yml` (subject: app `main`) stays scheduled and classifying.
+  engine-release-pin:
+    name: "engine: release pin"
+    runs-on: macos-latest
+    steps:
+      - name: Generate pipeline app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          owner: skrptiq
+          repositories: skrptiq-cli,skrptiq-app
+
+      - name: Checkout CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: skrptiq-cli
+
+      # fetch-depth: 0 — the pin is an arbitrary historical commit, and a shallow
+      # clone would not contain it. `git archive <pin>` is then read-only on this
+      # checkout: no worktree, no branch switch.
+      - name: Checkout engine (app repo, full history for the pin)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: skrptiq/skrptiq-app
+          path: skrptiq-app
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: skrptiq-cli/go.mod
+          cache-dependency-path: skrptiq-cli/go.sum
+
+      # Calls the SAME file `engine-chain-watchdog.yml` calls, so this rule has one
+      # implementation and two callers rather than two copies that drift (GH#1058).
+      #
+      # NOT `engine-chain-check.sh`: its checks 1 and 2 query the releases API and
+      # ask whether app's chain is DELIVERING. Running them per-PR would fail cli's
+      # PRs whenever app had simply not released recently — the coupling this split
+      # exists to confine to one check.
+      - name: Does HEAD compile against the pinned engine?
+        env:
+          APP_CHECKOUT: ${{ github.workspace }}/skrptiq-app
+        run: skrptiq-cli/scripts/engine-pin-build.sh
