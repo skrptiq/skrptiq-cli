@@ -20,6 +20,71 @@ import (
 	"github.com/skrptiq/skrptiq-cli/internal/toolobject"
 )
 
+// ── The workspace root: ONE key, and why this constant exists (GH#1346) ─────
+//
+// `WORKSPACE_PATH` is the estate's key for the workspace root. It is READ in
+// eight engine places — `execution/shell.go` (the working directory for shell
+// steps), `execution/step.go` twice, `execution/destinations.go` (the workspace
+// root destination paths resolve against), `llm/working_dir.go`, and three
+// `engine-lib` callers — and WRITTEN by the desktop app in five production
+// places (`ipc-workspace.ts` four times, `hub/starter-kit.ts` once).
+//
+// cli wrote `workspacePath` instead, for every release up to this one. Nothing
+// in the estate read that key except cli's own startup and its `/config show`,
+// so `/workspace set` changed this process's directory, reported success, and
+// left every engine consumer — including cli's OWN file-destination resolution,
+// which reads `WORKSPACE_PATH` — pointing at whatever the desktop app last set.
+// A CLI-only user could not set it at all. That is GH#1346.
+//
+// The settings table makes no allowance for a near-miss: `GetSettingResult` is
+// `SELECT value FROM settings WHERE key = ?`, exact match, no normalisation.
+// So the fix is not a lookup that tries both — it is ONE spelling, named here,
+// used by every cli reader and writer, with a drift guard asserting the dead key
+// appears nowhere else.
+const SettingWorkspacePath = "WORKSPACE_PATH"
+
+// legacyWorkspacePathKey is the key cli wrote before GH#1346.
+//
+// DELETE IT, AND `AdoptLegacyWorkspacePath` WITH IT, when no supported cli
+// release still writes it — the mechanical check is that `workspacePath`
+// appears nowhere in `internal/` but here. It is named rather than inlined so
+// the thing to delete is a symbol with one reference, not a string to go
+// hunting for.
+const legacyWorkspacePathKey = "workspacePath"
+
+// AdoptLegacyWorkspacePath moves a pre-GH#1346 workspace setting onto the
+// canonical key and returns the workspace root now in effect ("" if none).
+//
+// It is a one-shot migration, not a fallback: it always removes the legacy key,
+// so the second call has nothing to do and the code is dead weight rather than a
+// second authority. There is deliberately no read path that consults the legacy
+// key — a reader that tries two spellings is the drift this fixes.
+//
+// THE CANONICAL VALUE WINS WHEN BOTH EXIST, and that is the whole decision here.
+// A machine with both keys set has run the desktop app, so `WORKSPACE_PATH` is a
+// value the engine has actually been honouring, while `workspacePath` is one it
+// never read. Preferring the stale key would change where shell steps run on the
+// strength of a setting that never took effect.
+func (a *App) AdoptLegacyWorkspacePath() string {
+	canonical := a.DB.GetSetting(SettingWorkspacePath)
+	legacy := a.DB.GetSetting(legacyWorkspacePathKey)
+
+	if legacy == "" {
+		return canonical
+	}
+	if canonical == "" {
+		// The user set a workspace in cli and it never reached the engine.
+		// Honour it now; a failed write leaves the legacy key in place so the
+		// next start tries again rather than losing the value.
+		if err := a.DB.SetSetting(SettingWorkspacePath, legacy); err != nil {
+			return canonical
+		}
+		canonical = legacy
+	}
+	_ = a.DB.RemoveSetting(legacyWorkspacePathKey)
+	return canonical
+}
+
 // DefaultDBPath returns the database path, checking locations in order:
 //  1. ~/Library/Application Support/skrptiq/data/skrptiq.db (macOS app location)
 //  2. ~/.skrptiq/skrptiq.db (CLI default)
