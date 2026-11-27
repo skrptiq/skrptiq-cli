@@ -85,6 +85,22 @@ set -uo pipefail
 
 APP_REPO="${APP_REPO:-skrptiq/skrptiq-app}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# PIN_FILE's override exists for two reasons, named here because an unnamed
+# hatch gets removed by the next reader (GH#1192):
+#
+#   1. DELEGATION — this script passes PIN_FILE through to
+#      `engine-pin-build.sh`, which is how GH#1118's one-authority split works
+#      at all: one implementation of "does HEAD compile against the pin", two
+#      callers (this script and ci.yml's `engine: release pin` job).
+#   2. TESTABILITY — it is how both directions of a pin check get exercised
+#      without mutating the repo. `PIN_FILE=/tmp/oldpin` is what proved the new
+#      check fails on the incident's pin (18c63f01) and passes on the current
+#      one, with no commit in between.
+#
+# AND ITS HAZARD, recorded beside its purpose: this is also the mechanism that
+# makes the pin's SUBJECT ambiguous. The default reads the WORKING CHECKOUT, and
+# this script asks two questions that want two different pins — see the
+# provenance block below.
 PIN_FILE="${PIN_FILE:-$REPO_ROOT/.engine-pin}"
 GRACE_HOURS="${GRACE_HOURS:-6}"
 SELF_REPO="${SELF_REPO:-skrptiq/skrptiq-cli}"
@@ -126,13 +142,84 @@ REL_EPOCH="$(to_epoch "$REL_PUB")"
 [ -n "$REL_EPOCH" ] || fatal_lookup "could not parse release timestamp '${REL_PUB}'"
 AGE_HOURS=$(( ( $(date -u +%s) - REL_EPOCH ) / 3600 ))
 
+# --- the pin's PROVENANCE (GH#1192) ----------------------------------------
+#
+# ONE SCRIPT, TWO SUBJECTS, ONE VARIABLE — that is the defect, stated at the
+# level it actually lives at:
+#
+#   checks 1 and 2 ask "is the chain DELIVERING". Their subject is the FLEET:
+#     what main pins, what app released. They want origin/main's pin.
+#   check 3 asks "does THIS REF compile". Its subject is this ref, and it must
+#     keep the working pin, because `git archive HEAD` is compiled against that
+#     same value. Relocating that read would put two subjects in one comparison.
+#
+# In CI the two coincide: the workflow runs on main and the checkout IS
+# origin/main, so the value is correct BY ACCIDENT OF ENVIRONMENT. That is why
+# this survived — the only configuration where it is wrong is a local run, which
+# is the one with no CI run to go red. Five months of correct behaviour was not
+# evidence.
+#
+# So: say where the pin came from, and when the working pin is not the one main
+# carries, REFUSE TO CLAIM on checks 1 and 2 rather than answering from the
+# wrong tree. Not a failure — an explicit "cannot claim".
+#
+# NO NETWORK IS REQUIRED for any of this. `git show origin/main:.engine-pin`
+# reads the remote-tracking ref, which is local. A correctness check that needs
+# connectivity is one people learn to skip.
+WORK_PIN="$(tr -d '[:space:]' < "$PIN_FILE" 2>/dev/null || echo '')"
+MAIN_PIN="$(git -C "$REPO_ROOT" show origin/main:.engine-pin 2>/dev/null | tr -d '[:space:]' || echo '')"
+PIN_SOURCE="the working checkout"
+[ "$PIN_FILE" = "$REPO_ROOT/.engine-pin" ] || PIN_SOURCE="PIN_FILE override ($PIN_FILE)"
+
+# CAN_CLAIM_DELIVERY gates checks 1 and 2 only. It defaults to 1 and is only
+# cleared on a POSITIVE divergence — an unreadable origin/main is reported, not
+# treated as divergence, because the common cause is a shallow CI checkout with
+# no remote-tracking ref and failing closed there would redden a correct chain.
+CAN_CLAIM_DELIVERY=1
+PIN_NOTE=""
+if [ -z "$MAIN_PIN" ]; then
+  PIN_NOTE="origin/main's pin is unreadable here (no remote-tracking ref) — provenance not cross-checked"
+elif [ "$WORK_PIN" != "$MAIN_PIN" ]; then
+  CAN_CLAIM_DELIVERY=0
+  PIN_NOTE="DIVERGES from origin/main's pin ${MAIN_PIN:0:7}"
+fi
+
 note "App newest release : ${REL_TAG}  (published ${REL_PUB}, ${AGE_HOURS}h ago)"
-note "CLI engine pin     : $(tr -d '[:space:]' < "$PIN_FILE" 2>/dev/null || echo '<unreadable>')"
+note "CLI engine pin     : ${WORK_PIN:-<unreadable>}  (read from ${PIN_SOURCE})"
+if [ -n "$PIN_NOTE" ]; then
+  note "                     ${PIN_NOTE}"
+fi
+# A no-network comparison is only as good as the last fetch, so date the ref
+# rather than implying it is current. One line; the difference between a
+# comparison and a claim.
+if [ -n "$MAIN_PIN" ]; then
+  note "origin/main         : last fetched $(git -C "$REPO_ROOT" log -1 --format=%ad --date=iso origin/main 2>/dev/null || echo '<unknown>')"
+fi
 note ""
 
 IN_FLIGHT=0
 [ "$AGE_HOURS" -lt "$GRACE_HOURS" ] && IN_FLIGHT=1
 FAILED=0
+
+# --- checks 1 and 2: are they ANSWERABLE from this tree? (GH#1192) ----------
+#
+# Both ask about the FLEET — what main pins, what app released. A working
+# checkout whose pin main does not carry cannot answer that, so this refuses to
+# claim rather than answering from the wrong tree.
+#
+# THREE-VALUED, deliberately: ok / failed / cannot-claim. A check that refuses to
+# answer is worth more than one that answers from the wrong subject, and the
+# refusal must not be reported as a pass — `CANNOT CLAIM` is not `ok`.
+#
+# It does NOT set FAILED: the chain is not broken by a local tree being out of
+# date. The exit code below stays 0 so a developer's local run does not read as
+# an incident, and the lines say plainly why no verdict was reached.
+if [ "$CAN_CLAIM_DELIVERY" -eq 0 ]; then
+  note "CHECK 1 CANNOT CLAIM — this checkout's pin ${WORK_PIN:0:7} is not the pin origin/main carries (${MAIN_PIN:0:7})."
+  note "CHECK 2 CANNOT CLAIM — 'is the chain delivering' is a question about the FLEET, and this tree is not what the fleet pins."
+  note "                       Not a failure and not a pass. Run it on a checkout of main, or in CI, to get a verdict."
+  note ""
+else
 
 # --- check 1: did a dispatch ARRIVE at all? ---------------------------------
 RUNS="$(gh run list --repo "$SELF_REPO" --workflow "$RELEASE_WF" \
@@ -197,7 +284,15 @@ else
   fi
 fi
 
+fi  # end CAN_CLAIM_DELIVERY
+
 # --- check 3: does HEAD still compile against the pinned engine? -----------
+#
+# OUTSIDE the CAN_CLAIM_DELIVERY gate, deliberately (GH#1192). This is the
+# pre-commit question — "would what I am about to push release?" — and its
+# subject is THIS ref, so a working pin is the right pin for it and a diverged
+# one changes nothing about its validity. It also stays offline: a correctness
+# check that needs connectivity is one people learn to skip.
 #
 # GH#1118 — DELEGATED, not implemented here. `scripts/engine-pin-build.sh` owns
 # this rule and `ci.yml` calls the same file per-PR, so there is ONE
@@ -208,7 +303,12 @@ fi
 # is delivering, so running them per-PR would fail cli's PRs whenever app had
 # simply not released recently.
 if PIN_OUT="$(APP_CHECKOUT="$APP_CHECKOUT" PIN_FILE="$PIN_FILE" "$REPO_ROOT/scripts/engine-pin-build.sh" 2>&1)"; then
-  note "CHECK 3 ok      — HEAD compiles against the pinned engine ${PIN:0:7}."
+  # WORK_PIN, not PIN: `PIN` is assigned inside the delivery-gated region above,
+  # so it is unset whenever checks 1 and 2 refused to claim — and `set -u` then
+  # kills the script before check 3 can report. Found by running the
+  # diverged-pin-that-still-builds combination rather than the two obvious cases
+  # (GH#1192). WORK_PIN is assigned unconditionally with the provenance.
+  note "CHECK 3 ok      — HEAD compiles against the pinned engine ${WORK_PIN:0:7}."
 else
   PIN_RC=$?
   # Exit 2 is the script's fail-closed case (it could not establish an answer);
@@ -226,6 +326,19 @@ note ""
 if [ "$FAILED" -ne 0 ]; then
   err "The App -> CLI release chain is not delivering. This is an incident, not a no-op."
   exit 1
+fi
+# GH#1192 — the SUMMARY must not claim what the checks refused to claim. With a
+# diverged pin, checks 1 and 2 reached no verdict, so "delivering" would be the
+# script asserting fleet health it explicitly declined to measure — the exact
+# defect this change exists to remove, reintroduced in the last line.
+#
+# Caught by testing the combination (pin diverges AND check 3 passes); the two
+# obvious cases both hid it, because one fails on check 3 and the other has no
+# divergence.
+if [ "$CAN_CLAIM_DELIVERY" -eq 0 ]; then
+  note "Engine release chain: NO VERDICT — this tree's pin is not the fleet's. Check 3 passed, which"
+  note "is a statement about THIS ref only. Run on a checkout of main, or in CI, to grade the chain."
+  exit 0
 fi
 note "Engine release chain: delivering."
 exit 0
