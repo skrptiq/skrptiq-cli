@@ -10,6 +10,8 @@ import (
 	"github.com/skrptiq/engine/outputs"
 	"github.com/skrptiq/engine/storage"
 
+	eng "github.com/skrptiq/skrptiq-cli/internal/engine"
+
 	"github.com/charmbracelet/x/term"
 )
 
@@ -195,10 +197,12 @@ func outputRequestFor(db *storage.DB, r exec.DestinationResult) (outputs.Request
 				"setting cannot be expanded: %w", err)
 	}
 	return outputs.Request{
-		Setting:      db.GetSetting(outputs.SettingOutputDir),
-		Collision:    db.GetSetting(outputs.SettingOutputCollision),
-		Home:         home,
-		Workspace:    db.GetSetting("WORKSPACE_PATH"),
+		Setting:   db.GetSetting(outputs.SettingOutputDir),
+		Collision: db.GetSetting(outputs.SettingOutputCollision),
+		Home:      home,
+		// The named constant, not the literal — this reader and `/workspace set`'s
+		// writer must never drift apart again (GH#1346).
+		Workspace:    db.GetSetting(eng.SettingWorkspacePath),
 		DeclaredPath: r.DeclaredPath,
 		Interactive:  true,
 		Content:      r.Content,

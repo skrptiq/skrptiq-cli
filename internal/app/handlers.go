@@ -686,7 +686,19 @@ func (m *Model) handleWorkspaceCmd(sub, args string) {
 		if err != nil || !info.IsDir() { m.Print(theme.ErrorText.Render("Not a directory: " + absPath)); return }
 		if err := os.Chdir(absPath); err != nil { m.Print(theme.ErrorText.Render("Error: " + err.Error())); return }
 		if m.engine != nil {
-			m.engine.DB.SetSetting("workspacePath", absPath)
+			// GH#1346 — the engine's key, not cli's own. Eight engine readers use
+			// WORKSPACE_PATH, including the working directory for shell steps and
+			// the root file destinations resolve against; the key cli used to
+			// write was read by nothing but cli.
+			//
+			// AND THE ERROR IS NOT DISCARDED. SetSetting can refuse a write
+			// (GH#1085), and this command's entire defect was reporting a move it
+			// had not made — printing success over a failed persist would be the
+			// same bug with a different cause.
+			if err := m.engine.DB.SetSetting(eng.SettingWorkspacePath, absPath); err != nil {
+				m.Print(theme.ErrorText.Render("Workspace changed for this session only — it could not be saved: " + err.Error()))
+				return
+			}
 		}
 		m.Print(theme.SuccessText.Render("Workspace: ") + absPath)
 	default:
@@ -826,7 +838,7 @@ func (m *Model) handleConfigCmd(sub, args string) {
 		keys := []struct{ key, label string }{
 			{"defaultProvider", "Default Provider"},
 			{"defaultModel", "Default Model"},
-			{"workspacePath", "Workspace Path"},
+			{eng.SettingWorkspacePath, "Workspace Path"},
 			{"theme", "Theme"},
 		}
 		for _, k := range keys {

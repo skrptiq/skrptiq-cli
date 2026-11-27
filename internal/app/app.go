@@ -94,8 +94,10 @@ func New(dbPath string) (Model, error) {
 		return Model{}, err
 	}
 
-	// Restore saved workspace directory.
-	if ws := engine.Setting("workspacePath"); ws != "" {
+	// Restore saved workspace directory. AdoptLegacyWorkspacePath returns the
+	// workspace on the canonical key the engine reads (GH#1346), migrating a
+	// pre-GH#1346 `workspacePath` onto it exactly once.
+	if ws := engine.AdoptLegacyWorkspacePath(); ws != "" {
 		if info, err := os.Stat(ws); err == nil && info.IsDir() {
 			os.Chdir(ws)
 		}
