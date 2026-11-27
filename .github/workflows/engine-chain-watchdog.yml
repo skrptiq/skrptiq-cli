@@ -10,10 +10,10 @@
 # not repair the chain -- the cause is in the App repo and the fix belongs
 # there. It converts "nothing happened" into a failing, notified run.
 #
-# NOT wired into ci.yml on purpose: while the chain is down, a CI-level check
-# would fail every unrelated pull request, and the first response to that is
-# to route around it. A watchdog that gets disabled protects nothing. The pin
-# floor at release time is the separate, deliberate gate (GH#1079 round 2).
+# NOT wired into ci.yml on purpose: whenever the chain is down, a CI-level
+# check would fail every unrelated pull request, and the first response to that
+# is to route around it. A watchdog that gets disabled protects nothing. The
+# pin floor at release time is the separate, deliberate gate (GH#1079 round 2).
 #
 # CAVEAT worth knowing: GitHub disables `schedule` triggers after 60 days with
 # no repository activity. A silently disabled watchdog is the same disease it
@@ -38,23 +38,41 @@ concurrency:
 
 on:
   schedule:
-    # WEEKLY (Mondays 07:15 UTC) while the chain is KNOWN BROKEN and the repair is parked.
+    # DAILY (07:15 UTC). The question this answers is "has the chain broken again?", and that is
+    # a daily question. The chain is delivering again as of 2026-11-27 11:47Z; the sender-side
+    # cause is on GH#1086 (a release created under the default GITHUB_TOKEN raises no
+    # workflow-triggering event). A break can reappear on any App release, and nothing else in
+    # this repo would say so.
     #
-    # It was daily, and daily was right for its original job: catch the chain BREAKING. That job
-    # is done — it reported CHAIN BROKEN AT THE SENDER on 2026-10-21 and the diagnosis is on
-    # GH#1086 (a release created under the default GITHUB_TOKEN raises no workflow-triggering
-    # event). Ben then ruled the repair happens AFTER the Projects work.
+    # The weekly era ran 2026-10-26 -> 2026-11-27 and was right for its own question: while the
+    # repair was parked behind the Projects work, the answer was already known, so a daily run
+    # re-measured a condition nobody was acting on and paid a failing run per day to do it. That
+    # is the GH#1114 disease -- an alert whose cadence exceeds the rate at which anything can
+    # change about it stops being read, and the run AFTER it stops being read is the one that
+    # mattered. Cadence followed the question both times; neither era was a mute, and
+    # `workflow_dispatch` answered on demand throughout.
     #
-    # So a daily run re-measures a condition nobody is acting on, and pays a failing run per day
-    # to do it. That is the GH#1114 disease exactly: an alert whose cadence exceeds the rate at
-    # which anything can change about it stops being read, and the run AFTER it stops being read
-    # is the one that mattered. The watchdog's own header already says it: "a watchdog that gets
-    # disabled protects nothing" — and a red X every morning is how it gets disabled.
+    # The restore deliberately did NOT happen when GH#1086 closed (2026-11-15 12:25Z): the chain
+    # was not observed delivering until twelve days later, and a cron restored on the tracker's
+    # date would have paid twelve days of reds for the GH#1296 outage -- the exact cost the weekly
+    # cadence was adopted to avoid. The condition is "the chain is observed delivering", not "the
+    # issue is closed" (GH#1310).
     #
-    # This is a cadence change, NOT a mute. The alarm still fires, still fails closed, and
-    # `workflow_dispatch` still answers on demand. RESTORE THE DAILY CRON when GH#1086 lands —
-    # at that point the question flips back to "has it broken again?", which is a daily question.
-    - cron: '15 7 * * 1'
+    # IF A SCHEDULED RUN IS RED, DO NOT BLAME THE SCHEDULED PATH (GH#1310). Eleven scheduled reds
+    # were once contrasted with one green `workflow_dispatch` to argue the trigger mattered:
+    #
+    #     The manual green and the scheduled reds differ by TIME, not by PATH.
+    #     The dispatch was not privileged; it was later.
+    #
+    # That dispatch ran 58 minutes after the chain was repaired, and the dispatch path is 1-for-4
+    # overall. A red here means the chain is broken, which is this job's entire purpose. Read the
+    # emitted error, and stratify by that error rather than by which numbered CHECK line failed:
+    # this script's output format has changed underneath us, so an absent `CHECK 1` line reads as
+    # a failed check 1 and is not one.
+    #
+    # Scheduled runs land 5-12 hours after the nominal time. GitHub's delay is reliable in
+    # delivery and unpunctual; absence across two windows is a finding, not a wait.
+    - cron: '15 7 * * *'
   workflow_dispatch:
 
 permissions:
