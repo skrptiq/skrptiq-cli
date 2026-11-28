@@ -243,12 +243,6 @@ func (s *rendezvousServer) invoke(tool string, args map[string]interface{}) invo
 	}
 }
 
-func (s *rendezvousServer) isConnected() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.active != nil
-}
-
 func (s *rendezvousServer) close() {
 	s.mu.Lock()
 	s.closed = true
