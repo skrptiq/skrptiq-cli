@@ -286,6 +286,12 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// library declaration beside it.
 	allIssues = append(allIssues, checkTemplateDeclaration(&pkg, absPath)...)
 
+	// 6c-quater. GH#1387 — the package itself as a subject. Every rule above
+	// compares declared things against each other, so a manifest declaring almost
+	// nothing passes them all; this refuses a package with neither content nor a
+	// reference to content.
+	allIssues = append(allIssues, checkPackageHasContent(&pkg, absPath)...)
+
 	// 6d. GH#1057 — two execution entries naming one skill. The engine resolves
 	// a skill to a single step, so the earlier entry's prompt is discarded; 6c
 	// counts it invoked because it is NAMED. Both clauses are needed.
