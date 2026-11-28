@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -50,6 +51,11 @@ type rendezvousServer struct {
 	closed    bool
 }
 
+// staleProbeTimeout bounds the liveness probe in clearStaleSocket. It is short
+// because the peer is on the same machine and either accepts immediately or is
+// not there; a long timeout would turn a crashed-host restart into a stall.
+const staleProbeTimeout = 250 * time.Millisecond
+
 func newRendezvousServer(socketPath string, logf func(string, ...interface{})) *rendezvousServer {
 	if logf == nil {
 		logf = func(string, ...interface{}) {}
@@ -62,31 +68,130 @@ func newRendezvousServer(socketPath string, logf func(string, ...interface{})) *
 	}
 }
 
-// start binds the rendezvous socket (0700 dir, 0600 socket) and begins accepting.
+// start establishes the protected directory, admits or refuses the existing
+// endpoint, binds, and hardens — in that order, which is the order GH#1414 is
+// about (see secure_dir.go for the namespace policy and what it cannot promise).
+//
+// EVERY FAILURE PATH LEAVES NO LISTENER. The old version reported
+// "listening on … (0600, per-user)" after a chmod whose failure it only logged,
+// so a readiness claim could be false. Readiness is now claimed only once the
+// bound socket has been verified to be the one we created, owned by us, at 0600.
 func (s *rendezvousServer) start() error {
 	if runtime.GOOS == "windows" {
 		return fmt.Errorf("named-pipe rendezvous not yet supported (Chrome-first, §9.6)")
 	}
-	// Runtime dir user-only; clear a stale socket left by a crash so bind doesn't
-	// hit EADDRINUSE.
-	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o700); err != nil {
-		return fmt.Errorf("create runtime dir: %w", err)
+
+	// 1. THE NAMESPACE, BEFORE ANY CLEANUP. A foreign or replaceable directory is
+	// refused here, which is before anything inside it is removed — "foreign or
+	// replaceable directories are refused BEFORE cleanup".
+	root, err := secureDir(filepath.Dir(s.socketPath))
+	if err != nil {
+		return err
 	}
-	if _, err := os.Stat(s.socketPath); err == nil {
-		_ = os.Remove(s.socketPath)
+	// Closed at the end of start: the descriptor is what verifyBoundSocket compares
+	// the bound path against, so it must outlive the bind.
+	defer root.Close()
+
+	// 2. THE EXISTING ENTRY IS CLASSIFIED, NOT DELETED. The old code did
+	// `Stat` then an unconditional `Remove`, which "is not proof that a listener is
+	// dead" — it was equally happy to delete a live peer's socket or a file it had
+	// never seen before.
+	if err := s.clearStaleSocket(); err != nil {
+		return err
 	}
+
+	// 3. BIND. This is the step that cannot be anchored to the validated directory
+	// fd: net.Listen takes a path and there is no bindat. See secure_dir.go for why
+	// the fchdir workaround is refused in this process.
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", s.socketPath, err)
 	}
+
+	// 4. HARDEN, THEN VERIFY, AND FAIL CLOSED ON EITHER. chmod failure is fatal:
+	// an unhardened socket in a sound directory is still a socket this user's other
+	// processes can reach, and reporting it as ready would be the readiness lie.
 	if err := os.Chmod(s.socketPath, 0o600); err != nil {
-		s.logf("[rendezvous] could not chmod socket 0600: %v", err)
+		s.abandonListener(ln)
+		return fmt.Errorf("%w: could not set %s to 0600: %v. Nothing is listening — a socket "+
+			"whose permissions could not be set is not reported as ready",
+			ErrUnsafeSocket, s.socketPath, err)
 	}
+	if err := verifyBoundSocket(root, s.socketPath); err != nil {
+		s.abandonListener(ln)
+		return err
+	}
+
 	s.mu.Lock()
 	s.ln = ln
 	s.mu.Unlock()
-	s.logf("[rendezvous] listening on %s (0600, per-user)", s.socketPath)
+	s.logf("[rendezvous] listening on %s (verified: socket, uid %d, 0600)",
+		s.socketPath, os.Geteuid())
 	go s.acceptLoop(ln)
+	return nil
+}
+
+// abandonListener closes a listener that failed hardening and removes the socket
+// it created. Used on every failure path after bind, so no half-hardened endpoint
+// is left behind for the next process to find and "adopt".
+func (s *rendezvousServer) abandonListener(ln net.Listener) {
+	_ = ln.Close()
+	// ln.Close() already unlinks for a Go-created UnixListener; this is the
+	// belt-and-braces removal and its failure is logged rather than returned,
+	// because the caller is already returning the reason that matters.
+	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.logf("[rendezvous] could not remove %s after a failed start: %v", s.socketPath, err)
+	}
+}
+
+// clearStaleSocket decides whether the existing endpoint may be removed, and
+// REFUSES rather than guessing.
+//
+// THE THREE ANSWERS ARE GENUINELY DIFFERENT and the old single `Remove` collapsed
+// them:
+//
+//   - ABSENT — nothing to do, and ENOENT is the only error that means this.
+//   - PRESENT AND LIVE — another listener holds it. Refused: superseding a running
+//     peer by deleting its socket is not cleanup, and the operator needs to know
+//     which one is running.
+//   - PRESENT AND DEAD — a crash leftover. Removed, and a removal FAILURE is fatal
+//     rather than discarded, because binding after a failed unlink either fails
+//     confusingly or succeeds against something unexpected.
+//
+// A wrong-type entry is refused by name: a regular file or a directory at the
+// endpoint path is not something this code may delete.
+func (s *rendezvousServer) clearStaleSocket() error {
+	// OWNERSHIP, NOT MODE, LICENSES REMOVAL. `net.Listen` creates a socket at
+	// 0777&~umask (0755 on a default macOS), so a process that died between bind
+	// and chmod leaves a perfectly ordinary crash leftover with a loose mode.
+	// Checking the mode here would refuse to clear it and the CLI could never
+	// rebind without someone deleting the file by hand.
+	err := checkSocketOwnership(s.socketPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		// Wrong type or wrong owner. Named, and NOT removed — this process does not
+		// delete entries it cannot account for.
+		return fmt.Errorf("%w. It was NOT removed: an entry this role did not create is "+
+			"refused rather than cleared", err)
+	}
+
+	// It is a socket we own. Liveness is ESTABLISHED by connecting, not inferred
+	// from the file existing.
+	conn, derr := net.DialTimeout("unix", s.socketPath, staleProbeTimeout)
+	if derr == nil {
+		_ = conn.Close()
+		return fmt.Errorf("%w: %s already has a live listener. Another engine-host for this "+
+			"role is running; this one will not take the endpoint from it",
+			ErrUnsafeSocket, s.socketPath)
+	}
+
+	if rerr := os.Remove(s.socketPath); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
+		return fmt.Errorf("%w: %s looks stale (%v) but could not be removed: %v",
+			ErrUnsafeSocket, s.socketPath, derr, rerr)
+	}
+	s.logf("[rendezvous] removed stale socket %s (probe: %v)", s.socketPath, derr)
 	return nil
 }
 
@@ -161,12 +266,26 @@ func (s *rendezvousServer) handleAnnounce(conn net.Conn, msg AnnounceMessage) bo
 		tools[t.Name] = struct{}{}
 	}
 	s.mu.Lock()
-	// Newest-wins: a fresh host connection supersedes the old.
+	// NEWEST-WINS, AND IT IS NOT AN AUTHENTICATION DECISION (GH#1414).
+	//
+	// A fresh host connection supersedes the old one. With admission confined to
+	// this UID by the directory and endpoint policy in secure_dir.go, every peer
+	// that reaches this point is one of this user's own processes, so the contest is
+	// between a stale Chrome host and a fresh one — which is what newest-wins is
+	// for, and the CTO ruled a token or handshake explicitly unnecessary for a
+	// boundary that trusts the user's UID.
+	//
+	// WHAT CHANGED IS THAT IT IS NO LONGER SILENT. Supersession used to close the
+	// previous peer with no record, so an unexpected displacement left no trace to
+	// diagnose it from. Nothing else here is a security control and this comment
+	// exists so the next reader does not mistake it for one.
 	old := s.active
 	s.active = conn
 	s.announced = tools
 	s.mu.Unlock()
 	if old != nil && old != conn {
+		s.logf("[rendezvous] %s@%s superseded the attached host %s — the previous connection "+
+			"is being closed", msg.Client.Name, msg.Client.Version, old.RemoteAddr())
 		_ = old.Close()
 	}
 	s.send(conn, ReadyMessage{Type: "ready", V: ProtocolVersion, Server: serverInfo})
@@ -258,7 +377,13 @@ func (s *rendezvousServer) close() {
 		_ = ln.Close()
 	}
 	if runtime.GOOS != "windows" {
-		_ = os.Remove(s.socketPath)
+		// SAME DISCRIMINATION AS clearStaleSocket, for the same reason, at lower
+		// stakes: this is our own socket on the way out. A removal failure is logged
+		// rather than swallowed, because the next start will find the leftover and
+		// refuse it, and the operator should be able to see which process left it.
+		if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.logf("[rendezvous] could not remove %s on close: %v", s.socketPath, err)
+		}
 	}
 }
 
