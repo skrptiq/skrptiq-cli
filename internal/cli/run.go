@@ -269,6 +269,28 @@ func runWorkflow(ctx context.Context, engine *eng.App, nodeID string, inputs map
 			// Record only — the resume runs after the engine call returns.
 			paused := evt
 			pendingGate = &paused
+		case "execution-completed", "execution-failed", "execution-paused",
+			"execution-cancelled", "execution-resumed":
+			// KNOWN AND DELIBERATELY NOT RENDERED HERE (GH#1370). All five reach
+			// this callback — `execution/runner.go` and `execution/resume.go` emit
+			// them through the same `onProgress` — and this renderer reports the
+			// run's outcome from the returned result instead, so rendering them
+			// again would double every terminal line.
+			//
+			// THEY ARE EXPLICIT CASES RATHER THAN LEFT TO THE DEFAULT, because the
+			// default now SAYS SOMETHING: letting a known lifecycle event fall
+			// through would print "this build does not know how to render it" on
+			// every successful run. That is the noise the control forbids, and it
+			// is how a default gets deleted.
+		default:
+			// GH#1370 — an event type this build cannot render. Say so rather than
+			// drop it, exactly as the destination handler does for a pending type it
+			// does not know: a dropped progress event is invisible, so the engine
+			// gaining a type would make this renderer silently behind it.
+			//
+			// NOT a refusal: no verdict depends on this, and a run must not fail
+			// because the renderer is behind the engine.
+			fmt.Fprintf(os.Stderr, "  %s\n", eng.UnknownProgressEventLine(evt.Type))
 		}
 	}
 
