@@ -231,6 +231,8 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// the canonical gate for skrpt content (K-060), and only the scan sees the
 	// package as the author wrote it.
 	var rule1Suppressed []string
+	reportedInputs := map[string]bool{}
+	depStraddled := map[string]bool{}
 	for _, nf := range pkg.Nodes {
 		if nf.Type != "workflow" {
 			continue
@@ -238,7 +240,26 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		inputIssues, suppressed := checkWorkflowInputs(nf, &pkg, absPath)
 		allIssues = append(allIssues, inputIssues...)
 		rule1Suppressed = append(rule1Suppressed, suppressed...)
+		for _, iss := range inputIssues {
+			if iss.Code == CodeInputUndeclared {
+				reportedInputs[iss.ReferencedSlug] = true
+			}
+		}
+		for _, id := range suppressed {
+			depStraddled[id] = true
+		}
 	}
+
+	// 6b-bis. GH#1357 — Rule 1 again, with the node as its subject rather than the
+	// package. The loop above only runs where a workflow exists, which meant a
+	// package shipping the same prompt without a local runner was graded on
+	// nothing: 145 of the live catalogue's 234 packages have no workflow node.
+	// This pass asks the strictly local question — does the node's own declaration
+	// cover a reference in its own body — and it is ADDITIVE: every pair the loop
+	// above reported, and every node it excused for straddling a dependency edge,
+	// is suppressed here, so nothing that reports today changes. Suppression is by
+	// input NAME, which is the granularity that pass itself uses.
+	allIssues = append(allIssues, checkNodeLocalInputs(&pkg, absPath, reportedInputs, depStraddled)...)
 
 	// 6c. GH#858 A1 — a prompt or skill the package ships and no workflow runs.
 	// Same reason as 6b: an authoring defect the structural scanner used to pass

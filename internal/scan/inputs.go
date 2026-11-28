@@ -46,6 +46,13 @@ const (
 	// CodeInputUndeclared fires on a {{input.X}} the runtime will actually
 	// resolve, where no reachable node declares X.
 	CodeInputUndeclared = "workflow.input_undeclared"
+	// CodeNodeInputUndeclared is the same defect reported WITHOUT a workflow
+	// (GH#1357). It is a separate code because it is a different claim: the
+	// `workflow.` one says the workflow's reach cannot satisfy a reference, and
+	// this one says a node's own declaration does not cover a reference in its
+	// own body. A consumer keyed on codes must be able to tell them apart, and
+	// nothing that reports today changes code or severity because of this one.
+	CodeNodeInputUndeclared = "node.input_undeclared"
 	// CodeInputOptionalityUndeclared fires on an input declared without a
 	// `required:` marker whose only statement of optionality is prose.
 	//
@@ -107,6 +114,23 @@ var (
 
 	// A prose default statement inside an input's own description.
 	proseDefault = regexp.MustCompile(`(?i)\bdefaults?\s*(to|:)`)
+
+	// An EXPLICIT input reference, for the node-local rule only (GH#1357).
+	//
+	// `exec.DetectInputVariables` is the engine's authority on what the runtime
+	// substitutes, and it deliberately returns BARE identifiers too — at run time
+	// `{{ROLE}}` is filled from inputs just as `{{input.ROLE}}` is. That is right
+	// for the runtime and too broad for this gate: `testdata/template-package` is
+	// a fill-in-the-blank prompt whose body carries `{{ROLE}}`, `{{TASK}}` and
+	// `{{PERSONA_NAME}}` as authoring markers, and the node-local rule reported all
+	// five of them before this filter existed. The reach-based rule never saw that
+	// package because it has no workflow — which is the very hole being closed, so
+	// closing it inherits the exposure.
+	//
+	// A node-local finding therefore requires the reference to NAME the namespace.
+	// `{{input.X}}` is an unambiguous claim on the input contract; a bare `{{X}}`
+	// is not, and with no workflow there is no reach to disambiguate it.
+	explicitInputRef = regexp.MustCompile(`\{\{\s*input\.([a-zA-Z_][a-zA-Z0-9_-]*)`)
 )
 
 // inputDecl is one `inputs:` entry as the author wrote it.
@@ -539,6 +563,149 @@ func loopMemberSlugs(loop map[string]any) []string {
 }
 
 // declsOf reads one node's `inputs:` block as the author wrote it.
+// checkNodeLocalInputs is Rule 1 with no workflow in it (GH#1357).
+//
+// WHY IT EXISTS. `scan.go` gated the three input rules on the PACKAGE containing a
+// workflow node, so a package shipping the same prompt with no local runner was
+// graded on nothing: byte-identical content gave exit 1 with a workflow and exit 0
+// without. Measured on the live catalogue, 145 of 234 packages have no workflow
+// node — 134 of the 135 in `_shared/` — so that gate was switched off for most of
+// the corpus, and hub's "zero of 135 shared objects fail the scan" was largely
+// those 134 never reaching a rule.
+//
+// THE SUBJECT IS THE NODE, NOT THE PACKAGE, and it already existed:
+// `nodeCanStateInputContract` (GH#1287) answers "does this node execute?", which is
+// the right question. The package-level gate asked "does this package contain a
+// workflow?", which is not.
+//
+// WHY IT IS NOT THE REACH-BASED RULE UNGATED. `checkWorkflowInputs` is DEFINED in
+// terms of reach — it walks the execution block for the nodes a workflow runs, the
+// strings it binds and the per-entry dep-straddle exemption. A prompt node has no
+// execution block, so calling that function per-node would find every reference
+// unsatisfiable and report every `{{input.X}}` in every library bundle. This rule
+// asks a strictly local question instead: does ANY node in this package declare the
+// input a node's body references? No reach, so no reach-based false refusals — and
+// package-wide rather than per-node, for the reason recorded on the declared set
+// below, which the existing corpus established before this shipped.
+//
+// TWO SUPPRESSIONS, BOTH LOAD-BEARING:
+//
+//   - `reported` — the input NAMES the reach-based pass already emitted, so a
+//     workflow-bearing package gains no duplicate finding. This rule is additive,
+//     and the granularity matches that pass rather than being finer than it.
+//   - `depStraddled` — the nodes that pass EXCUSED because their execution entry
+//     straddles a dependency edge, where the declaration may live in the half whose
+//     frontmatter is not served (GH#1266). Re-reporting those here would recreate
+//     the GH#1131 / GH#1253 false positives from a different direction.
+//
+// The severity discriminator is Rule 1's, unchanged and for its reason: a name the
+// Inputs table documents is Anti-Pattern 5 and an error; a name documented nowhere
+// may be a teaching example, and a gate must not refuse the content that documents
+// the gate.
+func checkNodeLocalInputs(pkg *parse.Package, absPath string, reported map[string]bool, depStraddled map[string]bool) []ScanIssue {
+	// A DECLARED TEMPLATE PACKAGE IS EXEMPT, because it has already said what its
+	// markers are. `manifest.template: true` (GH#374) is the author declaring the
+	// package is fill-in-the-blank, and GH#524 already suppresses the engine's
+	// unknown-namespace warnings on that basis. Measured on the live catalogue, the
+	// six `templates-*` packages carry that flag and two of them — `templates-prompts`
+	// and `templates-skills` — accounted for 14 of the 15 warnings this rule produced
+	// before this clause: `{{input.specification}}`, `{{input.tone}}` and the rest are
+	// the blanks an author fills in, not a contract the package makes.
+	//
+	// This is the same principle the invocation half of GH#1357 still lacks: key on a
+	// declaration the author made, not on a shape the scanner infers. Here the
+	// declaration already exists, so this half gets it for free.
+	if pkg.Manifest.Template {
+		return nil
+	}
+
+	// THE DECLARED SET IS PACKAGE-WIDE, NOT PER-NODE, and the existing corpus is
+	// what established that. The first draft asked whether the node carrying a
+	// reference declared it itself, and `valid-package` failed immediately:
+	// `spaced-ref-prompt` reads `{{input.topic}}` while `example-prompt` — a
+	// sibling in the same package — declares `topic`. Inputs are resolved for the
+	// run, not for one node, and GH#1287 already reads the Inputs table from every
+	// executing node rather than one. So a declaration anywhere in the package
+	// satisfies a reference anywhere in it; asking per-node would have reported a
+	// correct package as broken, which is the false-refusal direction this rule
+	// exists to avoid rather than to create.
+	declared := map[string]inputDecl{}
+	tableRequired := map[string]bool{}
+	for _, n := range pkg.Nodes {
+		if !nodeCanStateInputContract(n.Type) {
+			continue
+		}
+		for name, d := range declsOf(n) {
+			declared[name] = d
+		}
+		for name, req := range parseInputTable(n.Content) {
+			tableRequired[name] = req
+		}
+	}
+
+	var issues []ScanIssue
+	seen := map[string]bool{}
+
+	for _, n := range pkg.Nodes {
+		if !nodeCanStateInputContract(n.Type) || n.Type == "workflow" {
+			// A workflow's own body is documentation for a human — the
+			// reach-based rule skips it for the same reason (see the comment on
+			// `refs` in checkWorkflowInputs). Reference material cannot state a
+			// contract at all.
+			continue
+		}
+		if depStraddled[n.ID] {
+			continue
+		}
+
+		for _, m := range explicitInputRef.FindAllStringSubmatch(stripCode(n.Content), -1) {
+			name := m[1]
+			if !legalInputName.MatchString(name) {
+				continue // `{{input.*}}` and friends are documentation, not a contract
+			}
+			if _, ok := declared[name]; ok {
+				continue
+			}
+			// ONE FINDING PER INPUT NAME, PER PACKAGE — the granularity the
+			// reach-based rule already uses (`reported[r.name]`, not per node).
+			// `skrpt-builder` is what established it: `{{input.VAR}}` is a
+			// teaching metavariable appearing in two nodes, the reach-based pass
+			// reports it once for `analyse-requirements`, and keying this rule on
+			// (node, name) emitted a second finding for `validate-structure` —
+			// the same authoring fact counted twice. One mistake, one finding.
+			if seen[name] || reported[name] {
+				continue
+			}
+			seen[name] = true
+
+			severity := storage.SeverityWarning
+			detail := "; it is documented nowhere either — if it is a real input, declare it; if it is an example, it needs no declaration"
+			if _, documented := tableRequired[name]; documented {
+				severity = storage.SeverityError
+				detail = "; the Inputs table documents it, but a table is not a declaration — add it to this node's inputs: block with required: true|false"
+			}
+
+			issues = append(issues, ScanIssue{
+				File:     relPath(absPath, n.FilePath),
+				NodeSlug: n.ID,
+				ValidationIssue: storage.ValidationIssue{
+					Code:     CodeNodeInputUndeclared,
+					Severity: severity,
+					Message: fmt.Sprintf(
+						"input %q is referenced by node %q but nothing in this package declares it%s",
+						name, n.ID, detail),
+					ContractRef:    inputContractRef,
+					Field:          "inputs." + name,
+					ReferencedSlug: name,
+					ReferenceKind:  "input",
+				},
+			})
+		}
+	}
+
+	return issues
+}
+
 func declsOf(n parse.NodeFile) map[string]inputDecl {
 	out := map[string]inputDecl{}
 	raw, ok := n.Metadata["inputs"].(map[string]any)
