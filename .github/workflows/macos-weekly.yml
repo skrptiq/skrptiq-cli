@@ -1,0 +1,103 @@
+name: macOS weekly
+
+# GH#1416 — THE ONE REMAINING macOS RUN, AND WHY IT IS NOT REDUNDANT.
+#
+# `ci.yml` moved to `ubuntu-latest` because not one of its steps has a darwin
+# dependency and macOS bills at 10x: 152 macOS job-runs a month became 152 Linux
+# ones. This file is the 4 that stayed.
+#
+# IT EXISTS BECAUSE THE INVERSE BUG IS JUST AS POSSIBLE, and one half of it
+# already happened. GH#1414's socket hardening passed on macOS and broke four
+# tests on Linux — `os.TempDir()` is `/var/folders/…/T` at 0700 on darwin and
+# `/tmp` at 1777 there — and it was found only because the suite was finally run
+# on Linux. Moving EVERY job to Linux would recreate that gap pointing the other
+# way, and cli publishes `skrptiq-darwin-arm64`: a darwin-only regression would
+# ship behind a green badge.
+#
+# So the saving kept is 97% of an all-Linux move rather than 100%, and what it
+# buys is that neither platform is unobserved.
+#
+# ── WHY ITS NON-BLOCKING STATUS IS STRUCTURAL ───────────────────────────────
+#
+# `premerge.sh` refuses to merge on ANY failing or missing check, so "advisory"
+# is not a property a job can declare — it is a property of never attaching to a
+# pull request. That is why this is a SEPARATE WORKFLOW with only `schedule` and
+# `workflow_dispatch`: there is no `pull_request` trigger to forget to guard, and
+# an `if:` guard inside `ci.yml` would have been one line away from blocking.
+#
+#   ADDING `pull_request` TO THIS FILE MAKES IT BLOCKING AND RESTORES THE COST.
+#   Nothing else would warn you. If darwin needs to gate a merge, that is a
+#   deliberate decision to take on the issue, not a trigger to add here.
+#
+# ── WHY THE SUBJECT IS app `main` AND NOT THE PIN ───────────────────────────
+#
+# It mirrors `ci.yml`'s `engine: app main` exactly, so the ONLY variable between
+# them is the platform. A failure here therefore means "darwin", and not "a
+# different engine" — which is the whole point of having it. The pin has its own
+# subject and is checked per-PR by `engine: release pin` (GH#1118), and
+# `engine-pin-build.sh` builds in a temp directory it then deletes, so it could
+# not host a test run anyway.
+
+on:
+  schedule:
+    # Mondays 07:40 UTC. Off the hour and away from `engine-main-drift.yml`
+    # (06:25) and `engine-chain-watchdog.yml` (07:15) so three jobs are not
+    # queueing for the same runner pool.
+    - cron: '40 07 * * 1'
+  workflow_dispatch:
+
+jobs:
+  darwin-suite:
+    name: "darwin: app main (weekly)"
+    runs-on: macos-latest
+    steps:
+      - name: Generate pipeline app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          owner: skrptiq
+          repositories: skrptiq-cli,skrptiq-app
+
+      - name: Checkout CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: skrptiq-cli
+
+      - name: Checkout engine (app repo)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: skrptiq/skrptiq-app
+          path: skrptiq-app
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: skrptiq-cli/go.mod
+          cache-dependency-path: skrptiq-cli/go.sum
+
+      - name: "Build (darwin, engine: app main)"
+        working-directory: skrptiq-cli
+        run: go build ./...
+
+      - name: "Test (darwin, engine: app main)"
+        working-directory: skrptiq-cli
+        run: go test ./...
+
+      - name: "Vet (darwin, engine: app main)"
+        working-directory: skrptiq-cli
+        run: go vet ./...
+
+      # A FAILURE HERE IS A REAL SIGNAL AND NOTHING WILL BLOCK ON IT, which is
+      # the trade this job accepts. Say so in the log, because a red scheduled
+      # run that nobody is paged for is how `engine-chain-watchdog.yml` went 182
+      # days unnoticed (GH#1310).
+      - name: What a failure here means
+        if: failure()
+        run: |
+          echo "::error::The suite fails on macOS but passes on Linux in CI."
+          echo "This is a darwin-only regression. cli publishes skrptiq-darwin-arm64,"
+          echo "so it ships to users. Nothing blocks on this job by design — open an"
+          echo "issue rather than waiting for a red PR, because no PR will go red."

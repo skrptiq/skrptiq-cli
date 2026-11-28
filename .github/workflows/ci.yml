@@ -46,7 +46,34 @@ jobs:
   # app `main` is not what a release resolves.
   engine-app-main:
     name: "engine: app main"
-    runs-on: macos-latest
+    # UBUNTU, NOT macOS, AND THAT IS DELIBERATE (GH#1416) — do not "restore" it.
+    #
+    # Every step in this job is a Go build, test or vet plus two checkouts and a
+    # token. Audited for `brew`, `xcode`, `codesign`, `plutil`, `security` and any
+    # darwin conditional: there were none, and the only matches in this file were
+    # the two `runs-on: macos-latest` lines themselves. So both jobs were paying
+    # macOS rates — GitHub bills it at 10x Linux — for a toolchain with no darwin
+    # dependency, 76 runs a month x 2 jobs = 152 macOS job-runs.
+    #
+    # VERIFIED BEFORE SWITCHING, NOT AFTER: the whole suite was run in a
+    # `golang:1.25` container with cgo enabled (`go-sqlite3` needs it), as a
+    # NON-ROOT user, on linux/arm64 AND linux/amd64, against both `main` and the
+    # branch in flight. Zero failures in every run.
+    #
+    # The non-root part matters. A first run AS ROOT reported two failures —
+    # `TestOpenInvalidPath` and `TestOpenDirCreateErrorIsActionable`, which assert
+    # that `/nonexistent/path/...` cannot be created. Root can create it. A GitHub
+    # runner is not root, and as a normal user both pass. Reporting those two as
+    # portability failures would have sent someone hunting bugs that do not exist.
+    #
+    # DARWIN DID NOT STOP BEING TESTED: `macos-weekly.yml` runs this same subject
+    # on macOS once a week. That job exists because the inverse of this bug is just
+    # as possible — GH#1414's hardening was invisible on macOS and broke on Linux,
+    # and cli ships `darwin-arm64` too.
+    #
+    # The job NAME is unchanged, so the required check GH#1118 made blocking still
+    # matches. `runs-on` does not rename a check.
+    runs-on: ubuntu-latest
     steps:
       - name: Generate pipeline app token
         id: app-token
@@ -133,7 +160,10 @@ jobs:
   # `engine-main-drift.yml` (subject: app `main`) stays scheduled and classifying.
   engine-release-pin:
     name: "engine: release pin"
-    runs-on: macos-latest
+    # Ubuntu for the reasons recorded on `engine-app-main` above (GH#1416). This
+    # job's steps are the same shape — checkouts, Go, and `engine-pin-build.sh`,
+    # which touches no network and asks nothing platform-specific.
+    runs-on: ubuntu-latest
     steps:
       - name: Generate pipeline app token
         id: app-token
