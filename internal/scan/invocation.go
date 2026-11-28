@@ -57,52 +57,45 @@ const (
 	invocationContractRef = "SKRPT-STRUCTURE-PRINCIPLES § Data-Flow & I/O Mapping"
 )
 
-// checkNodeInvocation reports prompt/skill nodes the package ships but never
-// runs.
+// checkNodeInvocation reports prompt/skill nodes the package ships but never runs.
 //
-// IT RETURNS NOTHING FOR A PACKAGE WITH NO WORKFLOW OF ITS OWN, and that
-// inference is what GH#1357 is about. The original reasoning was that a package
-// with no execution block anywhere ships its nodes to be IMPORTED rather than run
-// in place, so "uninvoked" is its normal state — which covers the `_shared/`
-// catalogue without the gate knowing anything about that path convention.
+// IT USED TO RETURN NOTHING FOR A PACKAGE WITH NO WORKFLOW OF ITS OWN, and removing
+// that early return is what GH#1357 was about. The original reasoning was deliberate
+// and documented — a package with no execution block ships its nodes to be IMPORTED
+// rather than run in place — and it was still wrong for one reason:
 //
-// THE REASONING WAS DELIBERATE AND IT IS STILL WRONG, for one reason: it conflates
-// "ships nodes for others to run" with "happens to contain no workflow". The first
-// is a property the author knows and can state; the second is a shape the scanner
-// infers, and an inference that cannot be wrong is not a check. Measured on the
-// live catalogue, removing this early return reports 111 packages and 142 nodes,
-// so the inference is load-bearing for 111 packages that have never been graded
-// on it.
+//	it conflated "ships nodes for others to run", a property the author knows
+//	and can state, with "happens to contain no workflow", a shape the scanner
+//	infers. AN INFERENCE THAT CANNOT BE WRONG IS NOT A CHECK.
 //
-// THE FIGURE IN THE ORIGINAL COMMENT WAS ALSO SLIGHTLY OFF: it said all 135
-// `_shared/` packages carry zero workflows. 134 of 135 do —
-// `_shared/skrpt-authoring-reference` declares `type: workflow` in a file that is
-// not under a `workflows/` directory, which is why a directory-only count misses
-// it.
+// The replacement is a declaration the author makes and this scan grades:
+// `manifest.library: true`, honoured below and graded by `checkLibraryDeclaration`.
+// The inference was load-bearing for 109 packages; the declaration now carries 107
+// of them, and the two that were refused are reporting, which is the point.
 //
-// The replacement is a declaration the author makes and the scan grades, and it is
-// BUILT AND WIRED: `manifest.library: true` is honoured below and graded by
-// `checkLibraryDeclaration` (GH#1357 Phase 2, option A).
+// THE MIGRATION IS DONE AND THIS COMMENT IS WHAT REPLACED THE HOLD. Order 1 was
+// annotate then enforce, because enforcing first would have put 108 packages at exit
+// 2 — an outage of the publish path rather than a transition. hub annotated at
+// `9a9d90e` (hub #233) and enforcement went on here. Expect exactly two live
+// packages to report, 11 nodes between them: `quick-actions`, whose nodes the app's
+// quick panel invokes directly, and `api-weather-pipeline`, which narrates a
+// three-stage sequence and ships no workflow. BOTH REFUSALS ARE HUB'S JUDGEMENT AND
+// NEITHER IS SOMETHING THIS GATE COULD HAVE MADE: it checks "runs its own nodes" and
+// "ships no nodes", and cannot check "has no workflow for a reason other than being
+// a library", which is where both sit. GH#1384 carries that gap; `_shared/` is not a
+// signal this code may read, then or now.
 //
-// SO THIS EARLY RETURN IS NOT UNFINISHED WORK — IT IS A COMPLETE GATE HELD OFF ON
-// PURPOSE, and what it is waiting for is specific and checkable:
-//
-//	hub adding `library: true` to the 109 packages that would otherwise be
-//	refused — 2 in `examples/` and 107 in `examples/_shared/`, 122 nodes
-//	between them — and that annotation being on hub's `origin/main`.
-//
-// Migration order 1, annotate then enforce. Enforcing first puts 108 packages at
-// exit 2, which is an outage of the publish path rather than a transition. WHEN
-// THE ANNOTATION HAS LANDED, DELETE THESE THREE LINES: everything else is already
-// in place, and the declared-library and template exemptions above are what keep
-// the legitimate shapes passing once they go.
+// A SMALLER CORRECTION KEPT BECAUSE IT IS ABOUT COUNTING: the original comment said
+// all 135 `_shared/` packages carry zero workflows. 134 of 135 do —
+// `_shared/skrpt-authoring-reference` declares `type: workflow` in a file not under
+// a `workflows/` directory, so a directory-only count misses it.
 func checkNodeInvocation(pkg *parse.Package, absPath string) []ScanIssue {
 	// A declared template package is exempt. `manifest.template: true` (GH#374)
 	// says the package ships fill-in-the-blank material, and material nobody runs
 	// is what a template IS — so reporting its nodes as uninvoked would refuse it
 	// for being exactly what it declares. Two of the six live declarers,
-	// `templates-prompts` and `templates-skills`, are among the 111 this rule will
-	// reach once enforcement lands: 20 of the 142 nodes.
+	// `templates-prompts` and `templates-skills`, are packages this rule now reaches
+	// and this exemption keeps passing: 20 nodes between them.
 	//
 	// This HANDLES the declaration; it does not GRADE it. Nothing checks that a
 	// package declaring `template: true` has any template property — see GH#1364
@@ -130,9 +123,6 @@ func checkNodeInvocation(pkg *parse.Package, absPath string) []ScanIssue {
 		if n.Type == "workflow" {
 			workflows = append(workflows, n)
 		}
-	}
-	if len(workflows) == 0 {
-		return nil
 	}
 
 	// Invocations are unioned across EVERY workflow in the package: in a
