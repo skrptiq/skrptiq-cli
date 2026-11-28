@@ -59,7 +59,11 @@ permissions:
 
 jobs:
   drift:
-    runs-on: macos-latest
+    # Ubuntu (GH#1416): this job is `go build` then `go test` against app `main`,
+    # with no darwin dependency. 13 macOS runs a month became 13 Linux runs. The
+    # Linux suite was measured clean non-root on both architectures before the
+    # switch; see the note on `ci.yml`'s `engine-app-main`.
+    runs-on: ubuntu-latest
     steps:
       - name: Generate pipeline app token
         id: app-token
