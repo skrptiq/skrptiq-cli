@@ -13,9 +13,31 @@ import (
 
 // shortSocket returns a short UDS path (macOS caps sun_path at ~104 bytes, so a
 // long t.TempDir() path would fail to bind).
+//
+// IT CREATES A PRIVATE SUBDIRECTORY, AND IT HAS TO (GH#1414). It used to return a
+// path directly inside `os.TempDir()`, which made the rendezvous DIRECTORY the
+// temp directory itself — and the admission policy correctly refuses a
+// world-writable one.
+//
+// THAT WAS INVISIBLE ON macOS AND FAILED ON LINUX. `os.TempDir()` is the per-user
+// `/var/folders/…/T` on darwin (0700) and `/tmp` on Linux (1777), so these tests
+// passed here and broke there — found by running the suite in a Linux container
+// for GH#1416, not by CI, which is macOS-only.
+//
+// PRODUCTION NEVER DID THIS: `runtimeDir()` returns `<temp>/skrptiq-<uid>`, a
+// private subdirectory, which the policy accepts (verified on Linux: `/tmp` is
+// accepted as a sticky root-owned ancestor, `/tmp/skrptiq-0` is created 0700 and
+// admitted, and a world-writable pre-created leaf is refused). So the helper was
+// testing a shape the product does not use, and the fix is to make it realistic
+// rather than to loosen the policy.
 func shortSocket(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(os.TempDir(), "skr-"+randomID()[:8]+".sock")
+	dir := filepath.Join(os.TempDir(), "skr-"+randomID()[:8])
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("make rendezvous dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "cli.sock")
 }
 
 func startTestServer(t *testing.T) *rendezvousServer {
