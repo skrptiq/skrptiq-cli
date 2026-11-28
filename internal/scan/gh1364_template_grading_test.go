@@ -108,13 +108,23 @@ func TestGH1364_SixLiveDeclarers_RecordedState(t *testing.T) {
 		t.Skip("no hub checkout on this machine")
 	}
 
+	// FIVE DECLARERS, NOT SIX. `templates-skills` moved from `template: true` to
+	// `library: true` in hub #237 (GH#1388), which is the graded declaration and
+	// which it passes — so it is no longer a template declarer and this table no
+	// longer grades it. THIS TEST IS WHAT CAUGHT THE MOVE, which is what it is for:
+	// the record is updated because the measured world changed, not to make a
+	// failure go away.
+	//
+	// `templates-services` is now the ONLY refusal, and the only thing standing
+	// between `checkTemplateDeclaration` and being wired into `scan.go`. Wiring is
+	// still not taken here — that is a decision, and the function's own comment
+	// carries the condition.
 	want := map[string]bool{ // true = the predicate accepts it today
 		"templates-assets":    true,
 		"templates-documents": true,
 		"templates-prompts":   true,
 		"templates-sources":   true,
 		"templates-services":  false, // 27 service nodes, zero {{…}} — unadjudicated
-		"templates-skills":    false, // flag is wrong; GH#1388 fixes content first
 	}
 
 	for name, accept := range want {
