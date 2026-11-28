@@ -42,6 +42,42 @@ import (
 // existed was never checked by running the rule. It is Hub content, routed by
 // the orchestrator into the GH#1040 family; the figure is recorded here so the
 // next reader does not re-derive it. Rule 1 therefore gates live content today.
+//
+// ── CONTENT ABOUT THE SPEC READS AS CONTENT USING THE SPEC ──────────────────
+//
+// A prompt that INSTRUCTS an author to declare inputs contains the same
+// `{{input.X}}` token as a prompt that CONSUMES one. Nothing in the file
+// distinguishes them, so Rule 1 reports the metavariable, and the three live
+// instances are both of the catalogue's meta-packages:
+//
+//	skrpt-builder/prompts/analyse-requirements.md:69     {{input.VAR}}
+//	skrptiq-on-skrptiq/prompts/validate-build.md:46      {{input.field_name}}
+//	skrptiq-on-skrptiq/prompts/check-publication.md:62   {{input.field_name}}
+//
+// In each, the token sits inside a sentence about declaring inputs — "what
+// `{{input.VAR}}` variables will the generated skrpt collect?", "every
+// `{{input.field_name}}` in a prompt body has a matching entry". `VAR` and
+// `field_name` are placeholders for a name the READER will choose; they are not
+// inputs these prompts consume, and the warnings are false positives.
+//
+// DO NOT SATISFY THEM BY ADDING `inputs:` ENTRIES. A `VAR` or `field_name` entry
+// in either package's frontmatter would declare an input the prompt never reads
+// — a Rule 3 defect and a false contract traded for a clean report. The warnings
+// are the correct output on this content; the content is also correct. Both
+// being true at once is the state here, and it has no fix in the package.
+//
+// AND THE RULE IS NOT APOLOGISING FOR THIS. Its own message says the scanner
+// cannot tell — "if it is a real input, declare it; if it is an example, it needs
+// no declaration" — and it is a WARNING rather than an error for exactly that
+// reason. The alternative is a heuristic for "a metavariable inside a sentence
+// about declaring inputs", whose blind spot would be an undeclared input shipping
+// silently. Three known warnings on two packages is the cheaper side of that
+// trade, and a scanner that stops reporting a real undeclared input is worse than
+// one that over-reports two meta-packages.
+//
+// The three sites above were verified against a scanner run rather than copied
+// forward: a comment naming sites that have moved is worse than no comment.
+// ────────────────────────────────────────────────────────────────────────────
 const (
 	// CodeInputUndeclared fires on a {{input.X}} the runtime will actually
 	// resolve, where no reachable node declares X.
