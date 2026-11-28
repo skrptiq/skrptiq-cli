@@ -271,6 +271,14 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// clean, which only the scan can refuse before publication.
 	allIssues = append(allIssues, checkNodeInvocation(&pkg, absPath)...)
 
+	// 6c-bis. GH#1357 Phase 2 — the library declaration graded against the package
+	// it is attached to. It exempts 6c above, and an exemption that can be set
+	// without being graded is an allowlist, so disagreement between the declaration
+	// and the node set is a refusal. Runs regardless of 6c's own exemptions: a
+	// false declaration is a defect whether or not the rule it exempts would have
+	// fired.
+	allIssues = append(allIssues, checkLibraryDeclaration(&pkg, absPath)...)
+
 	// 6d. GH#1057 — two execution entries naming one skill. The engine resolves
 	// a skill to a single step, so the earlier entry's prompt is discarded; 6c
 	// counts it invoked because it is NAMED. Both clauses are needed.

@@ -80,11 +80,22 @@ const (
 // not under a `workflows/` directory, which is why a directory-only count misses
 // it.
 //
-// The replacement is a declaration the author makes and the scan grades
-// (GH#1357 Phase 2, option A). THIS EARLY RETURN STAYS UNTIL HUB HAS ANNOTATED THE
-// CATALOGUE — migration order 1, annotate first and enforce after, because
-// enforcing first would put 108 packages at exit 2, which is an outage of the
-// publish path rather than a transition.
+// The replacement is a declaration the author makes and the scan grades, and it is
+// BUILT AND WIRED: `manifest.library: true` is honoured below and graded by
+// `checkLibraryDeclaration` (GH#1357 Phase 2, option A).
+//
+// SO THIS EARLY RETURN IS NOT UNFINISHED WORK — IT IS A COMPLETE GATE HELD OFF ON
+// PURPOSE, and what it is waiting for is specific and checkable:
+//
+//	hub adding `library: true` to the 109 packages that would otherwise be
+//	refused — 2 in `examples/` and 107 in `examples/_shared/`, 122 nodes
+//	between them — and that annotation being on hub's `origin/main`.
+//
+// Migration order 1, annotate then enforce. Enforcing first puts 108 packages at
+// exit 2, which is an outage of the publish path rather than a transition. WHEN
+// THE ANNOTATION HAS LANDED, DELETE THESE THREE LINES: everything else is already
+// in place, and the declared-library and template exemptions above are what keep
+// the legitimate shapes passing once they go.
 func checkNodeInvocation(pkg *parse.Package, absPath string) []ScanIssue {
 	// A declared template package is exempt. `manifest.template: true` (GH#374)
 	// says the package ships fill-in-the-blank material, and material nobody runs
@@ -97,6 +108,20 @@ func checkNodeInvocation(pkg *parse.Package, absPath string) []ScanIssue {
 	// package declaring `template: true` has any template property — see GH#1364
 	// and the skipped test naming it.
 	if pkg.Manifest.Template {
+		return nil
+	}
+
+	// A DECLARED LIBRARY IS EXEMPT, and unlike the template flag beside it this one
+	// is GRADED — `checkLibraryDeclaration` refuses the declaration when the package
+	// does not have the shape (GH#1357 Phase 2, option A). That is the whole
+	// difference between a declaration and an allowlist: this exemption can be
+	// wrong, and when it is wrong the scan says so.
+	//
+	// It is keyed on declared intent rather than on the absence of a workflow,
+	// because "ships nodes for others to run" is a property the author knows and
+	// can state while "happens to contain no workflow" is a shape the scanner
+	// infers — and an inference that cannot be wrong is not a check.
+	if pkg.Manifest.Library {
 		return nil
 	}
 
@@ -399,4 +424,109 @@ func skillEntriesIn(v any) []skillEntry {
 		return out
 	}
 	return nil
+}
+
+// Codes for the library declaration's own grading (GH#1357 Phase 2).
+const (
+	// CodeLibraryRunsItsOwnNodes fires when a package declares `library: true` and
+	// a workflow it ships invokes one of its own nodes.
+	CodeLibraryRunsItsOwnNodes = "library.runs_its_own_nodes"
+	// CodeLibraryShipsNoNodes fires when a package declares `library: true` and
+	// ships nothing for anyone to run.
+	CodeLibraryShipsNoNodes = "library.ships_no_nodes"
+)
+
+// checkLibraryDeclaration grades `manifest.library: true` against the package it
+// is attached to (GH#1357 Phase 2, option A).
+//
+// WHY THIS EXISTS AT ALL. The declaration exempts `checkNodeInvocation`, and
+// **a declaration-based exemption becomes an allowlist the moment it can be set
+// without being graded.** `manifest.template: true` is the cautionary case: it is
+// parsed, consumed by three scan behaviours, and graded nowhere (GH#1364). So this
+// one is refused when it is not true, in both directions.
+//
+// THE TRUTH IS DERIVED FROM THE ARTEFACT, which is GH#1313's shape in a different
+// domain: the package's own node set says whether it runs its own nodes, so
+// disagreement between the declaration and the nodes is a FAILURE rather than a
+// preference. Two ways to disagree, and both refuse:
+//
+//   - a workflow in the package invokes one of the package's own nodes — it is not
+//     a library, it is a package that runs things, and the exemption would hide
+//     genuinely uninvoked siblings;
+//   - the package ships no executable node at all — the declaration is vacuous,
+//     exempting a rule for a package with nothing to exempt. That case is easy to
+//     miss and is a real shape: a bundle of documents and assets declaring itself
+//     a library of nodes it does not have.
+//
+// WHAT IT DELIBERATELY DOES NOT CHECK. Nothing verifies that anything actually
+// CONSUMES a declared library's nodes, so a library nobody depends on passes. That
+// needs the cross-package view Rules 2 and 3 are waiting on, and nothing here
+// notices if that view ever arrives — the limit is real and this comment is where
+// the next reader finds it rather than rediscovering it.
+func checkLibraryDeclaration(pkg *parse.Package, absPath string) []ScanIssue {
+	if !pkg.Manifest.Library {
+		return nil
+	}
+
+	var executable []parse.NodeFile
+	var workflows []parse.NodeFile
+	for _, n := range pkg.Nodes {
+		switch n.Type {
+		case "prompt", "skill":
+			executable = append(executable, n)
+		case "workflow":
+			workflows = append(workflows, n)
+		}
+	}
+
+	if len(executable) == 0 {
+		return []ScanIssue{{
+			File: manifestRelPath(absPath, *pkg),
+			ValidationIssue: storage.ValidationIssue{
+				Code:     CodeLibraryShipsNoNodes,
+				Severity: storage.SeverityError,
+				Message: "manifest declares `library: true` but the package ships no prompt or " +
+					"skill node, so there is nothing for another package to run. A library " +
+					"declaration exempts the uninvoked-node rule, and exempting a rule for a " +
+					"package with nothing to exempt is a declaration that cannot be true — " +
+					"remove `library: true`, or ship the nodes it promises",
+				Field: "library",
+			},
+		}}
+	}
+
+	// Which of this package's own nodes do its own workflows invoke?
+	invoked := map[string]bool{}
+	for _, wf := range workflows {
+		for _, slug := range invocationsIn(wf.Metadata) {
+			invoked[slug] = true
+		}
+	}
+
+	var issues []ScanIssue
+	for _, n := range executable {
+		if !invoked[n.ID] && !invoked[fileSlugOf(n)] {
+			continue
+		}
+		issues = append(issues, ScanIssue{
+			File:     relPath(absPath, n.FilePath),
+			NodeSlug: n.ID,
+			ValidationIssue: storage.ValidationIssue{
+				Code:     CodeLibraryRunsItsOwnNodes,
+				Severity: storage.SeverityError,
+				Message: fmt.Sprintf(
+					"manifest declares `library: true`, but a workflow in this package invokes "+
+						"%s %q. A library supplies nodes to OTHER packages and runs none of them "+
+						"itself — a package that runs its own nodes is an ordinary package, and "+
+						"accepting the declaration here would hide genuinely uninvoked siblings. "+
+						"Remove `library: true`, or move the workflow out",
+					n.Type, n.ID),
+				Field:          "library",
+				ReferencedSlug: n.ID,
+				ReferenceKind:  n.Type,
+			},
+		})
+	}
+
+	return issues
 }
