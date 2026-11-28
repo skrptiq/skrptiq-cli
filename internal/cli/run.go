@@ -269,6 +269,15 @@ func runWorkflow(ctx context.Context, engine *eng.App, nodeID string, inputs map
 			// Record only — the resume runs after the engine call returns.
 			paused := evt
 			pendingGate = &paused
+		default:
+			// GH#1370 — an event type this build cannot render. Say so rather than
+			// drop it, exactly as the destination handler does for a pending type it
+			// does not know: a dropped progress event is invisible, so the engine
+			// gaining a type would make this renderer silently behind it.
+			//
+			// NOT a refusal: no verdict depends on this, and a run must not fail
+			// because the renderer is behind the engine.
+			fmt.Fprintf(os.Stderr, "  %s\n", eng.UnknownProgressEventLine(evt.Type))
 		}
 	}
 

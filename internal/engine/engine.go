@@ -85,6 +85,36 @@ func (a *App) AdoptLegacyWorkspacePath() string {
 	return canonical
 }
 
+// UnknownProgressEventLine is the ONE phrasing for an `exec.ProgressEvent.Type`
+// this build cannot render (GH#1370).
+//
+// WHY A FUNCTION AND NOT THREE STRINGS. Three renderers switch on the event type —
+// `cli/run.go`, and two in `app/app.go` — and a second spelling of one decision is
+// the drift this estate retires. The channel differs per caller (stderr for the
+// CLI, the TUI's scrollback for the other two) and the SENTENCE does not, so the
+// sentence lives here and each site renders it its own way.
+//
+// IT FOLLOWS `cli/destinations.go`'s EXISTING WORDING rather than inventing a
+// second form, and its comment is the argument for saying anything at all:
+//
+//	"A pending type this build does not know. Say so rather than drop it: an
+//	unhandled pending result is the silence this whole change exists to
+//	prevent, and a new type must not inherit it."
+//
+// Same decision, three call sites that predated it. An unknown event rendered
+// NOTHING — no line, no placeholder, no indication something happened and was
+// dropped — so the engine gaining an event type made the renderer silently behind
+// it, which nobody could see.
+//
+// IT IS NOT A REFUSAL AND MUST NOT BECOME ONE. This decides no verdict: a run must
+// not fail because the renderer is behind the engine. Naming it is the whole fix.
+func UnknownProgressEventLine(eventType string) string {
+	return fmt.Sprintf(
+		"⊘ progress event %q is not one this build knows how to render, so nothing was "+
+			"shown for it. The run itself is unaffected — this is the renderer being behind "+
+			"the engine, and the run's own record is unchanged.", eventType)
+}
+
 // DefaultDBPath returns the database path, checking locations in order:
 //  1. ~/Library/Application Support/skrptiq/data/skrptiq.db (macOS app location)
 //  2. ~/.skrptiq/skrptiq.db (CLI default)

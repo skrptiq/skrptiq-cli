@@ -478,6 +478,10 @@ func (m *Model) handleRunInput(input string) {
 				p.Println(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
 				if evt.GateInstructions != "" { p.Println(evt.GateInstructions) }
 				p.Println(theme.Faint.Render("Type your response and press enter."))
+			default:
+				// GH#1370 — see eng.UnknownProgressEventLine. One phrasing, three
+				// renderers; the channel differs and the sentence does not.
+				p.Println(theme.Faint.Render(eng.UnknownProgressEventLine(evt.Type)))
 			}
 		})
 		cancel()
@@ -560,6 +564,9 @@ func (m *Model) startExecutionWithInputs(node *storage.Node, inputs map[string]s
 				p.Println(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
 				if evt.GateInstructions != "" { p.Println(evt.GateInstructions) }
 				p.Println(theme.Faint.Render("Type your response and press enter."))
+			default:
+				// GH#1370 — see eng.UnknownProgressEventLine.
+				p.Println(theme.Faint.Render(eng.UnknownProgressEventLine(evt.Type)))
 			}
 		}, eng.RunConfig{})
 		cancel()
