@@ -58,17 +58,33 @@ func TestGH1370_UnknownProgressEventLine_NamesThePlantedType(t *testing.T) {
 func TestGH1370_EveryProgressEventSwitch_HasADefaultAndKeepsItsCases(t *testing.T) {
 	root := repoRoot(t)
 
-	// The case labels each site handled before GH#1370, recorded so that moving a
-	// known type into the default is a test failure rather than a silent change.
+	// THE ENGINE'S WHOLE PROGRESS VOCABULARY, measured from
+	// `engine/execution/{runner,resume}.go` on 2026-11-28, not a list of what the
+	// renderers happened to handle.
+	//
+	// THAT DISTINCTION IS THE FIX TO THIS TEST'S FIRST DRAFT. It recorded only the
+	// cases each site already had, which made it a snapshot rather than a control:
+	// five real lifecycle types — `execution-completed`, `-failed`, `-paused`,
+	// `-cancelled`, `-resumed` — were handled NOWHERE, all five arrive on the same
+	// `onProgress` these three sites pass, and so the new default would have printed
+	// "this build does not know how to render it" ON EVERY SUCCESSFUL RUN. A test
+	// built from the current cases cannot see that; one built from the producer's
+	// vocabulary can.
+	//
+	// Every type below must be an explicit case at every site. Five of them render
+	// nothing on purpose — the surrounding code reports the outcome — and they are
+	// cases precisely so they do not reach a default that now says something.
+	engineVocabulary := []string{
+		"execution-started", "execution-completed", "execution-failed",
+		"execution-paused", "execution-cancelled", "execution-resumed",
+		"step-started", "step-chunk", "step-completed", "step-failed",
+		"step-awaiting-input",
+	}
 	expected := map[string][]string{
-		"internal/cli/run.go": {
-			"execution-started", "step-started", "step-chunk", "step-completed",
-			"step-failed", "step-rejected", "step-awaiting-input",
-		},
-		"internal/app/app.go": {
-			"execution-started", "step-started", "step-chunk", "step-completed",
-			"step-failed", "step-awaiting-input",
-		},
+		// `step-rejected` is emitted on the gate path and only the CLI renderer
+		// distinguishes it; the TUI shows the gate outcome differently.
+		"internal/cli/run.go": append([]string{"step-rejected"}, engineVocabulary...),
+		"internal/app/app.go": engineVocabulary,
 	}
 
 	found := map[string]int{}
