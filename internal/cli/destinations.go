@@ -135,7 +135,8 @@ func completeFileDestination(db *storage.DB, r exec.DestinationResult) {
 	if !ok {
 		return
 	}
-	req.ChosenPath = answer
+
+	assignAnswer(&req, res.Directory, answer)
 
 	written, werr := outputs.Write(req)
 	if werr != nil {
@@ -143,6 +144,48 @@ func completeFileDestination(db *storage.DB, r exec.DestinationResult) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "  ✓ output written to %s\n", written)
+}
+
+// assignAnswer puts the person's answer into the field whose contract the prompt
+// described. WHICH FIELD IT IS is the whole of GH#1348.
+//
+// The engine has two path fields with opposite contracts:
+//
+//   - `DeclaredPath` is the CONFINED route — "RELATIVE to the output directory; an
+//     absolute one is refused rather than honoured". `ValidateDeclaredPath` judges
+//     its shape and the write is confined against the directory, so a name, a
+//     nested name, an absolute path and a `..` that normalises out each get the
+//     answer the prompt promises.
+//   - `ChosenPath` is the UNCONFINED route, for a path a person picked in a save
+//     dialog. Its ONLY check is `filepath.IsAbs`; containment is never checked, by
+//     documented design (`write.go:32`: "it bypasses confinement, and that is not
+//     a hole … here the user is choosing").
+//
+// BOTH BRANCHES USED TO ASSIGN `ChosenPath`, so the "name relative to %s" branch
+// handed a relative name to the one field that refuses relative names — GH#1244
+// made it refuse them — and the person read a refusal mentioning a save dialog
+// that does not exist in a terminal. Measured before this changed: `notes.md`
+// REFUSED, and `<dir>/../escaped.md` WROTE OUTSIDE the directory the prompt named.
+//
+// THIS ADDS NO VALIDATION. `DeclaredPath` is the engine's authority for a relative
+// name and already enforces both properties; a check here would be a second
+// authority, which is what GH#1203 put the write inside the engine to avoid. The
+// fix is one field name.
+//
+// IT IS A FUNCTION RATHER THAN TWO LINES INLINE so the choice can be graded on its
+// own. A test that drives `outputs.Write` directly proves what the ENGINE does and
+// would pass unchanged if this chose the wrong field again — which is the shape of
+// guard that has passed on the bug before.
+func assignAnswer(req *outputs.Request, directory, answer string) {
+	if directory == "" {
+		// Nothing to be relative TO, so the unconfined field is the right one and
+		// the prompt asked for a full path. This branch was always correct and is
+		// deliberately unchanged: routing it through `DeclaredPath` would refuse the
+		// absolute path the person was just asked for.
+		req.ChosenPath = answer
+		return
+	}
+	req.DeclaredPath = answer
 }
 
 // askForPath prompts and returns the answer, or ok=false when nobody answered.
