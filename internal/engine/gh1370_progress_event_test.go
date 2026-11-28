@@ -58,37 +58,36 @@ func TestGH1370_UnknownProgressEventLine_NamesThePlantedType(t *testing.T) {
 func TestGH1370_EveryProgressEventSwitch_HasADefaultAndKeepsItsCases(t *testing.T) {
 	root := repoRoot(t)
 
-	// THE ENGINE'S WHOLE PROGRESS VOCABULARY, measured from
-	// `engine/execution/{runner,resume}.go` on 2026-11-28, not a list of what the
-	// renderers happened to handle.
+	// THE ENGINE'S WHOLE PROGRESS VOCABULARY, measured from the emitters on
+	// 2026-11-28 — `execution/runner.go`, `execution/resume.go`, `execution/step.go`
+	// and `execution/reject.go` — not from what the renderers happened to handle.
 	//
-	// THAT DISTINCTION IS THE FIX TO THIS TEST'S FIRST DRAFT. It recorded only the
-	// cases each site already had, which made it a snapshot rather than a control:
-	// five real lifecycle types — `execution-completed`, `-failed`, `-paused`,
-	// `-cancelled`, `-resumed` — were handled NOWHERE, all five arrive on the same
-	// `onProgress` these three sites pass, and so the new default would have printed
-	// "this build does not know how to render it" ON EVERY SUCCESSFUL RUN. A test
-	// built from the current cases cannot see that; one built from the producer's
-	// vocabulary can.
-	//
-	// Every type below must be an explicit case at every site. Five of them render
-	// nothing on purpose — the surrounding code reports the outcome — and they are
-	// cases precisely so they do not reach a default that now says something.
-	engineVocabulary := []string{
+	// THAT DISTINCTION IS THE FIX TO THIS TEST'S FIRST DRAFT, which recorded only
+	// the cases each site already had and therefore PASSED ON THE BROKEN STATE BY
+	// CONSTRUCTION. Five real lifecycle types were handled nowhere, all five arrive
+	// on the same `onProgress` these sites pass, and the new default would have
+	// printed "this build does not know how to render it" on every successful run.
+	// A control derived from the thing it grades is not a control.
+	required := []string{
 		"execution-started", "execution-completed", "execution-failed",
 		"execution-paused", "execution-cancelled", "execution-resumed",
 		"step-started", "step-chunk", "step-completed", "step-failed",
 		"step-awaiting-input",
 	}
-	expected := map[string][]string{
-		// `step-rejected` is emitted on the gate path and only the CLI renderer
-		// distinguishes it; the TUI shows the gate outcome differently.
-		"internal/cli/run.go": append([]string{"step-rejected"}, engineVocabulary...),
-		"internal/app/app.go": engineVocabulary,
-	}
+	// `step-rejected` is emitted by `execution/reject.go`, and `cli/run.go` is the
+	// ONLY caller of `RejectGate` in this repo, so the TUI's renderers cannot
+	// receive it. Allowed everywhere, required nowhere — the one legitimate
+	// difference between the three switches.
 
-	found := map[string]int{}
-	for rel := range expected {
+	// EVERY evt.Type SWITCH IS GRADED ON ITS OWN, with no list of sites to keep in
+	// step. The first draft accumulated labels per FILE, so a type handled in one of
+	// `app.go`'s two renderers satisfied the assertion for both — "both switches are
+	// found" is not "both switches agree". The second keyed on `file:line`, which a
+	// single edit above a switch invalidated. This asks the same question of
+	// whatever it finds, so a NEW renderer is held to the same bar automatically
+	// rather than being silently ungraded.
+	switches := 0
+	for _, rel := range []string{"internal/cli/run.go", "internal/app/app.go"} {
 		path := filepath.Join(root, rel)
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, 0)
@@ -96,14 +95,15 @@ func TestGH1370_EveryProgressEventSwitch_HasADefaultAndKeepsItsCases(t *testing.
 			t.Fatalf("parse %s: %v", rel, err)
 		}
 
-		seen := map[string]bool{}
 		ast.Inspect(file, func(n ast.Node) bool {
 			sw, ok := n.(*ast.SwitchStmt)
 			if !ok || !isEventTypeSwitch(sw) {
 				return true
 			}
-			found[rel]++
+			switches++
+			where := rel + ":" + strconv.Itoa(fset.Position(sw.Pos()).Line)
 
+			seen := map[string]bool{}
 			hasDefault, callsHelper := false, false
 			for _, stmt := range sw.Body.List {
 				cc, ok := stmt.(*ast.CaseClause)
@@ -124,36 +124,30 @@ func TestGH1370_EveryProgressEventSwitch_HasADefaultAndKeepsItsCases(t *testing.
 				}
 			}
 
-			pos := fset.Position(sw.Pos())
 			if !hasDefault {
-				t.Errorf("%s:%d switches on evt.Type with no default — an unknown event type "+
-					"renders nothing, which is the silence GH#1370 is about", rel, pos.Line)
+				t.Errorf("%s switches on evt.Type with no default — an unknown event type "+
+					"renders nothing, which is the silence GH#1370 is about", where)
 			} else if !callsHelper {
-				t.Errorf("%s:%d has a default that does not call UnknownProgressEventLine — "+
-					"one phrasing for one decision; a second spelling is the drift this retires",
-					rel, pos.Line)
+				t.Errorf("%s has a default that does not call UnknownProgressEventLine — one "+
+					"phrasing for one decision; a second spelling is the drift this retires", where)
+			}
+
+			for _, w := range required {
+				if !seen[w] {
+					t.Errorf("%s does not handle %q as a case — it is in the engine's progress "+
+						"vocabulary, so reaching the default would add a line to every run", where, w)
+				}
 			}
 			return true
 		})
-
-		for _, want := range expected[rel] {
-			if !seen[want] {
-				t.Errorf("%s no longer handles %q as a case — a known type swept into the "+
-					"default would add a line to every run", rel, want)
-			}
-		}
 	}
 
-	// Both files must still contain the switches; a rename that loses them would
-	// otherwise pass this test vacuously.
-	for rel := range expected {
-		if found[rel] == 0 {
-			t.Errorf("%s: no evt.Type switch found at all — this guard graded nothing", rel)
-		}
-	}
-	if found["internal/app/app.go"] < 2 {
-		t.Errorf("internal/app/app.go: found %d evt.Type switches, want 2 (the run and the resume)",
-			found["internal/app/app.go"])
+	// Three renderers today: one in `cli/run.go`, two in `app/app.go`. A guard that
+	// found none would pass silently, which is the shape this whole issue is about.
+	if switches != 3 {
+		t.Errorf("found %d evt.Type switches, want 3 — if a renderer was added, it is now "+
+			"graded by this test and the count needs updating deliberately; if one was lost, "+
+			"this guard was about to grade nothing", switches)
 	}
 }
 

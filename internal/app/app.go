@@ -478,12 +478,18 @@ func (m *Model) handleRunInput(input string) {
 				p.Println(theme.WarningText.Render("⏸ Gate: ") + evt.NodeTitle)
 				if evt.GateInstructions != "" { p.Println(evt.GateInstructions) }
 				p.Println(theme.Faint.Render("Type your response and press enter."))
-			case "execution-completed", "execution-failed", "execution-paused",
-				"execution-cancelled", "execution-resumed":
+			case "execution-started", "execution-completed", "execution-failed",
+				"execution-paused", "execution-cancelled", "execution-resumed":
 				// Known and deliberately not rendered here (GH#1370) — the
 				// surrounding code reports the outcome. Explicit cases, not the
 				// default, or every completed run would print "this build does not
 				// know how to render it".
+				//
+				// `execution-started` is listed even though `ResumeExecution` does
+				// not emit it: handling an event a callback cannot receive costs a
+				// dead case, and NOT handling one it can costs a line on every run.
+				// The three renderers are uniform on the lifecycle set so no reader
+				// has to re-derive which callback emits what.
 			default:
 				// GH#1370 — see eng.UnknownProgressEventLine. One phrasing, three
 				// renderers; the channel differs and the sentence does not.
