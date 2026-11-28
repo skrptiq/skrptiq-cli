@@ -64,6 +64,11 @@ type Options struct {
 // Run executes the scan in strict mode (the publish gate), writing
 // output to stdout, and returns the exit code (0 pass, 1 warnings, 2
 // errors).
+// CodeUnrecognisedSeverity fires when a finding carries a severity this scanner
+// does not know (GH#1358). It is the gate reporting a disagreement about what
+// counts as a failure, not a finding about the package's content.
+const CodeUnrecognisedSeverity = "scan.unrecognised_severity"
+
 func Run(scanPath string, jsonOutput bool) int {
 	return RunTo(scanPath, jsonOutput, os.Stdout)
 }
@@ -321,16 +326,11 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		Package:              &pkg,
 		Rule1SuppressedNodes: rule1Suppressed,
 	}
-	for _, issue := range allIssues {
-		switch issue.Severity {
-		case storage.SeverityError:
-			result.ErrorCount++
-		case storage.SeverityWarning:
-			result.WarnCount++
-		case storage.SeverityInfo:
-			result.InfoCount++
-		}
+	unrecognised, errs, warns, infos := tallySeverities(allIssues)
+	if len(unrecognised) > 0 {
+		result.Issues = append(result.Issues, unrecognised...)
 	}
+	result.ErrorCount, result.WarnCount, result.InfoCount = errs, warns, infos
 
 	if jsonOutput {
 		OutputJSON(result, w)
@@ -338,6 +338,85 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		OutputTable(result, w)
 	}
 
+	return exitCodeFor(result)
+}
+
+// tallySeverities counts issues by severity, and reports any severity the gate
+// does not recognise as a finding of its own (GH#1358).
+//
+// THE MISSING DEFAULT WAS A FAIL-OPEN IN THE CANONICAL GATE. This was a bare
+// `switch` over the three severity constants with no `default`, while
+// `OutputTable` prints every issue unconditionally and `severityLabel` has a
+// `default` that renders an unknown severity's raw string. So an issue carrying a
+// fourth value was PRINTED, counted toward nothing, and the scan exited 0 — a
+// finding on stdout with a success status, which is indistinguishable from a clean
+// scan to anything that checks the status. hub's publish path keys on the exit
+// code, so the content would have published.
+//
+// The exposure was never cli's own rules, which all set a constant, nor the parse
+// path, which `bridge.go`'s parseToStorageSeverity defaults. It was the three
+// engine-fed paths — `hydration.IssuesByNodeID`, `IssuesByEdgeID` and
+// `ValidateWorkflowWithDeps` — which pass `storage.ValidationIssue` through
+// untouched. So cli's exit code was correct only for as long as the engine's
+// vocabulary stayed exactly three values, and nothing asserted that.
+//
+// IT NAMES THE SEVERITY RATHER THAN GUESSING AT IT. Silently promoting an unknown
+// value to error would be a second guess the next reader cannot see: they would
+// find an error with no rule behind it and no way to learn why. One synthetic
+// finding per distinct unrecognised value, naming the value, how many issues
+// carried it, and one example code — and it is an error, so the verdict is
+// non-zero by the ordinary path rather than by a special case.
+func tallySeverities(issues []ScanIssue) (unrecognised []ScanIssue, errors, warnings, infos int) {
+	// Keyed on the raw string: `sortedKeys` takes a string-keyed map, and the
+	// value here is an unrecognised label rather than a known constant anyway.
+	counts := map[string]int{}
+	example := map[string]string{}
+
+	for _, issue := range issues {
+		switch issue.Severity {
+		case storage.SeverityError:
+			errors++
+		case storage.SeverityWarning:
+			warnings++
+		case storage.SeverityInfo:
+			infos++
+		default:
+			raw := string(issue.Severity)
+			counts[raw]++
+			if _, seen := example[raw]; !seen {
+				example[raw] = issue.Code
+			}
+		}
+	}
+
+	for _, sev := range sortedKeys(counts) {
+		unrecognised = append(unrecognised, ScanIssue{
+			ValidationIssue: storage.ValidationIssue{
+				Code:     CodeUnrecognisedSeverity,
+				Severity: storage.SeverityError,
+				Message: fmt.Sprintf(
+					"%d finding(s) carry the severity %q, which this scanner does not recognise "+
+						"(it knows %q, %q and %q) — for example %q. The findings themselves are in this "+
+						"report, but they counted toward no verdict, so the scan would have exited 0 with "+
+						"findings printed. Refusing instead: an unrecognised severity means the scanner and "+
+						"whatever produced the finding disagree about what counts as a failure",
+					counts[sev], sev,
+					string(storage.SeverityError), string(storage.SeverityWarning), string(storage.SeverityInfo),
+					example[sev]),
+				Field:          "severity",
+				ReferencedSlug: sev,
+				ReferenceKind:  "severity",
+			},
+		})
+		errors++
+	}
+
+	return unrecognised, errors, warnings, infos
+}
+
+// exitCodeFor is the single place the verdict is derived. Both output paths read
+// the same ScanResult, so the table and the JSON cannot disagree with it.
+func exitCodeFor(result ScanResult) int {
 	if result.ErrorCount > 0 {
 		return 2
 	}
