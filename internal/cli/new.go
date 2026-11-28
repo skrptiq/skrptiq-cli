@@ -55,7 +55,12 @@ func New(args []string) int {
 		}
 	}
 
-	fmt.Printf("Created %s/ with manifest id %s\n", name, id)
+	// GH#1347 — print the directory that was WRITTEN, not the basename that was
+	// validated. `skrptiq new /tmp/x/my-skrpt` created `/tmp/x/my-skrpt` and
+	// reported `Created my-skrpt/`, sending the reader to look in the wrong place
+	// and conclude the tool was broken. `name` is still the manifest's name; `dir`
+	// is where the files are.
+	fmt.Printf("Created %s/ with manifest id %s\n", dir, id)
 	return ExitOK
 }
 

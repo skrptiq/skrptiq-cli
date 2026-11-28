@@ -666,20 +666,72 @@ func (m *Model) handleProvidersCmd(sub, args string) {
 
 // --- /workspace ---
 
+// expandLeadingTilde expands `~` and `~/…` to the current user's home directory,
+// REFUSES `~<user>`, and leaves everything else alone.
+//
+// GH#1347 — this was `home, _ := os.UserHomeDir(); path = filepath.Join(home, path[1:])`,
+// which has GH#1295's property: a transformation that INTRODUCES a path the input
+// never named. Verified by running it:
+//
+//	~alice/docs  ->  /Users/me/alice/docs   a path inside the WRONG home
+//	~root        ->  /Users/me/root         fabricated
+//	~~           ->  /Users/me/~            fabricated
+//
+// `~alice` means alice's home to every shell, and resolving it correctly needs the
+// user database. **A refusal is a correct answer; a plausible wrong path is not** —
+// so this does not guess, because a guess writes to the wrong place and the error
+// message then names the invented path, misdirecting the reader twice.
+//
+// AND THE HOME-DIRECTORY ERROR IS NOT DISCARDED. With `HOME` unset,
+// `os.UserHomeDir()` fails and the old code used "" as the home: `~` became
+// `filepath.Join("", "")` = "", which `filepath.Abs` then resolved to the process's
+// CURRENT DIRECTORY, and `~/projects` became `/projects` — the filesystem root.
+// Both verified by running it. A path the user wrote as absolute silently became a
+// different location, which is the same defect class as the fabrication above.
+func expandLeadingTilde(path string) (string, error) {
+	if path == "" || path[0] != '~' {
+		return path, nil
+	}
+	// `~` alone, or `~/…` (and `~\…` on Windows): the current user's home.
+	if len(path) == 1 || os.IsPathSeparator(path[1]) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot expand %q: this account has no resolvable home directory (%v) — "+
+				"give a full path instead", path, err)
+		}
+		if len(path) == 1 {
+			return home, nil
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	// `~alice/docs`, `~root`, `~~`: another user's home, or not a home at all.
+	return "", fmt.Errorf("cannot expand %q: `~user` means that user's home directory and this "+
+		"command will not guess which directory that is — a wrong guess would read or write "+
+		"somewhere you did not name. Give a full path instead", path)
+}
+
 func (m *Model) handleWorkspaceCmd(sub, args string) {
 	switch sub {
 	case "show":
 		m.Print(theme.Title.Render("Workspace"))
-		cwd, _ := os.Getwd()
-		m.Print("  " + theme.Faint.Render("Path: ") + cwd)
+		cwd, cwdErr := os.Getwd()
+		if cwdErr != nil {
+			// Reporting an empty Path: line would claim a workspace of "" —
+			// the same say-what-you-did defect as the rest of GH#1347.
+			m.Print("  " + theme.Faint.Render("Path: ") + theme.ErrorText.Render("unavailable: "+cwdErr.Error()))
+		} else {
+			m.Print("  " + theme.Faint.Render("Path: ") + cwd)
+		}
 		if m.engine != nil { m.Print("  " + theme.Faint.Render("Database: ") + m.engine.DB.Path()) }
 	case "set":
 		path := strings.TrimSpace(args)
 		if path == "" { m.Print(theme.Faint.Render("Usage: /workspace set <path>")); return }
-		if strings.HasPrefix(path, "~") {
-			home, _ := os.UserHomeDir()
-			path = filepath.Join(home, path[1:])
+		expanded, expErr := expandLeadingTilde(path)
+		if expErr != nil {
+			m.Print(theme.ErrorText.Render(expErr.Error()))
+			return
 		}
+		path = expanded
 		absPath, err := filepath.Abs(path)
 		if err != nil { m.Print(theme.ErrorText.Render("Invalid path: " + err.Error())); return }
 		info, err := os.Stat(absPath)

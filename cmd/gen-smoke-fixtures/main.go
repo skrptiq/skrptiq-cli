@@ -284,6 +284,22 @@ func materialiseSharedDeps(dstDir string, resolver *depresolver.Resolver) error 
 	return nil
 }
 
+// withinRoot reports whether candidate resolves inside root.
+//
+// It compares the RESOLVED relative path rather than inspecting the input, so it
+// does not depend on enumerating the ways a path can escape (GH#1347). `..` alone
+// and a leading `../` are both outside; anything else under root is inside.
+func withinRoot(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return !filepath.IsAbs(rel)
+}
+
 // writeSyntheticNode materialises one DepNodeSummary as a node file
 // under dstDir. Skips when a local file at the same slug already
 // exists (mirrors engine's depNodes-merge "local wins" semantics).
@@ -300,6 +316,27 @@ func writeSyntheticNode(dstDir string, dn storage.DepNodeSummary) error {
 		return err
 	}
 	dst := filepath.Join(subDir, dn.Slug+".md")
+
+	// GH#1347 — THE GATE IS ON WHAT THE SLUG BECOMES, NOT ON HOW IT LOOKS.
+	//
+	// `dn.Slug` is decoded straight from the Hub response (`NodeInfo.Slug`,
+	// `json:"slug"`) and nothing in this repo validates it, so it crosses a trust
+	// boundary before it becomes a filename. Verified by running the expression:
+	//
+	//	../../../../../../tmp/pwn  ->  /tmp/pwn.md            escapes the root
+	//	../../skrptiq              ->  <root>/../skrptiq.md   escapes the root
+	//	/etc/cron.d/evil           ->  <root>/skills/etc/…    confined
+	//
+	// NOTE THE THIRD ROW, because it is why a look-at-the-string check is not
+	// enough: `filepath.Join` makes an ABSOLUTE slug relative and harmless, while a
+	// `../` slug escapes. A guard written against absolute paths would read as
+	// protection and provide none. Resolving the destination and requiring it to
+	// stay under the root catches both without having to enumerate the forms.
+	if !withinRoot(dstDir, dst) {
+		return fmt.Errorf("refusing node slug %q: it resolves to %s, which is outside the "+
+			"fixture root %s — a slug comes from the Hub response and may not choose where "+
+			"this tool writes", dn.Slug, dst, dstDir)
+	}
 	// Local wins on slug collision (engine depNodes-merge semantics).
 	if _, err := os.Stat(dst); err == nil {
 		return nil
