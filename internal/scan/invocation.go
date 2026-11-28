@@ -58,13 +58,48 @@ const (
 )
 
 // checkNodeInvocation reports prompt/skill nodes the package ships but never
-// runs. Returns nothing for a package with no workflow of its own: a package
-// with no execution block anywhere ships its nodes to be IMPORTED, not to be
-// run in place, so "uninvoked" is its normal and correct state. That covers
-// every one of the 135 `_shared/` packages in the published catalogue — all 135
-// carry a manifest and zero workflows — without the gate having to know
-// anything about the `_shared/` path convention.
+// runs.
+//
+// IT RETURNS NOTHING FOR A PACKAGE WITH NO WORKFLOW OF ITS OWN, and that
+// inference is what GH#1357 is about. The original reasoning was that a package
+// with no execution block anywhere ships its nodes to be IMPORTED rather than run
+// in place, so "uninvoked" is its normal state — which covers the `_shared/`
+// catalogue without the gate knowing anything about that path convention.
+//
+// THE REASONING WAS DELIBERATE AND IT IS STILL WRONG, for one reason: it conflates
+// "ships nodes for others to run" with "happens to contain no workflow". The first
+// is a property the author knows and can state; the second is a shape the scanner
+// infers, and an inference that cannot be wrong is not a check. Measured on the
+// live catalogue, removing this early return reports 111 packages and 142 nodes,
+// so the inference is load-bearing for 111 packages that have never been graded
+// on it.
+//
+// THE FIGURE IN THE ORIGINAL COMMENT WAS ALSO SLIGHTLY OFF: it said all 135
+// `_shared/` packages carry zero workflows. 134 of 135 do —
+// `_shared/skrpt-authoring-reference` declares `type: workflow` in a file that is
+// not under a `workflows/` directory, which is why a directory-only count misses
+// it.
+//
+// The replacement is a declaration the author makes and the scan grades
+// (GH#1357 Phase 2, option A). THIS EARLY RETURN STAYS UNTIL HUB HAS ANNOTATED THE
+// CATALOGUE — migration order 1, annotate first and enforce after, because
+// enforcing first would put 108 packages at exit 2, which is an outage of the
+// publish path rather than a transition.
 func checkNodeInvocation(pkg *parse.Package, absPath string) []ScanIssue {
+	// A declared template package is exempt. `manifest.template: true` (GH#374)
+	// says the package ships fill-in-the-blank material, and material nobody runs
+	// is what a template IS — so reporting its nodes as uninvoked would refuse it
+	// for being exactly what it declares. Two of the six live declarers,
+	// `templates-prompts` and `templates-skills`, are among the 111 this rule will
+	// reach once enforcement lands: 20 of the 142 nodes.
+	//
+	// This HANDLES the declaration; it does not GRADE it. Nothing checks that a
+	// package declaring `template: true` has any template property — see GH#1364
+	// and the skipped test naming it.
+	if pkg.Manifest.Template {
+		return nil
+	}
+
 	var workflows []parse.NodeFile
 	for _, n := range pkg.Nodes {
 		if n.Type == "workflow" {
