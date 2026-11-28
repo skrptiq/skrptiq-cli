@@ -586,3 +586,70 @@ func checkTemplateDeclaration(pkg *parse.Package, absPath string) []ScanIssue {
 		},
 	}}
 }
+
+// CodePackageNoContent fires when a package ships no nodes and references none
+// (GH#1387).
+const CodePackageNoContent = "package.no_content"
+
+// checkPackageHasContent refuses a package with neither content nor a reference
+// to content (GH#1387).
+//
+// WHY A RULE WHOSE SUBJECT IS THE PACKAGE. Every other rule here is about a
+// RELATIONSHIP between declared things — an input against a declaration, a node
+// against an invocation, a step against a reference. A manifest carrying three
+// keys has no relationships to be wrong about, so it passed the gate the publish
+// path calls the strictest of three. The hole was not in any rule; it was the
+// absence of one whose subject is the package itself.
+//
+// THE PREDICATE IS NARROWER THAN IT LOOKS, AND FOUR CANDIDATES WERE MEASURED
+// ACROSS ALL 234 LIVE PACKAGES BEFORE THIS ONE WAS CHOSEN:
+//
+//	zero prompt AND zero skill nodes           refuses 37
+//	zero executable nodes (prompt/skill/workflow)  refuses 35
+//	zero nodes of any type                     refuses  1
+//	zero nodes AND no dependencies             refuses  0   ← this one
+//
+// The first two refuse the 28 `_shared/` reference bundles the catalogue is built
+// on. The third refuses exactly one package, and that package is why it is wrong:
+// `examples/github-mcp-reference` ships no nodes, honestly declares `total: 0`,
+// and pins `_shared/github-mcp` — ITS SUBSTANCE IS THE DEPENDENCY PIN, and it
+// exists so an author can see how a skrpt declares a service. A rule refusing it
+// would refuse the catalogue's own worked example.
+//
+// So: no nodes AND no dependencies. A package with neither content nor a
+// reference to content has no substance to be consistent about.
+//
+// WHAT IT CANNOT SEE, declared because the alternative pretends otherwise. One
+// `dependencies:` entry satisfies it, so this cannot tell a thin-but-real
+// reference bundle from a placeholder pinning something arbitrary. Judging whether
+// a pin is MEANINGFUL is the same class of claim as whether a blank field is a
+// template marker — authorial intent, which no local predicate settles. A rule
+// that declares what it cannot see is honest; one that pretends to see it is a
+// heuristic whose blind spot costs more than the warnings it saves.
+func checkPackageHasContent(pkg *parse.Package, absPath string) []ScanIssue {
+	if len(pkg.Nodes) > 0 {
+		return nil
+	}
+	// `pkg.Dependencies != nil` is how `scan.go` itself asks whether a package
+	// declares the block. An EMPTY block is treated as absent on purpose: a
+	// `dependencies:` key with nothing under it references nothing, and accepting
+	// it would make the loophole a one-liner.
+	if len(pkg.Dependencies) > 0 {
+		return nil
+	}
+
+	return []ScanIssue{{
+		File: manifestRelPath(absPath, *pkg),
+		ValidationIssue: storage.ValidationIssue{
+			Code:     CodePackageNoContent,
+			Severity: storage.SeverityError,
+			Message: "this package ships no nodes and references none: no prompt, skill, " +
+				"workflow, service, source, document or asset, and no `dependencies:` entry. " +
+				"Every other rule in this scan compares declared things against each other, so " +
+				"a manifest with nothing to compare passes them all — which is why this one is " +
+				"about the package itself. Ship at least one node, or declare the dependency " +
+				"whose nodes this package exists to reference",
+			Field: "contents",
+		},
+	}}
+}
