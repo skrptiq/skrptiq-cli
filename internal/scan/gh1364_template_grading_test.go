@@ -92,39 +92,39 @@ func TestGH1364_NonMarkersDoNotSatisfyThePredicate(t *testing.T) {
 	}
 }
 
-// THE CORPUS CONTROL, and the reason this check is not wired into `scan.go` yet.
+// THE CORPUS CONTROL, and its purpose has shifted now that the check is wired.
 //
-// Measured against the six live declarers through the real parser rather than
-// against fixtures: four pass, and `templates-services` and `templates-skills` are
-// refused. `templates-skills`' flag is wrong (GH#1388 fixes its content first, then
-// the flag) and `templates-services` has not been adjudicated at all.
+// It used to force a deliberate decision about WIRING: six declarers, two refused,
+// and the table recorded that so nobody wired the check while it would have failed
+// live packages. Both refusals resolved — `templates-skills` moved to
+// `library: true` (GH#1388) and `templates-services` dropped its inert flag
+// (GH#1399) — so there are FOUR declarers and the predicate refuses none.
 //
-// This test RECORDS that state rather than asserting the ideal one, so that when
-// either package changes the test fails and someone decides deliberately whether
-// the check can be wired. Skipped where there is no hub checkout.
-func TestGH1364_SixLiveDeclarers_RecordedState(t *testing.T) {
+// WHAT IT FORCES NOW IS A DELIBERATE DECISION ABOUT A DECLARATION CHANGE, which is
+// the more useful of the two. The check is live, so a package gaining or losing
+// `template: true`, or losing its markers, moves a real verdict — and this test
+// fails rather than letting the table drift behind the catalogue.
+//
+// Measured through the real parser rather than against fixtures. Skipped where
+// there is no hub checkout, which means it is a LOCAL signal: see the note on the
+// skip in the PR, and do not treat a CI pass as evidence this table is current.
+func TestGH1364_FourLiveDeclarers_AllPass(t *testing.T) {
 	base := "/Users/bencrocker/Developer/skrptiq-hub/examples"
 	if _, err := os.Stat(base); err != nil {
 		t.Skip("no hub checkout on this machine")
 	}
 
-	// FIVE DECLARERS, NOT SIX. `templates-skills` moved from `template: true` to
-	// `library: true` in hub #237 (GH#1388), which is the graded declaration and
-	// which it passes — so it is no longer a template declarer and this table no
-	// longer grades it. THIS TEST IS WHAT CAUGHT THE MOVE, which is what it is for:
-	// the record is updated because the measured world changed, not to make a
-	// failure go away.
+	// FOUR DECLARERS, ALL PASSING. `templates-skills` moved to `library: true`
+	// (hub #237, GH#1388) and `templates-services` dropped its inert `template: true`
+	// (hub #238, GH#1399) — both verified on hub's `origin/main`, not inferred from
+	// the merges. Neither is a template declarer any more, so neither is graded here.
 	//
-	// `templates-services` is now the ONLY refusal, and the only thing standing
-	// between `checkTemplateDeclaration` and being wired into `scan.go`. Wiring is
-	// still not taken here — that is a decision, and the function's own comment
-	// carries the condition.
-	want := map[string]bool{ // true = the predicate accepts it today
+	// THE PREDICATE NOW REFUSES ZERO, which is what made wiring it safe.
+	want := map[string]bool{ // true = the predicate accepts it
 		"templates-assets":    true,
 		"templates-documents": true,
 		"templates-prompts":   true,
 		"templates-sources":   true,
-		"templates-services":  false, // 27 service nodes, zero {{…}} — unadjudicated
 	}
 
 	for name, accept := range want {

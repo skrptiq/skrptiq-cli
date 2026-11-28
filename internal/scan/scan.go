@@ -279,6 +279,13 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// fired.
 	allIssues = append(allIssues, checkLibraryDeclaration(&pkg, absPath)...)
 
+	// 6c-ter. GH#1364 — the template declaration graded against the package it is
+	// attached to. It exempts three behaviours (the engine's unknown-namespace
+	// suppression, the node-local input rule and 6c above), and an exemption that
+	// can be set without being graded is an allowlist. Same reasoning as the
+	// library declaration beside it.
+	allIssues = append(allIssues, checkTemplateDeclaration(&pkg, absPath)...)
+
 	// 6d. GH#1057 — two execution entries naming one skill. The engine resolves
 	// a skill to a single step, so the earlier entry's prompt is discarded; 6c
 	// counts it invoked because it is NAMED. Both clauses are needed.

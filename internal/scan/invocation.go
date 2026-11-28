@@ -537,33 +537,6 @@ var fillableMarker = regexp.MustCompile(`\{\{\s*[A-Z][A-Z0-9_]*\s*\}\}`)
 // checkTemplateDeclaration grades `manifest.template: true` against the package
 // it is attached to (GH#1364).
 //
-// ────────────────────────────────────────────────────────────────────────────
-// NOT WIRED INTO `scan.go` YET, AND THAT IS THE POINT OF THIS COMMENT.
-//
-// The consumer is the rule list in `RunWithOptions` — one `append` line — and the
-// prerequisites are both external and both named:
-//
-//  1. GH#1388 lands `templates-skills`' CONTENT fix. Its flag is wrong (hub read
-//     the package: five finished skills and five capability datasheets, nothing to
-//     fill in), but removing the flag before the content is fixed turns suppressed
-//     findings into a failing publish, and hub's gate refuses on errorCount > 0.
-//     The flag goes last. Measured today: this predicate REFUSES it.
-//  2. `templates-services` is ADJUDICATED. 27 service nodes, zero `{{…}}` of any
-//     kind, and the flag exempts nothing for it because service nodes are reference
-//     material no consumer rule touches. This predicate refuses it too, and unlike
-//     `templates-skills` nobody has yet ruled whether its declaration is wrong.
-//
-// Measured against all six live declarers through the real parser: `-assets`,
-// `-documents`, `-prompts` and `-sources` PASS; `-services` and `-skills` are
-// REFUSED. Wiring it today would fail two live packages, and a check that refuses
-// two of six declarers is a refusal of the population rather than a measurement of
-// it — which is the standard this estate applied to retire two earlier predicates.
-//
-// WHEN BOTH PREREQUISITES ARE MET: add the `append` in `scan.go` beside
-// `checkLibraryDeclaration`, delete this block, and delete the skipped GH#1364
-// test, which is the thing that makes this impossible to forget.
-// ────────────────────────────────────────────────────────────────────────────
-//
 // WHY IT EXISTS. The declaration exempts three scan behaviours — the engine's
 // unknown-namespace suppression (GH#524), the node-local input rule and the
 // invocation rule — and NOTHING checked it was true. `library: true` is graded in
