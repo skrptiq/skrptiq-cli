@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/skrptiq/engine/manifest"
 	"github.com/skrptiq/engine/parse"
@@ -123,7 +124,20 @@ func severityLabel(s manifest.Severity) string {
 	}
 }
 
-// replaceYAMLField does a line-level replacement of a top-level YAML field.
+// replaceYAMLField rewrites the FIRST line whose space/tab-trimmed text begins
+// `<field>:`, and returns the document unchanged if no line does.
+//
+// IT IS NOT RESTRICTED TO A TOP-LEVEL FIELD, to a mapping key, or to YAML
+// structure at all, and this comment used to claim it was (GH#1359). It matches a
+// nested mapping key, and a line of prose inside a block scalar, before it reaches
+// a top-level key further down the file — so on such a manifest it rewrites the
+// wrong line while the caller reports the right one. A list item (`- id:`) is NOT
+// matched, because the trimmed line still begins `- `.
+//
+// GH#1331 dimension 2 has the cases and the end-to-end runs. The BEHAVIOUR is
+// unfixed and out of scope here; what is fixed is a description that made the
+// defect hard to see. Anchor the surgery to what the parser reported, not to a
+// second search with weaker rules.
 func replaceYAMLField(content, field, newValue string) string {
 	lines := splitLines(content)
 	prefix := field + ":"
@@ -154,15 +168,19 @@ func splitLines(s string) []string {
 	return lines
 }
 
+// joinLines rejoins split lines and restores the trailing newline.
+//
+// `strings.Join` rather than `result += line` in a loop (GH#1359). The old shape
+// reallocated and copied the whole accumulated string on every line, so it was
+// quadratic in the file: 20,000 lines took 2.01s against 837µs for a single
+// join, and 40,000 took 9.20s. Every manifest rewrite passes through here, so
+// that was ~80% of `migrate-identity`'s wall-clock on a 1.3MB manifest.
+//
+// NO BENCHMARK GUARDS THIS, deliberately. A timing assertion in CI is a flake
+// generator, and the property is structural rather than measured: a single join
+// cannot be quadratic. The numbers above are the record.
 func joinLines(lines []string) string {
-	result := ""
-	for i, line := range lines {
-		if i > 0 {
-			result += "\n"
-		}
-		result += line
-	}
-	return result + "\n"
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func trimLeftSpace(s string) string {

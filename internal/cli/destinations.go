@@ -26,10 +26,13 @@ import (
 //	clipboard + !interactive  ->  refusal, naming the type and where the output is
 //	clipboard +  interactive  ->  DestinationResult{HostPending: true}
 //
-// and `RunOptions.OnDestinations` is nil in the CLI, which the engine's own
-// comment calls "correct for the CLI" ON THE ASSUMPTION the CLI is
-// non-interactive. So declaring Interactive without a handler would turn a
-// working refusal into a pending item nobody completes — which is exactly the
+// and `RunOptions.OnDestinations` WAS nil in the CLI before this file existed,
+// which the engine's own comment calls "correct for the CLI" ON THE ASSUMPTION the
+// CLI is non-interactive. `run.go` now sets it to the handler below, so the
+// present tense here was false from the moment this file landed (GH#1359).
+// Keeping the reasoning because it is why the two are one decision: declaring
+// Interactive without a handler would turn a working refusal into a pending item
+// nobody completes — which is exactly the
 // silence GH#1203 was built to remove, on the path whose refusal cites GH#1202
 // T0-14 as its reason. Interactive and the handler are one decision.
 //
