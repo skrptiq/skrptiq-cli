@@ -89,6 +89,36 @@ const (
 	// own body. A consumer keyed on codes must be able to tell them apart, and
 	// nothing that reports today changes code or severity because of this one.
 	CodeNodeInputUndeclared = "node.input_undeclared"
+	// CodeNodeInputOptionalityUndeclared is Rule 2 reported WITHOUT a workflow
+	// (GH#1287). A separate code for the same reason the one above is: the
+	// `workflow.` claim is about a declaration a workflow's reach can see, and
+	// this one is about a declaration standing on its own, so a consumer keyed on
+	// codes can tell the two apart.
+	//
+	// RULE 2 NEVER NEEDED REACH, which is why this is a wiring fix rather than a
+	// new rule. Read its two triggers: `hasRequired` is one node's frontmatter and
+	// `description` is that same entry's own prose, while `inTable` is a table in a
+	// node's own body. The only thing that tied it to a workflow is that `declared`
+	// is assembled from `reach` in the pass above — an assembly detail, not the
+	// rule's subject. So a package with no `workflows/` directory had its
+	// optionality ungraded for a reason unrelated to the question being asked.
+	//
+	// POPULATION: zero, corpus-wide — 432 distinct declared input names across all
+	// 234 live packages, every one carrying an explicit `required:`. Measured
+	// 2026-11-28 by RUNNING this predicate over the catalogue through
+	// `parse.ReadPackage`, with a fixture control proving the counter can move. The
+	// first version of that harness could NOT: its Inputs-table row was written
+	// `| tone | No |`, and `inputTableRow` requires the first cell to be the
+	// reference `{{input.tone}}`, so it parsed zero rows and no input could ever
+	// have tripped the table branch. The control caught that before the figure was
+	// reported.
+	//
+	// An empty population is the reason this exists, not an argument against it —
+	// the same reason recorded on CodeInputOptionalityUndeclared below. What it
+	// closes is an ASYMMETRY: byte-identical node content earned
+	// `workflow.input_optionality_undeclared` at exit 2 with a local workflow and
+	// nothing at all without one.
+	CodeNodeInputOptionalityUndeclared = "node.input_optionality_undeclared"
 	// CodeInputOptionalityUndeclared fires on an input declared without a
 	// `required:` marker whose only statement of optionality is prose.
 	//
@@ -604,8 +634,8 @@ func loopMemberSlugs(loop map[string]any) []string {
 // WHY IT EXISTS. `scan.go` gated the three input rules on the PACKAGE containing a
 // workflow node, so a package shipping the same prompt with no local runner was
 // graded on nothing: byte-identical content gave exit 1 with a workflow and exit 0
-// without. Measured on the live catalogue, 145 of 234 packages have no workflow
-// node — 134 of the 135 in `_shared/` — so that gate was switched off for most of
+// without. Measured on the live catalogue, 146 of 234 packages have no workflow
+// node — ALL 135 of those in `_shared/` — so that gate was switched off for most of
 // the corpus, and hub's "zero of 135 shared objects fail the scan" was largely
 // those 134 never reaching a rule.
 //
@@ -665,19 +695,7 @@ func checkNodeLocalInputs(pkg *parse.Package, absPath string, reported map[strin
 	// satisfies a reference anywhere in it; asking per-node would have reported a
 	// correct package as broken, which is the false-refusal direction this rule
 	// exists to avoid rather than to create.
-	declared := map[string]inputDecl{}
-	tableRequired := map[string]bool{}
-	for _, n := range pkg.Nodes {
-		if !nodeCanStateInputContract(n.Type) {
-			continue
-		}
-		for name, d := range declsOf(n) {
-			declared[name] = d
-		}
-		for name, req := range parseInputTable(n.Content) {
-			tableRequired[name] = req
-		}
-	}
+	declared, tableRequired := nodeLocalContract(pkg)
 
 	var issues []ScanIssue
 	seen := map[string]bool{}
@@ -739,6 +757,99 @@ func checkNodeLocalInputs(pkg *parse.Package, absPath string, reported map[strin
 		}
 	}
 
+	return issues
+}
+
+// nodeLocalContract is the input contract a package states WITHOUT reference to any
+// workflow: every declaration its executing nodes make, and every name their
+// `## Inputs` tables document.
+//
+// PACKAGE-WIDE, NOT PER-NODE, and the comment on checkNodeLocalInputs records what
+// established that — `valid-package` declares `topic` on one prompt and references
+// it from a sibling, so a per-node question reports a correct package as broken.
+// Both node-local rules read these same two sets, which is why they are built in
+// one place: two builders would eventually disagree about which node types may
+// state a contract.
+func nodeLocalContract(pkg *parse.Package) (map[string]inputDecl, map[string]bool) {
+	declared := map[string]inputDecl{}
+	tableRequired := map[string]bool{}
+	for _, n := range pkg.Nodes {
+		if !nodeCanStateInputContract(n.Type) {
+			continue
+		}
+		for name, d := range declsOf(n) {
+			declared[name] = d
+		}
+		for name, req := range parseInputTable(n.Content) {
+			tableRequired[name] = req
+		}
+	}
+	return declared, tableRequired
+}
+
+// checkNodeLocalOptionality is Rule 2 with no workflow in it (GH#1287).
+//
+// WHAT IT ASKS, and why no reach appears in it: an input is declared, it carries no
+// `required:` key, and the author stated its optionality somewhere else — in a
+// node's `## Inputs` table or in the declaration's own prose. All three facts live
+// in one node's frontmatter and body. Nothing is resolved, nothing is reached, and
+// no dependency is consulted.
+//
+// IT DOES NOT TAKE THE TEMPLATE EXEMPTION, and that is a decision rather than an
+// omission. `checkNodeLocalInputs` returns nil for `manifest.template: true`
+// because a bare `{{MARKER}}` is a blank an author fills in, not a contract — but
+// `checkWorkflowInputs` has NO such exemption, so Rule 2 already fires on a
+// template package that happens to ship a workflow. Inheriting the exemption here
+// would close one asymmetry by opening another, leaving the gate's answer still
+// dependent on whether a `workflows/` directory exists. And an explicit `inputs:`
+// block is not a blank: it is a contract the author chose to write. Measured when
+// this landed: 0 of the 4 workflow-less template packages declare any input, so the
+// decision costs nothing live in either direction.
+//
+// ONE SUPPRESSION, AND ONLY ONE. `reported` is the input NAMES the reach-based Rule
+// 2 already emitted, so a workflow-bearing package gains no duplicate finding for
+// the same declaration — this rule is additive, exactly as the node-local Rule 1
+// is, and at the same granularity that pass uses. The dep-straddle suppression is
+// deliberately ABSENT: it exists because a declaration may live in the half of a
+// straddling pair whose frontmatter is not served (GH#1266), which is a statement
+// about a declaration the scanner CANNOT SEE. This rule only ever grades a
+// declaration it is holding, so there is nothing for that excuse to protect.
+func checkNodeLocalOptionality(pkg *parse.Package, absPath string, reported map[string]bool) []ScanIssue {
+	declared, tableRequired := nodeLocalContract(pkg)
+
+	fileOf := map[string]string{}
+	for _, n := range pkg.Nodes {
+		if n.ID != "" {
+			fileOf[n.ID] = n.FilePath
+		}
+	}
+
+	var issues []ScanIssue
+	for _, name := range sortedKeys(declared) {
+		d := declared[name]
+		if d.hasRequired || reported[name] {
+			continue
+		}
+		_, inTable := tableRequired[name]
+		if !inTable && !proseDefault.MatchString(d.description) {
+			continue
+		}
+		issues = append(issues, ScanIssue{
+			File:     relPath(absPath, fileOf[d.node]),
+			NodeSlug: d.node,
+			ValidationIssue: storage.ValidationIssue{
+				Code:     CodeNodeInputOptionalityUndeclared,
+				Severity: storage.SeverityError,
+				Message: fmt.Sprintf(
+					"input %q states its optionality in prose but declares no required: marker on node %q — optionality must be declared, not inferred",
+					name, d.node),
+				ContractRef:    inputContractRef,
+				Field:          "inputs." + name + ".required",
+				ReferencedSlug: name,
+				ReferenceKind:  "input",
+			},
+		})
+	}
 	return issues
 }
 

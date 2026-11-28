@@ -237,6 +237,7 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// package as the author wrote it.
 	var rule1Suppressed []string
 	reportedInputs := map[string]bool{}
+	reportedOptionality := map[string]bool{}
 	depStraddled := map[string]bool{}
 	for _, nf := range pkg.Nodes {
 		if nf.Type != "workflow" {
@@ -248,6 +249,9 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 		for _, iss := range inputIssues {
 			if iss.Code == CodeInputUndeclared {
 				reportedInputs[iss.ReferencedSlug] = true
+			}
+			if iss.Code == CodeInputOptionalityUndeclared {
+				reportedOptionality[iss.ReferencedSlug] = true
 			}
 		}
 		for _, id := range suppressed {
@@ -265,6 +269,17 @@ func RunWithOptions(scanPath string, jsonOutput bool, opts Options, w io.Writer)
 	// is suppressed here, so nothing that reports today changes. Suppression is by
 	// input NAME, which is the granularity that pass itself uses.
 	allIssues = append(allIssues, checkNodeLocalInputs(&pkg, absPath, reportedInputs, depStraddled)...)
+
+	// 6b-ter. GH#1287 — Rule 2 with the node as its subject, for the same reason
+	// 6b-bis exists and with one difference worth stating at the call site: Rule 2
+	// never needed reach at all. `required:`, the declaration's own prose and a
+	// node-local Inputs table are the whole of its subject, so the loop above
+	// gated it on a fact — does this package contain a workflow — that has nothing
+	// to do with the question. Byte-identical node content earned an ERROR with a
+	// local runner and nothing without one. Suppressed by input name against what
+	// that loop already emitted, so no workflow-bearing package gains a duplicate,
+	// and measured at 0 of 234 live packages when it landed.
+	allIssues = append(allIssues, checkNodeLocalOptionality(&pkg, absPath, reportedOptionality)...)
 
 	// 6c. GH#858 A1 — a prompt or skill the package ships and no workflow runs.
 	// Same reason as 6b: an authoring defect the structural scanner used to pass
