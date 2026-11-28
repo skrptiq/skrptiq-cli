@@ -1,3 +1,9 @@
 name: cross-package-edge-test
 version: "1.0.0"
 description: Tests cross-package edge handling (GH#580)
+# GH#1357 — this fixture ships one skill and no workflow, which is exactly the
+# shape the invocation rule now refuses without a declaration. It IS a library by
+# the definition the gate uses: a node supplied for something outside the package
+# to run. Declared so the fixture tests the cross-package edge it was written for
+# rather than doubling as an unintentional test of the invocation rule.
+library: true

@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -294,14 +295,23 @@ A template.
 	}
 }
 
-// A package with NO workflow of its own ships its nodes to be IMPORTED, so
-// "uninvoked" is its normal state. This is the answer to `_shared/`: all 135
-// shared packages in the published catalogue carry a manifest and zero
-// workflows, so the rule scopes them out structurally, with no knowledge of the
-// `_shared/` path convention.
-func TestGH858_PackageWithNoWorkflow_IsNeverRefused(t *testing.T) {
-	dir := writePkg(t, map[string]string{
-		"prompts/library-prompt.md": `---
+// THIS ASSERTION WAS INVERTED BY GH#1357, and the reason is recorded here rather
+// than in a commit message because the old contract is what a reader would expect.
+//
+// It used to read "a package with NO workflow of its own ships its nodes to be
+// IMPORTED, so uninvoked is its normal state", and it cited the `_shared/`
+// catalogue as the justification. **That inference was the defect.** It conflated
+// "ships nodes for others to run" — a property the author knows and can state —
+// with "happens to contain no workflow", a shape the scanner infers, and an
+// inference that cannot be wrong is not a check. Measured: the same undeclared
+// prompt gave exit 0 while a declared one gave exit 1.
+//
+// THE CONTRACT NOW IS THE DECLARATION, so both directions are asserted here. The
+// test is not relaxed; it is pointed at the subject that replaced the inference,
+// and the half that was previously the whole test is still here — it just needs the
+// declaration to earn it.
+func TestGH858_WorkflowLessPackage_NeedsTheLibraryDeclaration(t *testing.T) {
+	const sharedPrompt = `---
 type: prompt
 id: library-prompt
 title: Library Prompt
@@ -309,11 +319,31 @@ description: "shipped for consumers to invoke"
 ---
 
 A shared prompt.
-`,
-	})
+`
 
-	if issues := invocationIssues(t, dir); len(issues) != 0 {
-		t.Errorf("a workflow-less library package was refused: %+v", issues)
+	// UNDECLARED: refused. This is what GH#1357 turned on — 109 live packages were
+	// passing on the inference alone.
+	undeclared := writePkg(t, map[string]string{"prompts/library-prompt.md": sharedPrompt})
+	if issues := invocationIssues(t, undeclared); len(issues) == 0 {
+		t.Error("a workflow-less package with no `library: true` was not refused — that is the " +
+			"inference GH#1357 removed")
+	}
+
+	// DECLARED: not refused. The known-good half, and the one a naive enforcement
+	// breaks: removing the early return without honouring the declaration would
+	// refuse every library bundle in the catalogue.
+	declared := writePkg(t, map[string]string{"prompts/library-prompt.md": sharedPrompt})
+	f, err := os.OpenFile(filepath.Join(declared, "skrptiq.yaml"), os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open manifest: %v", err)
+	}
+	if _, err := f.WriteString("library: true\n"); err != nil {
+		t.Fatalf("declare library: %v", err)
+	}
+	f.Close()
+
+	if issues := invocationIssues(t, declared); len(issues) != 0 {
+		t.Errorf("a DECLARED library package was refused: %+v", issues)
 	}
 }
 
