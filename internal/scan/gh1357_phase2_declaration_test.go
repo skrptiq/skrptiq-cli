@@ -149,6 +149,8 @@ Write about {{input.undeclared_thing}}.
 // DELETE this test — it goes green by deletion, and the grading's own tests replace
 // it.
 func TestGH1364_TemplateDeclarationIsUngraded_SkippedUntilItIsGraded(t *testing.T) {
-	t.Skip("GH#1364: `template: true` exempts three scan behaviours and nothing grades " +
-		"that the package has the shape. Delete this test when the grading lands.")
+	t.Skip("GH#1364: the predicate is WRITTEN and tested (checkTemplateDeclaration) but not " +
+		"wired into scan.go, so nothing grades `template: true` in practice yet. Wiring " +
+		"waits on GH#1388 fixing templates-skills' content and on templates-services being " +
+		"adjudicated — both named on the function. Delete this test when the append lands.")
 }

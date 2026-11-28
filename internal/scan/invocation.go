@@ -3,6 +3,7 @@ package scan
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -519,4 +520,96 @@ func checkLibraryDeclaration(pkg *parse.Package, absPath string) []ScanIssue {
 	}
 
 	return issues
+}
+
+// CodeTemplateNoFillableNode fires when a package declares `template: true` and
+// no node in it carries a fill-in-the-blank marker (GH#1364).
+const CodeTemplateNoFillableNode = "template.no_fillable_node"
+
+// fillableMarker matches a fill-in-the-blank marker: `{{UPPERCASE}}`.
+//
+// WHY THIS FORM, measured rather than chosen: of the six live declarers,
+// `templates-documents` carries 623 of them, `templates-assets` 80,
+// `templates-sources` 75 and `templates-prompts` 33. It is the corpus's
+// convention, not a guess.
+var fillableMarker = regexp.MustCompile(`\{\{\s*[A-Z][A-Z0-9_]*\s*\}\}`)
+
+// checkTemplateDeclaration grades `manifest.template: true` against the package
+// it is attached to (GH#1364).
+//
+// ────────────────────────────────────────────────────────────────────────────
+// NOT WIRED INTO `scan.go` YET, AND THAT IS THE POINT OF THIS COMMENT.
+//
+// The consumer is the rule list in `RunWithOptions` — one `append` line — and the
+// prerequisites are both external and both named:
+//
+//  1. GH#1388 lands `templates-skills`' CONTENT fix. Its flag is wrong (hub read
+//     the package: five finished skills and five capability datasheets, nothing to
+//     fill in), but removing the flag before the content is fixed turns suppressed
+//     findings into a failing publish, and hub's gate refuses on errorCount > 0.
+//     The flag goes last. Measured today: this predicate REFUSES it.
+//  2. `templates-services` is ADJUDICATED. 27 service nodes, zero `{{…}}` of any
+//     kind, and the flag exempts nothing for it because service nodes are reference
+//     material no consumer rule touches. This predicate refuses it too, and unlike
+//     `templates-skills` nobody has yet ruled whether its declaration is wrong.
+//
+// Measured against all six live declarers through the real parser: `-assets`,
+// `-documents`, `-prompts` and `-sources` PASS; `-services` and `-skills` are
+// REFUSED. Wiring it today would fail two live packages, and a check that refuses
+// two of six declarers is a refusal of the population rather than a measurement of
+// it — which is the standard this estate applied to retire two earlier predicates.
+//
+// WHEN BOTH PREREQUISITES ARE MET: add the `append` in `scan.go` beside
+// `checkLibraryDeclaration`, delete this block, and delete the skipped GH#1364
+// test, which is the thing that makes this impossible to forget.
+// ────────────────────────────────────────────────────────────────────────────
+//
+// WHY IT EXISTS. The declaration exempts three scan behaviours — the engine's
+// unknown-namespace suppression (GH#524), the node-local input rule and the
+// invocation rule — and NOTHING checked it was true. `library: true` is graded in
+// two directions; this was graded in none, which is the asymmetry GH#1364 names.
+//
+// WHAT IT MEASURES, AND WHAT IT DOES NOT. The real distinction is not syntactic:
+//
+//	`{{UPPERCASE}}` is INERT to the engine — nothing resolves it, by design,
+//	because the node is meant to be EDITED BY A HUMAN before it runs.
+//	`{{input.X}}` is LIVE — the identical construct with the identical
+//	contract, creating an obligation the engine will enforce.
+//
+// So the question is "would the engine be expected to resolve this, or was it put
+// there to be replaced", and THAT IS A CLAIM ABOUT AUTHORIAL INTENT. A marker count
+// is a PROXY for it, not the thing itself — the only evidence in the file is the
+// form of the reference. hub established this and it belongs here rather than in a
+// review: a future reader must not mistake the proxy for the property.
+//
+// PER-PACKAGE IS THE RIGHT GRANULARITY AND ALSO THE WEAK ONE. This establishes
+// that a declaring package contains AT LEAST ONE fillable node — not that its
+// nodes are fillable. A per-node rule would refuse `templates-prompts` today,
+// whose prompts mix 33 inert markers with 9 live `{{input.X}}` references. The
+// limit is declared rather than left for someone to assume the stronger claim.
+func checkTemplateDeclaration(pkg *parse.Package, absPath string) []ScanIssue {
+	if !pkg.Manifest.Template {
+		return nil
+	}
+
+	for _, n := range pkg.Nodes {
+		if fillableMarker.MatchString(n.Content) {
+			return nil
+		}
+	}
+
+	return []ScanIssue{{
+		File: manifestRelPath(absPath, *pkg),
+		ValidationIssue: storage.ValidationIssue{
+			Code:     CodeTemplateNoFillableNode,
+			Severity: storage.SeverityError,
+			Message: "manifest declares `template: true` but no node in this package carries a " +
+				"fill-in-the-blank marker such as `{{ROLE}}`. The declaration exempts three " +
+				"content rules — unknown-namespace suppression, the node-local input rule and " +
+				"the uninvoked-node rule — so a package claiming it without anything to fill in " +
+				"silences findings about content that is finished rather than templated. Remove " +
+				"`template: true`, or ship the placeholders it promises",
+			Field: "template",
+		},
+	}}
 }
